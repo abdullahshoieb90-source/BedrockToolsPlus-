@@ -17,6 +17,8 @@ typedef void (*MeshHelpers_renderMeshImmediately_t)(void* screenContext, void* t
 
 typedef bool (*Actor_isPlayer_t)(void* actor);
 typedef bool (*Actor_isInvisible_t)(void* actor);
+typedef void* (*Level_getHitResult_t)(void* level);
+typedef void* (*HitResult_getEntity_t)(void* hitResult);
 struct DistanceSortedActor {
     void* mActor;
     float mDistance;
@@ -124,6 +126,8 @@ static MeshHelpers_renderMeshImmediately_t s_renderMesh = nullptr;
 static Actor_isPlayer_t                   s_actorIsPlayer = nullptr;
 static Actor_isInvisible_t                s_actorIsInvisible = nullptr;
 static Actor_fetchNearbyActorsSorted_t    s_actorFetchNearby = nullptr;
+static Level_getHitResult_t               s_levelGetHitResult = nullptr;
+static HitResult_getEntity_t              s_hitResultGetEntity = nullptr;
 
 static MaterialPtr s_matSelection;
 static uintptr_t    s_renderMaterialGroup = 0;
@@ -195,6 +199,27 @@ static bool hasCategory(void* actor, uint32_t categoryBit) {
     uintptr_t actorAddr = (uintptr_t)actor;
     uint32_t categories = *(uint32_t*)(actorAddr + bedrocktools::sdk::offsets::Actor::mCategories);
     return (categories & categoryBit) != 0;
+}
+
+// Entity currently under the crosshair, or nullptr when the player is not
+// aiming at one. The game already performs the reach/raycast test for us, so
+// the indicator turns active exactly when the entity is actually attackable.
+static void* getCrosshairEntity() {
+    if (!g_localPlayerPtr) return nullptr;
+    if (!s_levelGetHitResult || !s_hitResultGetEntity) return nullptr;
+
+    void* level = *(void**)((uintptr_t)g_localPlayerPtr + bedrocktools::sdk::offsets::Actor::mLevel);
+    if (!level) return nullptr;
+
+    void* hit = s_levelGetHitResult(level);
+    if (!hit) return nullptr;
+
+    // Only a real in-range entity hit counts; TypeEntityOutOfRange means the
+    // ray touched an entity the player cannot reach yet.
+    int type = *(int*)((uintptr_t)hit + bedrocktools::sdk::offsets::HitResult::mType);
+    if (type != bedrocktools::sdk::offsets::HitResult::TypeEntity) return nullptr;
+
+    return s_hitResultGetEntity(hit);
 }
 
 
@@ -371,6 +396,9 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     float dz = camZ - localPos.z;
     bool isThirdPerson = (dx*dx + dy*dy + dz*dz) > 0.05f;
 
+    // Resolved once per frame and shared by every box drawn below.
+    void* selectedEntity = g_hitboxMod->hitboxIndicator ? getCrosshairEntity() : nullptr;
+
     auto renderActor = [&](void* ent) {
         AABB aabb = getActorAABB(ent);
         if (aabb.min.x == 0.f && aabb.min.y == 0.f && aabb.min.z == 0.f &&
@@ -378,38 +406,12 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 
         uint32_t boxColor = g_hitboxMod->hitboxColor;
         if (g_hitboxMod->hitboxIndicator) {
-            // The indicator may only become active for the entity currently
-            // under the crosshair. Nearby entities that the player is not
-            // looking at must keep the default indicator color.
-            boxColor = g_hitboxMod->indicatorDefaultColor;
-            if (ent == selectedEntity) {
-                // Closest-point distance from the local player to the entity's
-                // AABB. Using a clamp (rather than face/center distance) means
-                // tall or wide actors register as "in hitrange" the moment the
-                // player is within reach of any part of them, which matches
-                // how MCBE melee reach is measured.
-                float cx = localPos.x;
-                if (cx < aabb.min.x) cx = aabb.min.x;
-                if (cx > aabb.max.x) cx = aabb.max.x;
-
-                float cy = localPos.y;
-                if (cy < aabb.min.y) cy = aabb.min.y;
-                if (cy > aabb.max.y) cy = aabb.max.y;
-
-                float cz = localPos.z;
-                if (cz < aabb.min.z) cz = aabb.min.z;
-                if (cz > aabb.max.z) cz = aabb.max.z;
-
-                float dxA = localPos.x - cx;
-                float dyA = localPos.y - cy;
-                float dzA = localPos.z - cz;
-                float distSq = dxA * dxA + dyA * dyA + dzA * dzA;
-
-                const float range = g_hitboxMod->hitRange;
-                if (distSq <= range * range) {
-                    boxColor = g_hitboxMod->indicatorActiveColor;
-                }
-            }
+            // The indicator only becomes active for the entity currently under
+            // the crosshair. Nearby entities the player is not looking at keep
+            // the default indicator color.
+            boxColor = (ent != nullptr && ent == selectedEntity)
+                         ? g_hitboxMod->indicatorActiveColor
+                         : g_hitboxMod->indicatorDefaultColor;
         }
 
         drawBox(aabb, boxColor);
@@ -551,6 +553,12 @@ void HitboxModule::onInit() {
     uintptr_t afn = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorFetchNearbyActorsSorted);
     if (afn) s_actorFetchNearby = (Actor_fetchNearbyActorsSorted_t)afn;
 
+    uintptr_t lhr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::LevelGetHitResult);
+    if (lhr) s_levelGetHitResult = (Level_getHitResult_t)lhr;
+
+    uintptr_t hge = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::HitResultGetEntity);
+    if (hge) s_hitResultGetEntity = (HitResult_getEntity_t)hge;
+
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>([](auto& event) { s_hitboxTickCallback(event.player); });
 }
 
@@ -568,13 +576,12 @@ void HitboxModule::onDisable() {
 }
 
 std::string HitboxModule::configDependency(const std::string& key) const {
-    // The two indicator colors and the hit range only make sense while the
-    // "Hitbox Indicator" toggle is on, so the menu hides them until it is
-    // enabled. Their keys do not start with "hitboxIndicator", so the parent
-    // has to be declared here instead of relying on the prefix rule.
+    // The two indicator colors only make sense while the "Hitbox Indicator"
+    // toggle is on, so the menu hides them until it is enabled. Their keys do
+    // not start with "hitboxIndicator", so the parent has to be declared here
+    // instead of relying on the prefix rule.
     if (key == "indicatorDefaultColor" ||
-        key == "indicatorActiveColor" ||
-        key == "hitRange") {
+        key == "indicatorActiveColor") {
         return "hitboxIndicator";
     }
     return {};
@@ -597,9 +604,6 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
 
     if (j.contains("hitboxIndicator")) {
         hitboxIndicator = j["hitboxIndicator"].get<bool>();
-    }
-    if (j.contains("hitRange")) {
-        try { hitRange = j["hitRange"].get<float>(); } catch (...) {}
     }
 
     auto parseColor = [&](const std::string& key, uint32_t& outColor) {
@@ -628,7 +632,6 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["lookLineLength"] = lookLineLength;
     j["lineThickness"] = lineThickness;
     j["hitboxIndicator"] = hitboxIndicator;
-    j["hitRange"] = hitRange;
 
     char hexH[12], hexE[12], hexL[12], hexD[12], hexA[12];
     snprintf(hexH, sizeof(hexH), "#%08X", hitboxColor);
