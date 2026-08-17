@@ -4,6 +4,7 @@
 #include <bedrocktools/sdk/Memory.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
+#include <atomic>
 #include <cmath>
 #include <string>
 #include <cstring>
@@ -130,7 +131,12 @@ static Level_getHitResult_t               s_levelGetHitResult = nullptr;
 static HitResult_getEntity_t              s_hitResultGetEntity = nullptr;
 
 static MaterialPtr s_matSelection;
+static MaterialPtr s_matFill;
 static uintptr_t    s_renderMaterialGroup = 0;
+
+static uint32_t forceOpaqueColor(uint32_t color) {
+    return color | 0xFF000000u;
+}
 
 static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
 
@@ -142,9 +148,118 @@ struct AABB {
     bedrocktools::sdk::Vec3 max;
 };
 
+typedef void* (*Level_getHitResult_t)(void* level);
+typedef void* (*HitResult_getEntity_t)(void* hitResult);
+
+static Level_getHitResult_t  s_levelGetHitResult = nullptr;
+static HitResult_getEntity_t s_hitResultGetEntity = nullptr;
+
+// True while the player is aiming at a mob or another player that is close
+// enough to actually be hit. Refreshed once per client tick (resolving the hit
+// result inside a render hook caused frame stalls), and read from the render
+// thread by the cursor hook, hence the atomic.
+static std::atomic<bool> g_aimedEntityInRange{false};
+
+// The actor behind that flag. Published by the same tick lookup so the hitbox
+// indicator can highlight exactly the entity a swing would land on, instead of
+// repeating the raycast on the render thread. Only ever compared by identity
+// against actors fetched in the same frame, never dereferenced.
+static std::atomic<void*> g_aimedEntity{nullptr};
+
+static bool hasCategory(void* actor, uint32_t categoryBit);
+
+// Bedrock already does the reach math for us: the hit result reports
+// TypeEntity only while the target is close enough to hit, and
+// TypeEntityOutOfRange once it is not. So the crosshair turns red exactly
+// when a swing would land.
+static void s_updateAimedEntity(void* player) {
+    bool inRange = false;
+    void* aimed = nullptr;
+
+    if (player && s_levelGetHitResult && s_hitResultGetEntity) {
+        uintptr_t level = *(uintptr_t*)((uintptr_t)player + bedrocktools::sdk::offsets::Actor::mLevel);
+        if (level >= 0x1000) {
+            void* hit = s_levelGetHitResult((void*)level);
+            if (hit) {
+                int type = *(int*)((uintptr_t)hit + bedrocktools::sdk::offsets::HitResult::mType);
+                if (type == bedrocktools::sdk::offsets::HitResult::TypeEntity) {
+                    void* entity = s_hitResultGetEntity(hit);
+                    if (entity && entity != player) {
+                        const bool isPlayer = s_actorIsPlayer && s_actorIsPlayer(entity);
+                        // Category bit 2 is the mob category, the same filter
+                        // the hitbox renderer uses for non-player actors.
+                        if (isPlayer || hasCategory(entity, 2)) {
+                            inRange = true;
+                            aimed = entity;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    g_aimedEntityInRange.store(inRange, std::memory_order_relaxed);
+    g_aimedEntity.store(aimed, std::memory_order_relaxed);
+}
+
+// ---------------------------------------------------------------------------
+// Crosshair indicator
+//
+// Rather than drawing our own cross on top of the HUD, we recolor the game's
+// real cursor. Cursor::render() draws the crosshair through the ScreenContext
+// colour holder, the same RGBA vector every other renderer in this codebase
+// tints geometry with. Overwriting it for the duration of the original call
+// makes the vanilla crosshair itself come out red, and restoring it afterwards
+// keeps the rest of the HUD untouched.
+// ---------------------------------------------------------------------------
+typedef void (*HudCursorRender_t)(void* _this, void* a1, void* screenContext, void* a3);
+static HudCursorRender_t s_origCursorRender = nullptr;
+
+static void s_cursorRenderHook(void* _this, void* a1, void* screenContext, void* a3) {
+    bool tinted = false;
+    float* colorHolder = nullptr;
+    float savedColor[4] = {0.f, 0.f, 0.f, 0.f};
+
+    if (g_hitboxMod && g_hitboxMod->enabled && g_hitboxMod->crosshairIndicator &&
+        g_aimedEntityInRange.load(std::memory_order_relaxed) &&
+        screenContext && (uintptr_t)screenContext >= 0x1000) {
+
+        uintptr_t colorHolderPtr = *(uintptr_t*)((uintptr_t)screenContext +
+            bedrocktools::sdk::offsets::ScreenContext::mColorHolder);
+        if (colorHolderPtr && colorHolderPtr >= 0x1000) {
+            colorHolder = (float*)colorHolderPtr;
+            savedColor[0] = colorHolder[0];
+            savedColor[1] = colorHolder[1];
+            savedColor[2] = colorHolder[2];
+            savedColor[3] = colorHolder[3];
+
+            const uint32_t color = forceOpaqueColor(g_hitboxMod->crosshairIndicatorColor);
+            colorHolder[0] = ((color >> 16) & 0xFF) / 255.0f;
+            colorHolder[1] = ((color >>  8) & 0xFF) / 255.0f;
+            colorHolder[2] = ((color      ) & 0xFF) / 255.0f;
+            colorHolder[3] = 1.0f;
+            tinted = true;
+        }
+    }
+
+    if (s_origCursorRender) s_origCursorRender(_this, a1, screenContext, a3);
+
+    if (tinted && colorHolder) {
+        colorHolder[0] = savedColor[0];
+        colorHolder[1] = savedColor[1];
+        colorHolder[2] = savedColor[2];
+        colorHolder[3] = savedColor[3];
+    }
+}
+
 static void s_hitboxTickCallback(void* _this) {
-    if (!g_hitboxMod || !g_hitboxMod->enabled) return;
+    if (!g_hitboxMod || !g_hitboxMod->enabled) {
+        g_aimedEntityInRange.store(false, std::memory_order_relaxed);
+        g_aimedEntity.store(nullptr, std::memory_order_relaxed);
+        return;
+    }
     g_localPlayerPtr = _this;
+    s_updateAimedEntity(_this);
     uintptr_t svc = *(uintptr_t*)((uintptr_t)_this + bedrocktools::sdk::offsets::Actor::mStateVectorComponent);
     if (svc != 0) {
         g_playerPos = *(bedrocktools::sdk::Vec3*)svc;
@@ -164,10 +279,26 @@ static MaterialPtr getMaterial(const char* name) {
 }
 
 static void ensureMaterials() {
-    if (s_matSelection) return;
     if (!s_renderMaterialGroup) return;
 
     if (!s_matSelection) s_matSelection = getMaterial("selection_box");
+
+    // Thick geometry is drawn as filled quads. The selection overlay
+    // material is built for a translucent block highlight, so using it
+    // makes the hitbox color look washed-out as soon as line thickness
+    // goes above the hairline. Prefer a vertex-color fill instead.
+    if (!s_matFill) {
+        static const char* kFillNames[] = {
+            "ui_fill_color",
+            "ui_textured_and_glcolor",
+            "debug_filled_box",
+            "selection_box"
+        };
+        for (const char* name : kFillNames) {
+            s_matFill = getMaterial(name);
+            if (s_matFill) break;
+        }
+    }
 }
 
 static AABB getActorAABB(void* actor) {
@@ -201,29 +332,6 @@ static bool hasCategory(void* actor, uint32_t categoryBit) {
     return (categories & categoryBit) != 0;
 }
 
-// Entity currently under the crosshair, or nullptr when the player is not
-// aiming at one. The game already performs the reach/raycast test for us, so
-// the indicator turns active exactly when the entity is actually attackable.
-static void* getCrosshairEntity() {
-    if (!g_localPlayerPtr) return nullptr;
-    if (!s_levelGetHitResult || !s_hitResultGetEntity) return nullptr;
-
-    void* level = *(void**)((uintptr_t)g_localPlayerPtr + bedrocktools::sdk::offsets::Actor::mLevel);
-    if (!level) return nullptr;
-
-    void* hit = s_levelGetHitResult(level);
-    if (!hit) return nullptr;
-
-    // Only a real in-range entity hit counts; TypeEntityOutOfRange means the
-    // ray touched an entity the player cannot reach yet.
-    int type = *(int*)((uintptr_t)hit + bedrocktools::sdk::offsets::HitResult::mType);
-    if (type != bedrocktools::sdk::offsets::HitResult::TypeEntity) return nullptr;
-
-    return s_hitResultGetEntity(hit);
-}
-
-
-
 static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (_renderLevel_orig) {
         _renderLevel_orig(_this, screenContext, a3);
@@ -247,13 +355,13 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 
     ensureMaterials();
 
-    void* matInner = s_matSelection ? (void*)&s_matSelection
-                                    : (void*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
+    void* overlayMaterial = (void*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
+    void* matInner = s_matSelection ? (void*)&s_matSelection : overlayMaterial;
 
-    // Filled geometry (thick lines) uses the embedded selection overlay
-    // material, the same one Breadcrumbs / Block Outline use for quads.
-    void* matFill = (void*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
-    if (!matFill) matFill = matInner;
+    // Prefer an opaque vertex-color fill so raising line thickness keeps
+    // the chosen RGB solid instead of inheriting the overlay's alpha.
+    void* matFill = s_matFill ? (void*)&s_matFill : matInner;
+    if (!matFill) matFill = overlayMaterial;
 
     uintptr_t colorHolderPtr = *(uintptr_t*)((uintptr_t)screenContext + bedrocktools::sdk::offsets::ScreenContext::mColorHolder);
     if (!colorHolderPtr || colorHolderPtr < 0x1000) return;
@@ -279,7 +387,10 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         float r = ((color >> 16) & 0xFF) / 255.0f;
         float g = ((color >>  8) & 0xFF) / 255.0f;
         float b = ((color      ) & 0xFF) / 255.0f;
-        float a = ((color >> 24) & 0xFF) / 255.0f;
+        // Hitbox lines stay fully opaque at every thickness. The menu
+        // color picker often stores #RRGGBB (alpha 0) or a low alpha,
+        // which used to make thicker geometry look transparent.
+        const float a = 1.0f;
 
         char pad[0x58];
 
@@ -396,8 +507,17 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     float dz = camZ - localPos.z;
     bool isThirdPerson = (dx*dx + dy*dy + dz*dz) > 0.05f;
 
-    // Resolved once per frame and shared by every box drawn below.
-    void* selectedEntity = g_hitboxMod->hitboxIndicator ? getCrosshairEntity() : nullptr;
+    ActorVec actors{};
+    if (s_actorFetchNearby) {
+        bedrocktools::sdk::Vec3 extent = {30.0f, 30.0f, 30.0f};
+        actors = s_actorFetchNearby(g_localPlayerPtr, &extent, 1);
+    }
+
+    // Target aimed at, resolved on the client tick by s_updateAimedEntity().
+    // Doing the hit-result lookup here instead would stall the render thread.
+    void* selectedEntity = g_hitboxMod->hitboxIndicator
+                             ? g_aimedEntity.load(std::memory_order_relaxed)
+                             : nullptr;
 
     auto renderActor = [&](void* ent) {
         AABB aabb = getActorAABB(ent);
@@ -463,28 +583,23 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         renderActor(g_localPlayerPtr);
     }
 
-    if (s_actorFetchNearby) {
-        bedrocktools::sdk::Vec3 extent = {30.0f, 30.0f, 30.0f};
-        ActorVec actors = s_actorFetchNearby(g_localPlayerPtr, &extent, 1);
+    if (actors.begin && actors.end) {
+        for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
+            void* ent = it->mActor;
+            if (!ent || ent == g_localPlayerPtr) continue;
 
-        if (actors.begin && actors.end) {
-            for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
-                void* ent = it->mActor;
-                if (!ent || ent == g_localPlayerPtr) continue;
-
-                bool isPlayer = false;
-                if (s_actorIsPlayer) {
-                    isPlayer = s_actorIsPlayer(ent);
-                }
-
-                if (isPlayer && !g_hitboxMod->showPlayers) continue;
-
-                if (!isPlayer && (!g_hitboxMod->showEntities || !hasCategory(ent, 2))) continue;
-
-                if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
-
-                renderActor(ent);
+            bool isPlayer = false;
+            if (s_actorIsPlayer) {
+                isPlayer = s_actorIsPlayer(ent);
             }
+
+            if (isPlayer && !g_hitboxMod->showPlayers) continue;
+
+            if (!isPlayer && (!g_hitboxMod->showEntities || !hasCategory(ent, 2))) continue;
+
+            if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
+
+            renderActor(ent);
         }
     }
 
@@ -500,6 +615,7 @@ HitboxModule::HitboxModule()
     showInMenu = true;
 
     m_patched = false;
+    m_cursorHooked = false;
     m_patchTarget = nullptr;
     m_tessBeginAddr = nullptr;
     m_tessColorAddr = nullptr;
@@ -553,11 +669,21 @@ void HitboxModule::onInit() {
     uintptr_t afn = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorFetchNearbyActorsSorted);
     if (afn) s_actorFetchNearby = (Actor_fetchNearbyActorsSorted_t)afn;
 
-    uintptr_t lhr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::LevelGetHitResult);
-    if (lhr) s_levelGetHitResult = (Level_getHitResult_t)lhr;
+    uintptr_t ghr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::LevelGetHitResult);
+    if (ghr) s_levelGetHitResult = (Level_getHitResult_t)ghr;
 
     uintptr_t hge = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::HitResultGetEntity);
     if (hge) s_hitResultGetEntity = (HitResult_getEntity_t)hge;
+
+    // Tint the vanilla crosshair in place instead of drawing our own overlay.
+    if (!m_cursorHooked) {
+        uintptr_t cursor = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::HudCursor);
+        if (cursor) {
+            bedrocktools::hooks::install((void*)cursor, (void*)s_cursorRenderHook,
+                                         (void**)&s_origCursorRender);
+            m_cursorHooked = true;
+        }
+    }
 
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>([](auto& event) { s_hitboxTickCallback(event.player); });
 }
@@ -573,6 +699,8 @@ void HitboxModule::onEnable() {
 }
 
 void HitboxModule::onDisable() {
+    g_aimedEntityInRange.store(false, std::memory_order_relaxed);
+    g_aimedEntity.store(nullptr, std::memory_order_relaxed);
 }
 
 std::string HitboxModule::configDependency(const std::string& key) const {
@@ -605,14 +733,26 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("hitboxIndicator")) {
         hitboxIndicator = j["hitboxIndicator"].get<bool>();
     }
+    if (j.contains("crosshairIndicator")) {
+        try { crosshairIndicator = j["crosshairIndicator"].get<bool>(); } catch (...) {}
+    }
 
     auto parseColor = [&](const std::string& key, uint32_t& outColor) {
-        if (j.contains(key)) {
-            std::string hexStr = j[key].get<std::string>();
-            if (!hexStr.empty() && hexStr[0] == '#') {
-                try { outColor = std::stoul(hexStr.substr(1), nullptr, 16); } catch (...) {}
+        if (!j.contains(key) || !j[key].is_string()) return;
+        std::string hexStr = j[key].get<std::string>();
+        if (hexStr.empty()) return;
+        if (hexStr[0] == '#') hexStr = hexStr.substr(1);
+        else if (hexStr.size() > 1 && hexStr[0] == '0' && (hexStr[1] == 'x' || hexStr[1] == 'X')) hexStr = hexStr.substr(2);
+        try {
+            unsigned long parsed = std::stoul(hexStr, nullptr, 16);
+            if (hexStr.size() <= 6) {
+                // #RRGGBB from the color picker has no alpha byte.
+                outColor = 0xFF000000u | static_cast<uint32_t>(parsed);
+            } else {
+                // Keep RGB, drop any stored transparency.
+                outColor = forceOpaqueColor(static_cast<uint32_t>(parsed));
             }
-        }
+        } catch (...) {}
     };
 
     parseColor("hitboxColor", hitboxColor);
@@ -620,6 +760,7 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     parseColor("lookLineColor", lookLineColor);
     parseColor("indicatorDefaultColor", indicatorDefaultColor);
     parseColor("indicatorActiveColor", indicatorActiveColor);
+    parseColor("crosshairIndicatorColor", crosshairIndicatorColor);
 }
 
 void HitboxModule::saveConfig(nlohmann::json& j) {
@@ -632,17 +773,20 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["lookLineLength"] = lookLineLength;
     j["lineThickness"] = lineThickness;
     j["hitboxIndicator"] = hitboxIndicator;
+    j["crosshairIndicator"] = crosshairIndicator;
 
-    char hexH[12], hexE[12], hexL[12], hexD[12], hexA[12];
-    snprintf(hexH, sizeof(hexH), "#%08X", hitboxColor);
-    snprintf(hexE, sizeof(hexE), "#%08X", eyeLineColor);
-    snprintf(hexL, sizeof(hexL), "#%08X", lookLineColor);
-    snprintf(hexD, sizeof(hexD), "#%08X", indicatorDefaultColor);
-    snprintf(hexA, sizeof(hexA), "#%08X", indicatorActiveColor);
+    char hexH[12], hexE[12], hexL[12], hexD[12], hexA[12], hexC[12];
+    snprintf(hexH, sizeof(hexH), "#%08X", forceOpaqueColor(hitboxColor));
+    snprintf(hexE, sizeof(hexE), "#%08X", forceOpaqueColor(eyeLineColor));
+    snprintf(hexL, sizeof(hexL), "#%08X", forceOpaqueColor(lookLineColor));
+    snprintf(hexD, sizeof(hexD), "#%08X", forceOpaqueColor(indicatorDefaultColor));
+    snprintf(hexA, sizeof(hexA), "#%08X", forceOpaqueColor(indicatorActiveColor));
+    snprintf(hexC, sizeof(hexC), "#%08X", forceOpaqueColor(crosshairIndicatorColor));
 
     j["hitboxColor"] = std::string(hexH);
     j["eyeLineColor"] = std::string(hexE);
     j["lookLineColor"] = std::string(hexL);
     j["indicatorDefaultColor"] = std::string(hexD);
     j["indicatorActiveColor"] = std::string(hexA);
+    j["crosshairIndicatorColor"] = std::string(hexC);
 }

@@ -31,16 +31,26 @@ public:
     float lineThickness = 1.0f;
 
     
-    uint32_t hitboxColor = 0xFFFFFFFF;   
-    uint32_t eyeLineColor = 0xFFFF0000;  
+    // Stored as AARRGGBB. Alpha is always forced opaque when loading,
+    // saving, and drawing so changing line thickness never washes the color out.
+    uint32_t hitboxColor = 0xFFFFFFFF;
+    uint32_t eyeLineColor = 0xFFFF0000;
     uint32_t lookLineColor = 0xFF0000FF; 
 
     bool hitboxIndicator = false;             
     uint32_t indicatorDefaultColor = 0xFFFFFFFF; 
     uint32_t indicatorActiveColor = 0xFFFF0000;  
 
+    // Crosshair indicator: recolors the game's own crosshair as soon as the
+    // player is aiming at a mob or another player that is close enough to
+    // actually be hit. Nothing extra is drawn -- the vanilla cursor itself is
+    // tinted while it renders.
+    bool crosshairIndicator = false;
+    uint32_t crosshairIndicatorColor = 0xFFFF0000;
+
 private:
     bool m_patched;
+    bool m_cursorHooked;
     void* m_patchTarget;
 
     void* m_tessBeginAddr;
