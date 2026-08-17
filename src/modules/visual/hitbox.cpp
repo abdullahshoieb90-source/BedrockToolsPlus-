@@ -567,6 +567,19 @@ void HitboxModule::onEnable() {
 void HitboxModule::onDisable() {
 }
 
+std::string HitboxModule::configDependency(const std::string& key) const {
+    // The two indicator colors and the hit range only make sense while the
+    // "Hitbox Indicator" toggle is on, so the menu hides them until it is
+    // enabled. Their keys do not start with "hitboxIndicator", so the parent
+    // has to be declared here instead of relying on the prefix rule.
+    if (key == "indicatorDefaultColor" ||
+        key == "indicatorActiveColor" ||
+        key == "hitRange") {
+        return "hitboxIndicator";
+    }
+    return {};
+}
+
 void HitboxModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
     showEntities = j.value("showEntities", showEntities);

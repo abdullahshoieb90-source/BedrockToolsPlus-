@@ -220,7 +220,24 @@ void registerModulesWithLauncher() {
 
                 for (auto& entry : configs) {
             std::string k = entry.key;
-            if (entry.type != pl::modmenu::ConfigType::Toggle) {
+
+            // A module can name the parent toggle explicitly. This wins over
+            // the prefix rule below, which only works when the child key
+            // literally starts with the toggle key.
+            std::string explicitParent = mod->configDependency(k);
+            if (!explicitParent.empty()) {
+                bool parentIsToggle = false;
+                for (const auto& parentCandidate : configs) {
+                    if (parentCandidate.key == explicitParent &&
+                        parentCandidate.type == pl::modmenu::ConfigType::Toggle) {
+                        parentIsToggle = true;
+                        break;
+                    }
+                }
+                if (parentIsToggle) entry.depends_on = explicitParent;
+            }
+
+            if (entry.depends_on.empty() && entry.type != pl::modmenu::ConfigType::Toggle) {
                 std::string bestParent = "";
                 for (const auto& parentCandidate : configs) {
                     if (parentCandidate.type == pl::modmenu::ConfigType::Toggle) {
