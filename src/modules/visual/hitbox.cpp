@@ -18,6 +18,8 @@ typedef void (*MeshHelpers_renderMeshImmediately_t)(void* screenContext, void* t
 
 typedef bool (*Actor_isPlayer_t)(void* actor);
 typedef bool (*Actor_isInvisible_t)(void* actor);
+typedef void* (*Level_getHitResult_t)(void* level);
+typedef void* (*HitResult_getEntity_t)(void* hitResult);
 struct DistanceSortedActor {
     void* mActor;
     float mDistance;
@@ -125,6 +127,8 @@ static MeshHelpers_renderMeshImmediately_t s_renderMesh = nullptr;
 static Actor_isPlayer_t                   s_actorIsPlayer = nullptr;
 static Actor_isInvisible_t                s_actorIsInvisible = nullptr;
 static Actor_fetchNearbyActorsSorted_t    s_actorFetchNearby = nullptr;
+static Level_getHitResult_t               s_levelGetHitResult = nullptr;
+static HitResult_getEntity_t              s_hitResultGetEntity = nullptr;
 
 static MaterialPtr s_matSelection;
 static MaterialPtr s_matFill;
@@ -156,6 +160,12 @@ static HitResult_getEntity_t s_hitResultGetEntity = nullptr;
 // thread by the cursor hook, hence the atomic.
 static std::atomic<bool> g_aimedEntityInRange{false};
 
+// The actor behind that flag. Published by the same tick lookup so the hitbox
+// indicator can highlight exactly the entity a swing would land on, instead of
+// repeating the raycast on the render thread. Only ever compared by identity
+// against actors fetched in the same frame, never dereferenced.
+static std::atomic<void*> g_aimedEntity{nullptr};
+
 static bool hasCategory(void* actor, uint32_t categoryBit);
 
 // Bedrock already does the reach math for us: the hit result reports
@@ -164,6 +174,7 @@ static bool hasCategory(void* actor, uint32_t categoryBit);
 // when a swing would land.
 static void s_updateAimedEntity(void* player) {
     bool inRange = false;
+    void* aimed = nullptr;
 
     if (player && s_levelGetHitResult && s_hitResultGetEntity) {
         uintptr_t level = *(uintptr_t*)((uintptr_t)player + bedrocktools::sdk::offsets::Actor::mLevel);
@@ -177,7 +188,10 @@ static void s_updateAimedEntity(void* player) {
                         const bool isPlayer = s_actorIsPlayer && s_actorIsPlayer(entity);
                         // Category bit 2 is the mob category, the same filter
                         // the hitbox renderer uses for non-player actors.
-                        if (isPlayer || hasCategory(entity, 2)) inRange = true;
+                        if (isPlayer || hasCategory(entity, 2)) {
+                            inRange = true;
+                            aimed = entity;
+                        }
                     }
                 }
             }
@@ -185,6 +199,7 @@ static void s_updateAimedEntity(void* player) {
     }
 
     g_aimedEntityInRange.store(inRange, std::memory_order_relaxed);
+    g_aimedEntity.store(aimed, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +255,7 @@ static void s_cursorRenderHook(void* _this, void* a1, void* screenContext, void*
 static void s_hitboxTickCallback(void* _this) {
     if (!g_hitboxMod || !g_hitboxMod->enabled) {
         g_aimedEntityInRange.store(false, std::memory_order_relaxed);
+        g_aimedEntity.store(nullptr, std::memory_order_relaxed);
         return;
     }
     g_localPlayerPtr = _this;
@@ -285,39 +301,6 @@ static void ensureMaterials() {
     }
 }
 
-static bool rayHitsAABB(float ox, float oy, float oz,
-                        float dx, float dy, float dz,
-                        const AABB& aabb,
-                        float maxDist,
-                        float& outDist) {
-    float tmin = 0.0f;
-    float tmax = maxDist;
-
-    auto slab = [&](float origin, float dir, float mn, float mx) -> bool {
-        if (fabsf(dir) < 1e-8f) {
-            return origin >= mn && origin <= mx;
-        }
-        float inv = 1.0f / dir;
-        float t1 = (mn - origin) * inv;
-        float t2 = (mx - origin) * inv;
-        if (t1 > t2) {
-            float tmp = t1;
-            t1 = t2;
-            t2 = tmp;
-        }
-        if (t1 > tmin) tmin = t1;
-        if (t2 < tmax) tmax = t2;
-        return tmin <= tmax;
-    };
-
-    if (!slab(ox, dx, aabb.min.x, aabb.max.x)) return false;
-    if (!slab(oy, dy, aabb.min.y, aabb.max.y)) return false;
-    if (!slab(oz, dz, aabb.min.z, aabb.max.z)) return false;
-    if (tmax < 0.0f) return false;
-    outDist = tmin > 0.0f ? tmin : 0.0f;
-    return true;
-}
-
 static AABB getActorAABB(void* actor) {
     AABB aabb = {{0,0,0},{0,0,0}};
     uintptr_t actorAddr = (uintptr_t)actor;
@@ -348,8 +331,6 @@ static bool hasCategory(void* actor, uint32_t categoryBit) {
     uint32_t categories = *(uint32_t*)(actorAddr + bedrocktools::sdk::offsets::Actor::mCategories);
     return (categories & categoryBit) != 0;
 }
-
-
 
 static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (_renderLevel_orig) {
@@ -532,31 +513,11 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         actors = s_actorFetchNearby(g_localPlayerPtr, &extent, 1);
     }
 
-    void* selectedEntity = nullptr;
-    if (g_hitboxMod->hitboxIndicator && actors.begin && actors.end) {
-        bedrocktools::sdk::Vec2 lookRot = getActorRotation(g_localPlayerPtr);
-        static constexpr float kPi = 3.14159265f;
-        static constexpr float kDegToRad = kPi / 180.0f;
-        const float yawR = lookRot.y * kDegToRad;
-        const float pitchR = lookRot.x * kDegToRad;
-        const float lookX = -sinf(yawR) * cosf(pitchR);
-        const float lookY = -sinf(pitchR);
-        const float lookZ = cosf(yawR) * cosf(pitchR);
-        const float maxLook = g_hitboxMod->hitRange > 6.0f ? g_hitboxMod->hitRange + 3.0f : 8.0f;
-
-        float bestDist = 1e9f;
-        for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
-            void* ent = it->mActor;
-            if (!ent || ent == g_localPlayerPtr) continue;
-            AABB aabb = getActorAABB(ent);
-            float hitDist = 0.0f;
-            if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, maxLook, hitDist)) continue;
-            if (hitDist < bestDist) {
-                bestDist = hitDist;
-                selectedEntity = ent;
-            }
-        }
-    }
+    // Target aimed at, resolved on the client tick by s_updateAimedEntity().
+    // Doing the hit-result lookup here instead would stall the render thread.
+    void* selectedEntity = g_hitboxMod->hitboxIndicator
+                             ? g_aimedEntity.load(std::memory_order_relaxed)
+                             : nullptr;
 
     auto renderActor = [&](void* ent) {
         AABB aabb = getActorAABB(ent);
@@ -565,38 +526,12 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 
         uint32_t boxColor = g_hitboxMod->hitboxColor;
         if (g_hitboxMod->hitboxIndicator) {
-            // The indicator may only become active for the entity currently
-            // under the crosshair. Nearby entities that the player is not
-            // looking at must keep the default indicator color.
-            boxColor = g_hitboxMod->indicatorDefaultColor;
-            if (ent == selectedEntity) {
-                // Closest-point distance from the local player to the entity's
-                // AABB. Using a clamp (rather than face/center distance) means
-                // tall or wide actors register as "in hitrange" the moment the
-                // player is within reach of any part of them, which matches
-                // how MCBE melee reach is measured.
-                float cx = localPos.x;
-                if (cx < aabb.min.x) cx = aabb.min.x;
-                if (cx > aabb.max.x) cx = aabb.max.x;
-
-                float cy = localPos.y;
-                if (cy < aabb.min.y) cy = aabb.min.y;
-                if (cy > aabb.max.y) cy = aabb.max.y;
-
-                float cz = localPos.z;
-                if (cz < aabb.min.z) cz = aabb.min.z;
-                if (cz > aabb.max.z) cz = aabb.max.z;
-
-                float dxA = localPos.x - cx;
-                float dyA = localPos.y - cy;
-                float dzA = localPos.z - cz;
-                float distSq = dxA * dxA + dyA * dyA + dzA * dzA;
-
-                const float range = g_hitboxMod->hitRange;
-                if (distSq <= range * range) {
-                    boxColor = g_hitboxMod->indicatorActiveColor;
-                }
-            }
+            // The indicator only becomes active for the entity currently under
+            // the crosshair. Nearby entities the player is not looking at keep
+            // the default indicator color.
+            boxColor = (ent != nullptr && ent == selectedEntity)
+                         ? g_hitboxMod->indicatorActiveColor
+                         : g_hitboxMod->indicatorDefaultColor;
         }
 
         drawBox(aabb, boxColor);
@@ -765,6 +700,19 @@ void HitboxModule::onEnable() {
 
 void HitboxModule::onDisable() {
     g_aimedEntityInRange.store(false, std::memory_order_relaxed);
+    g_aimedEntity.store(nullptr, std::memory_order_relaxed);
+}
+
+std::string HitboxModule::configDependency(const std::string& key) const {
+    // The two indicator colors only make sense while the "Hitbox Indicator"
+    // toggle is on, so the menu hides them until it is enabled. Their keys do
+    // not start with "hitboxIndicator", so the parent has to be declared here
+    // instead of relying on the prefix rule.
+    if (key == "indicatorDefaultColor" ||
+        key == "indicatorActiveColor") {
+        return "hitboxIndicator";
+    }
+    return {};
 }
 
 void HitboxModule::loadConfig(const nlohmann::json& j) {
@@ -784,9 +732,6 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
 
     if (j.contains("hitboxIndicator")) {
         hitboxIndicator = j["hitboxIndicator"].get<bool>();
-    }
-    if (j.contains("hitRange")) {
-        try { hitRange = j["hitRange"].get<float>(); } catch (...) {}
     }
     if (j.contains("crosshairIndicator")) {
         try { crosshairIndicator = j["crosshairIndicator"].get<bool>(); } catch (...) {}
@@ -828,7 +773,6 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["lookLineLength"] = lookLineLength;
     j["lineThickness"] = lineThickness;
     j["hitboxIndicator"] = hitboxIndicator;
-    j["hitRange"] = hitRange;
     j["crosshairIndicator"] = crosshairIndicator;
 
     char hexH[12], hexE[12], hexL[12], hexD[12], hexA[12], hexC[12];

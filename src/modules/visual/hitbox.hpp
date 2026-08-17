@@ -14,6 +14,7 @@ public:
     void onDisable() override;
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j) override;
+    std::string configDependency(const std::string& key) const override;
 
     
     bool showEntities = true;
@@ -39,7 +40,6 @@ public:
     bool hitboxIndicator = false;             
     uint32_t indicatorDefaultColor = 0xFFFFFFFF; 
     uint32_t indicatorActiveColor = 0xFFFF0000;  
-    float hitRange = 3.0f;                         
 
     // Crosshair indicator: recolors the game's own crosshair as soon as the
     // player is aiming at a mob or another player that is close enough to

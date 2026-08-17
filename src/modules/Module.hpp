@@ -54,6 +54,15 @@ public:
         }
     }
 
+    // Optional explicit parent for a config entry. Returning the key of a
+    // toggle makes the menu register that entry as a child of the toggle, so
+    // it is only shown while the toggle is on. Used when the child key does
+    // not start with the parent key (the menu's automatic prefix rule).
+    virtual std::string configDependency(const std::string& key) const {
+        (void)key;
+        return {};
+    }
+
     virtual void loadConfig(const nlohmann::json& j) {
         if (j.contains("keybind")) keybind = j["keybind"].get<int>();
         if (j.contains("keybindActive")) {
