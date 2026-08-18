@@ -26,6 +26,7 @@
 #include "visual/thirdpersonnametag.hpp"
 #include "hud/tablist.hpp"
 #include "hud/combocounter.hpp"
+#include "hud/effectdisplay.hpp"
 #include "visual/chunkborder.hpp"
 #include "visual/hitbox.hpp"
 #include "visual/zoom.hpp"
@@ -118,6 +119,7 @@ void registerAllModules() {
     registry.emplace<KeystrokesModule>();
     registry.emplace<ThirdPersonNametagModule>();
     registry.emplace<TablistModule>();
+    registry.emplace<EffectDisplayModule>();
     registry.emplace<ChunkBorderModule>();
     registry.emplace<HitboxModule>();
     registry.emplace<ZoomModule>();
