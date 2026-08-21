@@ -1,5 +1,8 @@
 add_rules("mode.debug", "mode.release")
 set_policy("package.requires_lock", true)
+-- Local package index so `xmake f` does not clone github.com/xmake-io/xmake-repo
+-- (GitHub Actions frequently 403s that clone and fails with exit 255).
+add_repositories("xmake-repo xmake-repo", {rootdir = os.scriptdir()})
 
 package("preloader")
     set_homepage("https://github.com/LiteLDev/preloader-android")
