@@ -2,15 +2,10 @@
 -- github.com/xmake-io/xmake-repo.git without auth (rate limit). The
 -- lock file already points at the GitLab mirror; pin it before
 -- add_requires() so `xmake f` never hits GitHub for the index.
+-- Do not call os.exec/os.execv here: xmake sandboxes the project
+-- description and that would abort configure with exit 255.
 if not os.getenv("XMAKE_MAIN_REPO") then
     os.setenv("XMAKE_MAIN_REPO", "https://gitlab.com/tboox/xmake-repo.git")
-end
-if os.getenv("GITHUB_ACTIONS") then
-    os.execv("git", {
-        "config", "--global",
-        "url.https://gitlab.com/tboox/xmake-repo.git.insteadOf",
-        "https://github.com/xmake-io/xmake-repo.git"
-    })
 end
 
 add_rules("mode.debug", "mode.release")
