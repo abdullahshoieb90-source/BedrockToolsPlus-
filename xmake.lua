@@ -1,15 +1,8 @@
--- GitHub Actions runners often get HTTP 403 when cloning
--- github.com/xmake-io/xmake-repo.git without auth (rate limit). The
--- lock file already points at the GitLab mirror; pin it before
--- add_requires() so `xmake f` never hits GitHub for the index.
--- Do not call os.exec/os.execv here: xmake sandboxes the project
--- description and that would abort configure with exit 255.
-if not os.getenv("XMAKE_MAIN_REPO") then
-    os.setenv("XMAKE_MAIN_REPO", "https://gitlab.com/tboox/xmake-repo.git")
-end
-
 add_rules("mode.debug", "mode.release")
 set_policy("package.requires_lock", true)
+-- Local package index so `xmake f` does not clone github.com/xmake-io/xmake-repo
+-- (GitHub Actions frequently 403s that clone and fails with exit 255).
+add_repositories("xmake-repo xmake-repo", {rootdir = os.scriptdir()})
 
 package("preloader")
     set_homepage("https://github.com/LiteLDev/preloader-android")
