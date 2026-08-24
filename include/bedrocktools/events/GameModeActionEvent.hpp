@@ -1,4 +1,4 @@
-Enter#pragma once
+#pragma once
 
 #include <bedrocktools/events/Event.hpp>
 #include <cstdint>
