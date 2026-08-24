@@ -66,8 +66,9 @@ static void s_normalTickCallback(void* player) {
     auto* moveInput = bedrocktools::sdk::moveInputComponent(player);
     if (!moveInput) return;
 
-    const auto& raw = moveInput->mRawInputState;
+    const auto& raw = moveInput->rawInputState();
     const auto analog = raw.mAnalogMoveVector;
+    using MoveInputState = bedrocktools::sdk::MoveInputState;
     constexpr float analogThreshold = 0.05f;
 
     g_keystrokesMod->bW = raw.test(MoveInputState::Flag::Up) || raw.test(MoveInputState::Flag::UpLeft) || raw.test(MoveInputState::Flag::UpRight) || analog.y > analogThreshold;
