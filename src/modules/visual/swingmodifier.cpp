@@ -2,7 +2,7 @@
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Memory.hpp>
-#include <bedrocktools/sdk/Offsets.hpp
+#include <bedrocktools/sdk/Offsets.hpp>
 
 static SwingModifierModule* g_swingMod = nullptr;
 
