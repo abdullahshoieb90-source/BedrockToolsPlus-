@@ -45,6 +45,7 @@
 #include "hud/crosshair.hpp"
 #include "visual/swingmodifier.hpp"
 
+
 ModuleRegistry& ModuleRegistry::get() {
     static ModuleRegistry registry;
     return registry;
@@ -143,4 +144,5 @@ void registerAllModules() {
     registry.emplace<CommentKey>();
     registry.emplace<CommandHotkeyModule>();
     registry.emplace<CrosshairModule>();
+    registry.emplace<SwingModifierModule>();
 }

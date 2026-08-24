@@ -6,8 +6,6 @@
 #include <bedrocktools/events/EventBus.hpp>
 #include "../../config/ConfigManager.hpp"
 
-// PNG only: the capes folder is .png files, and stripping the other decoders
-// keeps the LTO'd binary small.
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_JPEG
 #define STBI_NO_BMP
@@ -18,7 +16,6 @@
 #define STBI_NO_PIC
 #define STBI_NO_PNM
 #include <stb/stb_image.h>
-// Declarations only — the implementation lives in skinstealer.cpp.
 #include <stb/stb_image_write.h>
 
 #include <cstdlib>
@@ -33,36 +30,15 @@ namespace {
 
 using namespace bedrocktools::sdk::offsets;
 
-// Deleter installed on cape blobs we hand to the engine. mce::Blob stores a
-// plain function pointer (void(*)(unsigned char*)) next to the pixel
-// pointer and calls it when the image is destroyed; pointing it at free()
-// makes our malloc'd buffers behave exactly like a vanilla cape blob.
 void freeBlobDeleter(unsigned char* data) {
     std::free(data);
 }
 
-// mce::ImageFormat::RGBA8Unorm == 4 (see include/bedrocktools/sdk/offsets/Skin.hpp).
 constexpr std::uint32_t kCapeImageFormat = 4;
-
-// How often (in ticks) a failed load is retried, in case the file appeared
-// after the picker entry did.
 constexpr int kLoadRetryTicks = 120;
-
-// A synthetic non-empty cape id. Modern game versions gate cape rendering on
-// the id being present at all, so a bare image blob is not enough. The id is
-// changed every time the user picks a different file so the engine's texture
-// cache (keyed by mCapeId) is invalidated and the new cape shows up without
-// leaving the world.
 constexpr const char* kCapeIdBase = "bedrocktools";
-constexpr std::size_t kCapeIdBaseLen = 12; // strlen("bedrocktools")
-[[maybe_unused]] constexpr const char* kCapeId = kCapeIdBase;
-[[maybe_unused]] constexpr std::size_t kCapeIdLen = kCapeIdBaseLen;
+constexpr std::size_t kCapeIdBaseLen = 12;
 
-// Writes a short (SSO) std::string into a libc++ string slot (24 bytes) that
-// the game already owns, e.g. SerializedSkinImpl::mCapeId. libc++ packs a
-// short string's length into the first byte as (len << 1) with the low bit
-// clear; len <= 22 always fits inline so no heap allocation and no capacity
-// bookkeeping is needed. The original bytes must be backed up first.
 void writeShortStdString(uintptr_t addr, const char* text, std::size_t len) {
     unsigned char* p = reinterpret_cast<unsigned char*>(addr);
     std::memset(p, 0, 24);
@@ -78,8 +54,6 @@ std::string capeDirectoryForConfig() {
     return dir + "/capes";
 }
 
-// Resolves the local player's SerializedSkinImpl* following the same chain
-// Skin Stealer uses: Player::mSkin -> ref -> ThreadOwner -> object.
 void* resolvePlayerSkin(void* player) {
     void* skinRefPtr = *reinterpret_cast<void**>(
         reinterpret_cast<uintptr_t>(player) + Player::mSkin);
@@ -87,6 +61,8 @@ void* resolvePlayerSkin(void* player) {
 
     void* sharedBase = reinterpret_cast<void*>(
         reinterpret_cast<uintptr_t>(skinRefPtr) + SerializedSkinRef::mSkinImpl);
+    if (!sharedBase) return nullptr;
+
     void* threadOwner = *reinterpret_cast<void**>(sharedBase);
     if (!threadOwner) return nullptr;
 
@@ -122,28 +98,16 @@ void CustomCapesModule::onEnable() {
 }
 
 void CustomCapesModule::onDisable() {
-    // The next tick restores the vanilla cape through the live player
-    // pointer; nothing is touched here so no pointer can dangle.
 }
-
-// ---------------------------------------------------------------------------
-// capes directory
-// ---------------------------------------------------------------------------
 
 void CustomCapesModule::ensureCapesDirectory() {
     std::error_code ec;
     if (std::filesystem::is_directory(m_capesDir, ec)) return;
     if (!std::filesystem::create_directories(m_capesDir, ec) || ec) return;
-    // First launch: drop a sample cape so the picker is not empty.
     writeSamplePng(m_capesDir + "/Sample Cape.png");
 }
 
 void CustomCapesModule::writeSamplePng(const std::string& path) const {
-    // 10x16 purple gradient with bright accents. It is expanded onto the
-    // 64x32 canvas through the same layout rules as user-supplied images
-    // (design on the outer back face, lining color on the inner face, edge
-    // colors on the top/bottom/side strips), so the sample shows exactly
-    // what a picked file will look like in-game.
     std::vector<std::uint8_t> src(customcapes::kCapeBackWidth * customcapes::kCapeBackHeight * 4u);
     for (std::uint32_t y = 0; y < customcapes::kCapeBackHeight; ++y) {
         for (std::uint32_t x = 0; x < customcapes::kCapeBackWidth; ++x) {
@@ -167,10 +131,6 @@ void CustomCapesModule::writeSamplePng(const std::string& path) const {
     stbi_write_png(path.c_str(), customcapes::kCapeWidth, customcapes::kCapeHeight, 4,
                    px.data(), customcapes::kCapeWidth * 4);
 }
-
-// ---------------------------------------------------------------------------
-// config <-> picker
-// ---------------------------------------------------------------------------
 
 void CustomCapesModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
@@ -205,10 +165,6 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     j["m_cape"] = customcapes::makeRadioValue(m_selectedIndex, m_files);
 }
 
-// ---------------------------------------------------------------------------
-// cape image loading
-// ---------------------------------------------------------------------------
-
 void CustomCapesModule::releaseLoadedCape() {
     m_pixels.clear();
     m_pixels.shrink_to_fit();
@@ -233,28 +189,18 @@ void CustomCapesModule::loadSelectedCape() {
         return;
     }
 
-    // Even an exact 64x32 cape goes through the helper: authored Elytra UVs
-    // stay byte-identical, while a traditional cape with an empty wing area
-    // receives the generated Elytra fallback.
     m_pixels = customcapes::resampleToCape(decoded, static_cast<std::uint32_t>(width),
                                            static_cast<std::uint32_t>(height));
     stbi_image_free(decoded);
     m_capeLoaded = true;
 
-    // Invalidate the engine's cached cape texture by changing mCapeId.
-    // Keep the string <=22 bytes so it stays inside libc++ SSO (no heap alloc).
     ++m_capeIdSerial;
     m_activeCapeId = std::string(kCapeIdBase) + "-" + std::to_string(m_capeIdSerial);
     if (m_activeCapeId.size() > 22) {
-        // Fallback: if the counter grows huge, truncate to still fit SSO.
         m_activeCapeId = std::string(kCapeIdBase) + "-" + std::to_string(m_capeIdSerial % 1000000);
         if (m_activeCapeId.size() > 22) m_activeCapeId.resize(22);
     }
 }
-
-// ---------------------------------------------------------------------------
-// in-game skin patch
-// ---------------------------------------------------------------------------
 
 void CustomCapesModule::clearPatchState() {
     m_patchedSkin = nullptr;
@@ -267,8 +213,6 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
     if (!player) return;
 
     if (m_selectedIndex > 0 && !m_capeLoaded && enabled) {
-        // The picker points at a file we have no pixels for; retry with a
-        // cooldown so a broken/missing file does not stall the tick.
         if (m_retryTicks <= 0) {
             loadSelectedCape();
             if (!m_capeLoaded) m_retryTicks = kLoadRetryTicks;
@@ -280,8 +224,6 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
     void* skin = resolvePlayerSkin(player);
 
     if (!enabled || m_selectedIndex <= 0 || !m_capeLoaded || !skin) {
-        // Picker on None / module off / no decoded cape: put the vanilla
-        // cape back if we still have one patched in.
         restoreOriginalCape(skin);
         return;
     }
@@ -290,16 +232,11 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
 }
 
 bool CustomCapesModule::applyCustomCape(void* skin) {
-    // Persona skins are drawn from the persona pipeline (they have no classic
-    // cape image), so leave them untouched.
     if (*reinterpret_cast<bool*>(
             reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mIsPersona)) {
         return false;
     }
 
-    // Sanity-check the verified skin image before writing anywhere near it:
-    // if a future version moved the member, bail out instead of corrupting
-    // memory. Vanilla/private skins are 64x64 or 128x128 RGBA.
     const uintptr_t skinImage =
         reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mSkinImage;
     const uint32_t skinW = *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth);
@@ -309,81 +246,29 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
                           (skinW == 64 || skinW == 128) && (skinH == 64 || skinH == 128);
     if (!layoutOk) return false;
 
-    const uintptr_t capeImage =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mCapeImage;
-
-    // The backing buffer the game currently sees, plus its metadata.
-    void*& curBlob = *reinterpret_cast<void**>(capeImage + Image::mBytesOffset);
-    size_t& curBlobSize = *reinterpret_cast<size_t*>(capeImage + Image::mBlobSizeOffset);
-    void*& curDeleter = *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset);
-    uint32_t& curFormat = *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat);
-    uint32_t& curWidth = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
-    uint32_t& curHeight = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
-    uint32_t& curDepth = *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth);
-    uint8_t& curUsage = *reinterpret_cast<uint8_t*>(capeImage + Image::mUsage);
-
     if (m_patchedSkin != skin) {
-        // Fresh skin object (join/dimension change/skin swap): the previous
-        // object owns its blob (the engine frees it through our deleter), so
-        // only back the new object up and start over.
-        m_backup.format = curFormat;
-        m_backup.width = curWidth;
-        m_backup.height = curHeight;
-        m_backup.depth = curDepth;
-        m_backup.usage = curUsage;
-        m_backup.deleter = curDeleter;
-        m_backup.size = curBlobSize;
-        m_backup.hadPixels = curBlob != nullptr &&
-                             curBlobSize > 0 && curBlobSize < (64u * 1024u * 1024u);
-        if (m_backup.hadPixels) {
-            m_backup.pixels.assign(static_cast<std::uint8_t*>(curBlob),
-                                   static_cast<std::uint8_t*>(curBlob) + curBlobSize);
-        } else {
-            m_backup.pixels.clear();
-        }
-        std::memcpy(m_backup.capeIdBytes,
-                    reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(skin) +
-                                            SerializedSkinImpl::mCapeId),
-                    24);
         m_patchedSkin = skin;
         m_injectedBlob = nullptr;
         m_needsApply = true;
     }
     m_hasBackup = true;
 
-    const bool alreadyApplied =
-        !m_needsApply && curBlob == m_injectedBlob && m_injectedBlob != nullptr &&
-        curWidth == customcapes::kCapeWidth && curHeight == customcapes::kCapeHeight;
-    if (alreadyApplied) return true;
-
-    // Hand the game a fresh buffer it then owns (freed via freeBlobDeleter).
     const std::size_t bytes = m_pixels.size();
     void* newBlob = std::malloc(bytes);
     if (!newBlob) return false;
     std::memcpy(newBlob, m_pixels.data(), bytes);
 
-    if (curBlob == m_injectedBlob && m_injectedBlob != nullptr) {
-        // The currently installed blob is ours; re-own it before replacing so
-        // nothing leaks. The game cannot be moving this blob around inside
-        // its own tick, and the render path only ever reads it.
+    if (m_injectedBlob != nullptr) {
         std::free(m_injectedBlob);
     }
 
-    curFormat = kCapeImageFormat;
-    curWidth = customcapes::kCapeWidth;
-    curHeight = customcapes::kCapeHeight;
-    curDepth = 1;
-    curUsage = *reinterpret_cast<uint8_t*>(skinImage + Image::mUsage); // mirror the skin's usage tag
-    curBlob = newBlob;
-    curDeleter = reinterpret_cast<void*>(&freeBlobDeleter);
-    curBlobSize = bytes;
+    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) = customcapes::kCapeWidth;
+    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) = customcapes::kCapeHeight;
+    *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) = newBlob;
 
     m_injectedBlob = newBlob;
 
-    // Modern versions skip classic-cape rendering for an empty mCapeId, so
-    // write a synthetic short-string id next to the image. The id changes on
-    // every cape switch (m_activeCapeId) to bust the engine's texture cache.
-    writeShortStdString(reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mCapeId,
+    writeShortStdString(reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mSkinImage,
                         m_activeCapeId.c_str(), m_activeCapeId.size());
 
     m_needsApply = false;
@@ -391,71 +276,16 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
 }
 
 void CustomCapesModule::restoreOriginalCape(void* skin) {
-    if (!m_hasBackup) {
-        clearPatchState();
-        return;
-    }
-    // Only ever write into the skin resolved from the *live* player; if the
-    // object changed, the old one (with our blob) belongs to the engine and
-    // its vanilla replacement is already in place.
-    if (skin != m_patchedSkin || skin == nullptr) {
+    if (!m_hasBackup || skin != m_patchedSkin || skin == nullptr) {
         clearPatchState();
         return;
     }
 
-    const uintptr_t capeImage =
-        reinterpret_cast<uintptr_t>(m_patchedSkin) + SerializedSkinImpl::mCapeImage;
-    void*& curBlob = *reinterpret_cast<void**>(capeImage + Image::mBytesOffset);
-    size_t& curBlobSize = *reinterpret_cast<size_t*>(capeImage + Image::mBlobSizeOffset);
-    void*& curDeleter = *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset);
-    uint32_t& curFormat = *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat);
-    uint32_t& curWidth = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
-    uint32_t& curHeight = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
-    uint32_t& curDepth = *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth);
-    uint8_t& curUsage = *reinterpret_cast<uint8_t*>(capeImage + Image::mUsage);
-
-    // If the engine rebuilt the cape itself, the vanilla state is back.
-    if (curBlob != m_injectedBlob || m_injectedBlob == nullptr) {
-        clearPatchState();
-        return;
+    if (m_injectedBlob != nullptr) {
+        std::free(m_injectedBlob);
+        m_injectedBlob = nullptr;
     }
-
-    std::free(curBlob); // our blob, currently installed -> safe to reclaim
-
-    if (m_backup.hadPixels && !m_backup.pixels.empty()) {
-        void* restored = std::malloc(m_backup.pixels.size());
-        if (restored) {
-            std::memcpy(restored, m_backup.pixels.data(), m_backup.pixels.size());
-            curBlob = restored;
-            curDeleter = reinterpret_cast<void*>(&freeBlobDeleter);
-            curBlobSize = m_backup.pixels.size();
-        } else {
-            curBlob = nullptr;
-            curDeleter = nullptr;
-            curBlobSize = 0;
-        }
-        curFormat = m_backup.format;
-        curWidth = m_backup.width;
-        curHeight = m_backup.height;
-        curDepth = m_backup.depth;
-        curUsage = static_cast<std::uint8_t>(m_backup.usage);
-    } else {
-        // The skin never had a cape: restore an empty image.
-        curBlob = nullptr;
-        curDeleter = nullptr;
-        curBlobSize = 0;
-        curFormat = m_backup.format;
-        curWidth = 0;
-        curHeight = 0;
-        curDepth = 1;
-        curUsage = static_cast<std::uint8_t>(m_backup.usage);
-    }
-
-    // Put the original mCapeId back (it may be a heap pointer owned by the
-    // engine), byte-for-byte as it was backed up.
-    std::memcpy(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_patchedSkin) +
-                                        SerializedSkinImpl::mCapeId),
-                m_backup.capeIdBytes, 24);
 
     clearPatchState();
 }
+

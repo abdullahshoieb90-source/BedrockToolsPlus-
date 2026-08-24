@@ -2,7 +2,7 @@
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Memory.hpp>
-#include <bedrocktools/sdk/Offsets.hpp>
+#include <bedrocktools/sdk/Offsets.hpp
 
 static SwingModifierModule* g_swingMod = nullptr;
 
@@ -27,13 +27,11 @@ static void _renderFirstPerson_hook(void* self, void* renderContext, const void*
     }
     _renderFirstPerson_orig(self, renderContext, prevProj, itemFlags);
 }
-
 static int (*_getModifiedSwingDuration_orig)(void*) = nullptr;
 static int _getModifiedSwingDuration_hook(void* self) {
     if(!g_swingMod || !g_swingMod->enabled) return _getModifiedSwingDuration_orig(self);
     return g_swingMod->m_swingSpeed;
 }
-
 void SwingModifierModule::onInit() {
     uintptr_t renderFirstPerson = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemInHandRendererRenderFirstPerson);
     if (renderFirstPerson != 0) {
@@ -56,7 +54,6 @@ void SwingModifierModule::onInit() {
         }
     }
 }
-
 void SwingModifierModule::applyPatch() {
     if (m_patched || !m_patchTarget) return;
     uint32_t nop = 0xD503201F; 
@@ -64,27 +61,22 @@ void SwingModifierModule::applyPatch() {
     bedrocktools::sdk::patchMemory(m_patchTarget2, &nop, 4);
     m_patched = true;
 }
-
 void SwingModifierModule::removePatch() {
     if (!m_patched || !m_patchTarget) return;
     bedrocktools::sdk::patchMemory(m_patchTarget, m_originalBytes, 4);
     bedrocktools::sdk::patchMemory(m_patchTarget2, m_originalBytes2, 4);
     m_patched = false;
 }
-
 void SwingModifierModule::onEnable() {
 }
-
 void SwingModifierModule::onDisable() {
     removePatch();
 }
-
 void SwingModifierModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
     if (j.contains("m_fluxSwing")) m_fluxSwing = j["m_fluxSwing"].get<bool>();
     if (j.contains("m_swingSpeed")) m_swingSpeed = j["m_swingSpeed"].get<int>();
 }
-
 void SwingModifierModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
     j["m_fluxSwing"] = m_fluxSwing;
