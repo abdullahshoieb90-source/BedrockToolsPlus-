@@ -310,17 +310,20 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
     if (!layoutOk) return false;
 
     const uintptr_t capeImage =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mCapeImage;
+        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mSkinImage;
 
     // The backing buffer the game currently sees, plus its metadata.
-    void*& curBlob = *reinterpret_cast<void**>(capeImage + Image::mBytesOffset);
-    size_t& curBlobSize = *reinterpret_cast<size_t*>(capeImage + Image::mBlobSizeOffset);
-    void*& curDeleter = *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset);
-    uint32_t& curFormat = *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat);
-    uint32_t& curWidth = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
-    uint32_t& curHeight = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
-    uint32_t& curDepth = *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth);
-    uint8_t& curUsage = *reinterpret_cast<uint8_t*>(capeImage + Image::mUsage);
+     void* curBlob = nullptr;
+size_t curBlobSize = 0;
+void* curDeleter = nullptr;
+uint32_t curFormat = 0;
+uint32_t curWidth = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
+uint32_t curHeight = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
+uint32_t curDepth = 0;
+uint8_t curUsage = 0;
+
+
+
 
     if (m_patchedSkin != skin) {
         // Fresh skin object (join/dimension change/skin swap): the previous
@@ -340,11 +343,12 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
                                    static_cast<std::uint8_t*>(curBlob) + curBlobSize);
         } else {
             m_backup.pixels.clear();
-        }
+            
         std::memcpy(m_backup.capeIdBytes,
-                    reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(skin) +
-                                            SerializedSkinImpl::mCapeId),
-                    24);
+    reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(skin) +
+        SerializedSkinImpl::mSkinImage),
+    24);
+
         m_patchedSkin = skin;
         m_injectedBlob = nullptr;
         m_needsApply = true;
