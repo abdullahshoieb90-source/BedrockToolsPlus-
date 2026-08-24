@@ -97,10 +97,9 @@ private:
         uint32_t height = 0;
         uint32_t depth = 0;
         uint32_t usage = 0;
-        void* deleter = nullptr;
+        void* blob = nullptr;       // original pixel pointer (detached, kept alive)
+        void* deleter = nullptr;    // original mce::Blob deleter
         size_t size = 0;
-        std::vector<std::uint8_t> pixels; // deep copy of original pixels (may be empty)
-        bool hadPixels = false;
         std::uint8_t capeIdBytes[24] = {};  // raw copy of the original mCapeId std::string
     };
     CapeBackup m_backup;
