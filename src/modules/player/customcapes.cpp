@@ -40,10 +40,18 @@ constexpr const char* kCapeIdBase = "bedrocktools";
 constexpr std::size_t kCapeIdBaseLen = 12;
 
 void writeShortStdString(uintptr_t addr, const char* text, std::size_t len) {
+    if (len > 22) return; // libc++ short-string capacity inside 24 bytes
     unsigned char* p = reinterpret_cast<unsigned char*>(addr);
     std::memset(p, 0, 24);
     p[0] = static_cast<unsigned char>(len << 1);
     std::memcpy(p + 1, text, len);
+}
+
+bool shortStdStringEquals(uintptr_t addr, const char* text, std::size_t len) {
+    if (len > 22) return false;
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(addr);
+    return p[0] == static_cast<unsigned char>(len << 1) &&
+           std::memcmp(p + 1, text, len) == 0;
 }
 
 std::string capeDirectoryForConfig() {
@@ -206,7 +214,7 @@ void CustomCapesModule::clearPatchState() {
     m_patchedSkin = nullptr;
     m_injectedBlob = nullptr;
     m_hasBackup = false;
-    m_backup.pixels.clear();
+    m_backup = CapeBackup{};
 }
 
 void CustomCapesModule::onLocalPlayerTick(void* player) {
@@ -237,6 +245,9 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
         return false;
     }
 
+    // Layout sanity check on the verified skin-image offset: if the live
+    // skin texture is not where we expect it, every derived offset
+    // (mCapeImage, mCapeId) is unreliable too, so abort the patch.
     const uintptr_t skinImage =
         reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mSkinImage;
     const uint32_t skinW = *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth);
@@ -246,40 +257,99 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
                           (skinW == 64 || skinW == 128) && (skinH == 64 || skinH == 128);
     if (!layoutOk) return false;
 
+    // The cape pixels go into mCapeImage and the synthetic id into mCapeId —
+    // never into mSkinImage (that is the player's skin texture; touching it
+    // makes the game fall back to the default Steve skin).
+    const uintptr_t capeImage =
+        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mCapeImage;
+    const uintptr_t capeIdAddr =
+        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mCapeId;
+
     if (m_patchedSkin != skin) {
+        // New skin object: back up its original cape so that "None"/disable
+        // can bring the vanilla cape back before we patch anything. The
+        // original pixel blob is only detached, never freed, so restoring
+        // the raw pointer is safe.
+        m_backup.format = *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat);
+        m_backup.width = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
+        m_backup.height = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
+        m_backup.depth = *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth);
+        m_backup.usage = *reinterpret_cast<uint32_t*>(capeImage + Image::mUsage);
+        m_backup.blob = *reinterpret_cast<void**>(capeImage + Image::mBytesOffset);
+        m_backup.deleter = *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset);
+        m_backup.size = *reinterpret_cast<std::size_t*>(capeImage + Image::mBlobSizeOffset);
+        std::memcpy(m_backup.capeIdBytes, reinterpret_cast<const void*>(capeIdAddr),
+                    sizeof(m_backup.capeIdBytes));
+
+        // The engine owns the blob we injected into the previous skin object
+        // and frees it through the deleter tag we set — do not free it here.
         m_patchedSkin = skin;
         m_injectedBlob = nullptr;
+        m_hasBackup = true;
         m_needsApply = true;
     }
-    m_hasBackup = true;
+
+    // Patch already in place and untouched? Nothing to do this tick.
+    const bool idIntact = shortStdStringEquals(capeIdAddr, m_activeCapeId.c_str(),
+                                               m_activeCapeId.size());
+    if (!m_needsApply && m_injectedBlob != nullptr &&
+        *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) == m_injectedBlob &&
+        *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth) == customcapes::kCapeWidth &&
+        idIntact) {
+        return true;
+    }
 
     const std::size_t bytes = m_pixels.size();
     void* newBlob = std::malloc(bytes);
     if (!newBlob) return false;
     std::memcpy(newBlob, m_pixels.data(), bytes);
 
-    if (m_injectedBlob != nullptr) {
-        std::free(m_injectedBlob);
-    }
-
-    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) = customcapes::kCapeWidth;
-    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) = customcapes::kCapeHeight;
-    *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) = newBlob;
-
+    // Point the cape image at the new blob before releasing the previous
+    // one so the skin never references freed memory.
+    void* previousBlob = m_injectedBlob;
+    *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat) = kCapeImageFormat;
+    *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth) = customcapes::kCapeWidth;
+    *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight) = customcapes::kCapeHeight;
+    *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) = newBlob;
+    *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset) =
+        reinterpret_cast<void*>(&freeBlobDeleter);
+    *reinterpret_cast<std::size_t*>(capeImage + Image::mBlobSizeOffset) = bytes;
     m_injectedBlob = newBlob;
+    if (previousBlob != nullptr) std::free(previousBlob);
 
-    writeShortStdString(reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mSkinImage,
-                        m_activeCapeId.c_str(), m_activeCapeId.size());
+    writeShortStdString(capeIdAddr, m_activeCapeId.c_str(), m_activeCapeId.size());
 
     m_needsApply = false;
     return true;
 }
 
 void CustomCapesModule::restoreOriginalCape(void* skin) {
-    if (!m_hasBackup || skin != m_patchedSkin || skin == nullptr) {
+    if (!m_hasBackup || skin == nullptr || skin != m_patchedSkin) {
+        // Either nothing to restore or the patched skin object is gone (the
+        // engine destroyed it together with our injected blob).
         clearPatchState();
         return;
     }
+
+    const uintptr_t capeImage =
+        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mCapeImage;
+    const uintptr_t capeIdAddr =
+        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mCapeId;
+
+    // Put the vanilla cape back: dimensions, format, blob metadata, the
+    // original pixel pointer and the original cape id. The blob pointer is
+    // restored before our injected blob is freed, so the skin never
+    // references freed memory.
+    *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat) = m_backup.format;
+    *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth) = m_backup.width;
+    *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight) = m_backup.height;
+    *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth) = m_backup.depth;
+    *reinterpret_cast<uint32_t*>(capeImage + Image::mUsage) = m_backup.usage;
+    *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset) = m_backup.deleter;
+    *reinterpret_cast<std::size_t*>(capeImage + Image::mBlobSizeOffset) = m_backup.size;
+    *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) = m_backup.blob;
+    std::memcpy(reinterpret_cast<void*>(capeIdAddr), m_backup.capeIdBytes,
+                sizeof(m_backup.capeIdBytes));
 
     if (m_injectedBlob != nullptr) {
         std::free(m_injectedBlob);
