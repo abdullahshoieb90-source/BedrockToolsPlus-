@@ -26,6 +26,7 @@
 //     /tmp/wings_patch_test
 
 #include <bedrocktools/modules/visual/wings.hpp>
+#include <bedrocktools/modules/visual/wings_default.hpp>
 #include "config/ConfigManager.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/events/EventBus.hpp>
@@ -293,6 +294,37 @@ int main() {
                     skinSnapshot.data() + off::SerializedSkinImpl::mGeometryData,
                     24),
           "mGeometryData untouched for a persona skin");
+
+    // ------------------------------------------------------------------
+    // With no external wings folder the module falls back to the built-in
+    // default pack, so the wings work immediately after install.
+    // ------------------------------------------------------------------
+    std::printf("no external folder: built-in defaults are used\n");
+    skin = skinSnapshot;
+    g_testConfigPath = root + "/no_wings/config.json"; // no .../no_wings/wings dir
+    WingsModule modDefault;
+    modDefault.onInit();
+    modDefault.enabled = true;
+    modDefault.onLocalPlayerTick(player.data());
+    check(readFakeString(skinBase, off::SerializedSkinImpl::mDefaultGeometryName) ==
+              wings_default::GeometryIdentifier,
+          "default geometry identifier is used");
+    check(readFakeString(skinBase, off::SerializedSkinImpl::mGeometryData) ==
+              wings_default::GeometryJson,
+          "default geometry JSON is used");
+
+    void* defaultBlob = readPtr(skinBase + off::SerializedSkinImpl::mSkinImage, off::Image::mBytesOffset);
+    const std::size_t defaultBytes =
+        wings_default::TextureWidth * wings_default::TextureHeight * 4u;
+    check(readU32(skinBase + off::SerializedSkinImpl::mSkinImage, off::SkinImage::mWidth) ==
+              wings_default::TextureWidth &&
+              readU32(skinBase + off::SerializedSkinImpl::mSkinImage, off::SkinImage::mHeight) ==
+                  wings_default::TextureHeight,
+          "default texture dimensions are used");
+    check(defaultBlob != nullptr &&
+              sameBytes(static_cast<const std::uint8_t*>(defaultBlob),
+                        wings_default::TexturePixels, defaultBytes),
+          "default texture pixels are used");
 
     // ------------------------------------------------------------------
     std::printf("\n");

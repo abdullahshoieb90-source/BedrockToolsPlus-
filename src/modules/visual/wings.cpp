@@ -1,4 +1,5 @@
 #include <bedrocktools/modules/visual/wings.hpp>
+#include <bedrocktools/modules/visual/wings_default.hpp>
 
 #include "modules/ModuleRegistry.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
@@ -162,7 +163,7 @@ std::string readStdString(uintptr_t addr) {
 WingsModule* g_wings = nullptr;
 
 WingsModule::WingsModule()
-    : Module("Wings", "Wear the custom wings_geometry.json + wings.png skin pack in the BedrockTools wings folder (local only).") {
+    : Module("Wings", "Wear the built-in wings skin pack (or your wings_geometry.json + wings.png in the BedrockTools wings folder).") {
     g_wings = this;
 }
 
@@ -180,11 +181,13 @@ void WingsModule::onInit() {
 }
 
 void WingsModule::onEnable() {
-    // Reload whenever the assets are not loaded yet, including after a
-    // previous failed attempt — the user may have dropped the files in since.
+    // Re-resolve on every enable: external files in the wings folder take
+    // priority, and the built-in defaults are the fallback when they are not
+    // present. This also picks up files the user dropped in while the module
+    // was running the default pack.
     m_loadFailed = false;
     m_retryTicks = 0;
-    if (!m_assetsLoaded) loadWingsAssets();
+    loadWingsAssets();
     m_needsApply = true;
 }
 
@@ -203,8 +206,25 @@ void WingsModule::releaseWingsAssets() {
     m_textureWidth = 0;
     m_textureHeight = 0;
     m_assetsLoaded = false;
+    m_useDefaults = false;
     m_loadFailed = false;
     m_retryTicks = 0;
+}
+
+// Loads the embedded default pack into the module-owned buffers.
+void WingsModule::loadDefaultAssets() {
+    m_geometryData = wings_default::GeometryJson;
+    m_defaultGeometryName = wings_default::GeometryIdentifier;
+
+    const std::size_t bytes = wings_default::TextureWidth * wings_default::TextureHeight * 4u;
+    m_texturePixels.assign(wings_default::TexturePixels,
+                           wings_default::TexturePixels + bytes);
+    m_textureWidth = static_cast<int>(wings_default::TextureWidth);
+    m_textureHeight = static_cast<int>(wings_default::TextureHeight);
+    m_assetsLoaded = true;
+    m_useDefaults = true;
+    m_loadFailed = false;
+    m_needsApply = true;
 }
 
 void WingsModule::loadWingsAssets() {
@@ -212,7 +232,9 @@ void WingsModule::loadWingsAssets() {
 
     std::error_code ec;
     if (!std::filesystem::is_directory(m_wingsDir, ec)) {
-        m_loadFailed = true;
+        // No user-supplied wings folder: use the built-in pack straight away,
+        // so the feature works immediately after install.
+        loadDefaultAssets();
         return;
     }
 
@@ -220,12 +242,12 @@ void WingsModule::loadWingsAssets() {
     const std::string texturePath = m_wingsDir + "/wings.png";
 
     if (!readFile(geometryPath, m_geometryData) || m_geometryData.empty()) {
-        m_loadFailed = true;
+        loadDefaultAssets();
         return;
     }
     m_defaultGeometryName = parseGeometryIdentifier(m_geometryData);
     if (m_defaultGeometryName.empty()) {
-        m_loadFailed = true;
+        loadDefaultAssets();
         return;
     }
 
@@ -235,7 +257,7 @@ void WingsModule::loadWingsAssets() {
         width > static_cast<int>(kMaxSourceDimension) ||
         height > static_cast<int>(kMaxSourceDimension)) {
         if (decoded) stbi_image_free(decoded);
-        m_loadFailed = true;
+        loadDefaultAssets();
         return;
     }
 
@@ -247,6 +269,8 @@ void WingsModule::loadWingsAssets() {
     m_textureWidth = width;
     m_textureHeight = height;
     m_assetsLoaded = true;
+    m_useDefaults = false;
+    m_loadFailed = false;
     m_needsApply = true;
 }
 

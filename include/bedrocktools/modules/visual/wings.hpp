@@ -24,6 +24,11 @@
 //                              pick the custom model instead of the default
 //                              humanoid one.
 //
+// When the external files are present they win. If the folder/files are
+// missing the module falls back to the built-in default pack
+// (resources/wings generated into wings_default.hpp), so the wings work
+// immediately after install with no manual setup.
+//
 // The module is tick driven exactly like CustomCapes: the local-player tick
 // re-resolves a fresh skin object every frame, so a skin that the engine
 // rebuilds afterwards is patched again on the next tick, and the injected
@@ -66,6 +71,7 @@ public:
 
 private:
     void loadWingsAssets();
+    void loadDefaultAssets();
     void releaseWingsAssets();
 
     bool applyWings(void* skin);
@@ -74,6 +80,7 @@ private:
 
     std::string m_wingsDir;
     bool m_assetsLoaded = false;
+    bool m_useDefaults = false; // true when the built-in pack is active
     bool m_loadFailed = false;
     int m_retryTicks = 0;
 
