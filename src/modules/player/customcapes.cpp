@@ -408,15 +408,15 @@ void CustomCapesModule::restoreOriginalCape(void* skin) {
     }
 
     const uintptr_t capeImage =
-        reinterpret_cast<uintptr_t>(m_patchedSkin) + SerializedSkinImpl::mCapeImage;
-    void*& curBlob = *reinterpret_cast<void**>(capeImage + Image::mBytesOffset);
-    size_t& curBlobSize = *reinterpret_cast<size_t*>(capeImage + Image::mBlobSizeOffset);
-    void*& curDeleter = *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset);
-    uint32_t& curFormat = *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat);
-    uint32_t& curWidth = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
-    uint32_t& curHeight = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
-    uint32_t& curDepth = *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth);
-    uint8_t& curUsage = *reinterpret_cast<uint8_t*>(capeImage + Image::mUsage);
+    reinterpret_cast<uintptr_t>(m_patchedSkin) + SerializedSkinImpl::mSkinImage;
+void* curBlob = nullptr;
+size_t curBlobSize = 0;
+void* curDeleter = nullptr;
+uint32_t curFormat = 0;
+uint32_t curWidth = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
+uint32_t curHeight = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
+uint32_t curDepth = 0;
+uint8_t curUsage = 0;
 
     // If the engine rebuilt the cape itself, the vanilla state is back.
     if (curBlob != m_injectedBlob || m_injectedBlob == nullptr) {
@@ -462,4 +462,4 @@ void CustomCapesModule::restoreOriginalCape(void* skin) {
                 m_backup.capeIdBytes, 24);
 
     clearPatchState();
-}
+{    }
