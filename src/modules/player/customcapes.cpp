@@ -38,8 +38,6 @@ constexpr std::uint32_t kCapeImageFormat = 4;
 constexpr int kLoadRetryTicks = 120;
 constexpr const char* kCapeIdBase = "bedrocktools";
 constexpr std::size_t kCapeIdBaseLen = 12;
-[[maybe_unused]] constexpr const char* kCapeId = kCapeIdBase;
-[[maybe_unused]] constexpr std::size_t kCapeIdLen = kCapeIdBaseLen;
 
 void writeShortStdString(uintptr_t addr, const char* text, std::size_t len) {
     unsigned char* p = reinterpret_cast<unsigned char*>(addr);
@@ -63,6 +61,8 @@ void* resolvePlayerSkin(void* player) {
 
     void* sharedBase = reinterpret_cast<void*>(
         reinterpret_cast<uintptr_t>(skinRefPtr) + SerializedSkinRef::mSkinImpl);
+    if (!sharedBase) return nullptr;
+
     void* threadOwner = *reinterpret_cast<void**>(sharedBase);
     if (!threadOwner) return nullptr;
 
@@ -246,68 +246,25 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
                           (skinW == 64 || skinW == 128) && (skinH == 64 || skinH == 128);
     if (!layoutOk) return false;
 
-    const uintptr_t capeImage =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mSkinImage;
-
-    void* curBlob = nullptr;
-    size_t curBlobSize = 0;
-    void* curDeleter = nullptr;
-    uint32_t curFormat = 0;
-    uint32_t curWidth = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
-    uint32_t curHeight = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
-    uint32_t curDepth = 0;
-    uint8_t curUsage = 0;
-
     if (m_patchedSkin != skin) {
-        m_backup.format = curFormat;
-        m_backup.width = curWidth;
-        m_backup.height = curHeight;
-        m_backup.depth = curDepth;
-        m_backup.usage = curUsage;
-        m_backup.deleter = curDeleter;
-        m_backup.size = curBlobSize;
-        m_backup.hadPixels = curBlob != nullptr &&
-                             curBlobSize > 0 && curBlobSize < (64u * 1024u * 1024u);
-        if (m_backup.hadPixels) {
-            m_backup.pixels.assign(static_cast<std::uint8_t*>(curBlob),
-                                   static_cast<std::uint8_t*>(curBlob) + curBlobSize);
-        } else {
-            m_backup.pixels.clear();
-        }
-
-        std::memcpy(m_backup.capeIdBytes,
-                    reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(skin) +
-                        SerializedSkinImpl::mSkinImage),
-                    24);
-
         m_patchedSkin = skin;
         m_injectedBlob = nullptr;
         m_needsApply = true;
     }
     m_hasBackup = true;
 
-    const bool alreadyApplied =
-        !m_needsApply && curBlob == m_injectedBlob && m_injectedBlob != nullptr &&
-        curWidth == customcapes::kCapeWidth && curHeight == customcapes::kCapeHeight;
-    if (alreadyApplied) return true;
-
     const std::size_t bytes = m_pixels.size();
     void* newBlob = std::malloc(bytes);
     if (!newBlob) return false;
     std::memcpy(newBlob, m_pixels.data(), bytes);
 
-    if (curBlob == m_injectedBlob && m_injectedBlob != nullptr) {
+    if (m_injectedBlob != nullptr) {
         std::free(m_injectedBlob);
     }
 
-    curFormat = kCapeImageFormat;
-    curWidth = customcapes::kCapeWidth;
-    curHeight = customcapes::kCapeHeight;
-    curDepth = 1;
-    curUsage = *reinterpret_cast<uint8_t*>(skinImage + Image::mUsage);
-    curBlob = newBlob;
-    curDeleter = reinterpret_cast<void*>(&freeBlobDeleter);
-    curBlobSize = bytes;
+    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) = customcapes::kCapeWidth;
+    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) = customcapes::kCapeHeight;
+    *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) = newBlob;
 
     m_injectedBlob = newBlob;
 
@@ -319,64 +276,15 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
 }
 
 void CustomCapesModule::restoreOriginalCape(void* skin) {
-    if (!m_hasBackup) {
-        clearPatchState();
-        return;
-    }
-    if (skin != m_patchedSkin || skin == nullptr) {
+    if (!m_hasBackup || skin != m_patchedSkin || skin == nullptr) {
         clearPatchState();
         return;
     }
 
-    const uintptr_t capeImage =
-        reinterpret_cast<uintptr_t>(m_patchedSkin) + SerializedSkinImpl::mSkinImage;
-    void* curBlob = nullptr;
-    size_t curBlobSize = 0;
-    void* curDeleter = nullptr;
-    uint32_t curFormat = 0;
-    uint32_t curWidth = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
-    uint32_t curHeight = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
-    uint32_t curDepth = 0;
-    uint8_t curUsage = 0;
-
-    if (curBlob != m_injectedBlob || m_injectedBlob == nullptr) {
-        clearPatchState();
-        return;
+    if (m_injectedBlob != nullptr) {
+        std::free(m_injectedBlob);
+        m_injectedBlob = nullptr;
     }
-
-    std::free(curBlob);
-
-    if (m_backup.hadPixels && !m_backup.pixels.empty()) {
-        void* restored = std::malloc(m_backup.pixels.size());
-        if (restored) {
-            std::memcpy(restored, m_backup.pixels.data(), m_backup.pixels.size());
-            curBlob = restored;
-            curDeleter = reinterpret_cast<void*>(&freeBlobDeleter);
-            curBlobSize = m_backup.pixels.size();
-        } else {
-            curBlob = nullptr;
-            curDeleter = nullptr;
-            curBlobSize = 0;
-        }
-        curFormat = m_backup.format;
-        curWidth = m_backup.width;
-        curHeight = m_backup.height;
-        curDepth = m_backup.depth;
-        curUsage = static_cast<std::uint8_t>(m_backup.usage);
-    } else {
-        curBlob = nullptr;
-        curDeleter = nullptr;
-        curBlobSize = 0;
-        curFormat = m_backup.format;
-        curWidth = 0;
-        curHeight = 0;
-        curDepth = 1;
-        curUsage = static_cast<std::uint8_t>(m_backup.usage);
-    }
-
-    std::memcpy(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_patchedSkin) +
-                                        SerializedSkinImpl::mSkinImage),
-                m_backup.capeIdBytes, 24);
 
     clearPatchState();
 }
