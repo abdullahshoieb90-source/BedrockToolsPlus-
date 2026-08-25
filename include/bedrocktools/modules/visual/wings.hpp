@@ -92,6 +92,9 @@ public:
     // Current per-bone pose computed from the flap clock, flight intensity
     // and glide factor.
     WingBoneAngles currentBoneAngles() const;
+    // Interpolated version that adds time since last tick for ultra-low
+    // latency rendering (called from the RenderLevel hook).
+    WingBoneAngles currentBoneAnglesInterpolated() const;
 
     // Directory the module writes its assets to; kept for menu description
     // compatibility.
@@ -144,15 +147,15 @@ public:
     static constexpr float kFeatherLagBase = 2.4434610f;  // 140 deg
     static constexpr float kFeatherLagStep = 0.3490659f;  // 20 deg
 
-    // Speed-driven blending.
+    // Speed-driven blending - tuned for minimal latency (instant response).
     static constexpr float kWalkSpeedFull = 4.3f;     // blocks/s: vanilla walk
-    static constexpr float kRiseSpeedFlap = 1.5f;     // vy above => flap hard
+    static constexpr float kRiseSpeedFlap = 0.5f;     // vy above => flap hard (lower = faster jump response, was 1.5)
     static constexpr float kGlideFallSpeed = -1.5f;   // vy below => count airtime
-    static constexpr float kGlideAirTime = 0.35f;     // seconds before gliding
-    static constexpr float kIntensityAttackRate = 6.0f;  // 1/s lerp rate up
-    static constexpr float kIntensityDecayRate = 2.5f;   // 1/s lerp rate down
-    static constexpr float kGlideAttackRate = 4.0f;
-    static constexpr float kGlideDecayRate = 3.0f;
+    static constexpr float kGlideAirTime = 0.25f;     // seconds before gliding (reduced from 0.35 for faster response, but >0.2 to avoid hop gliding)
+    static constexpr float kIntensityAttackRate = 30.0f;  // 1/s lerp rate up (was 6.0 - now ultra-fast)
+    static constexpr float kIntensityDecayRate = 25.0f;   // 1/s lerp rate down (was 2.5)
+    static constexpr float kGlideAttackRate = 30.0f;      // was 4.0
+    static constexpr float kGlideDecayRate = 25.0f;       // was 3.0
 
     // Face palette shared with the generated texture (see wings_default.hpp);
     // the host test cross-checks both copies stay in sync.

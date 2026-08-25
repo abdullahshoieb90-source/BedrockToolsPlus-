@@ -126,6 +126,13 @@ static WingBoneAngles s_boneAngles{};
 static void* s_localPlayerPtr = nullptr;
 static bool s_hasPlayer = false;
 
+// --- Zero-latency extension: velocity + prediction ---
+static float s_velX = 0.0f, s_velY = 0.0f, s_velZ = 0.0f;
+static float s_hSpeed = 0.0f, s_vSpeed = 0.0f;
+static std::chrono::steady_clock::time_point s_lastTickTime{};
+static bool s_hasVelocity = false;
+static bool s_lastTickTimeValid = false;
+
 static AABB getActorAABB(void* actor) {
     AABB aabb{};
     std::uintptr_t actorAddr = (std::uintptr_t)actor;
@@ -352,21 +359,81 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     if (!levelRenderer || (std::uintptr_t)levelRenderer < 0x1000) return;
     if (!s_tessBegin || !s_tessColor || !s_tessVertex || !s_renderMesh) return;
 
-    AABB aabb;
-    bedrocktools::sdk::Vec2 rot;
-    WingBoneAngles angles;
+    AABB aabb{};
+    bedrocktools::sdk::Vec2 rot{};
+    WingBoneAngles angles{};
+    void* playerPtr = nullptr;
+    float velX = 0.0f, velY = 0.0f, velZ = 0.0f;
+    std::chrono::steady_clock::time_point lastTick{};
+    bool lastTickValid = false;
+    bool hasPlayer = false;
+
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         if (!s_hasPlayer) return;
+        hasPlayer = s_hasPlayer;
         aabb = s_playerAABB;
         rot = s_playerRot;
         angles = s_boneAngles;
+        playerPtr = s_localPlayerPtr;
+        velX = s_velX; velY = s_velY; velZ = s_velZ;
+        lastTick = s_lastTickTime;
+        lastTickValid = s_lastTickTimeValid;
+    }
+
+    if (!hasPlayer) return;
+
+    // --- ULTRA-LOW LATENCY: fetch live AABB/rotation directly from actor memory ---
+    // This bypasses the 20Hz tick delay and gives us the position at render time (60+ FPS).
+    if (playerPtr && (std::uintptr_t)playerPtr >= 0x1000) {
+        AABB liveAABB = getActorAABB(playerPtr);
+        // Validate live AABB is not zero
+        bool liveValid = !(liveAABB.min.x == 0 && liveAABB.min.y == 0 && liveAABB.min.z == 0 &&
+                           liveAABB.max.x == 0 && liveAABB.max.y == 0 && liveAABB.max.z == 0);
+        // Also check for NaN/inf and huge values
+        if (liveValid) {
+            // Use live AABB as base - this is the freshest position
+            aabb = liveAABB;
+            bedrocktools::sdk::Vec2 liveRot = getActorRotation(playerPtr);
+            // Only override if rotation looks sane
+            if (std::isfinite(liveRot.x) && std::isfinite(liveRot.y)) {
+                rot = liveRot;
+            }
+        }
     }
 
     // Validate AABB
     if (aabb.min.x == 0 && aabb.min.y == 0 && aabb.min.z == 0 &&
         aabb.max.x == 0 && aabb.max.y == 0 && aabb.max.z == 0) {
         return;
+    }
+
+    // --- Prediction: extrapolate position using velocity * timeSinceLastTick ---
+    // This removes the remaining 0-50ms tick-to-render gap.
+    if (lastTickValid) {
+        auto now = std::chrono::steady_clock::now();
+        float dtSince = std::chrono::duration<float>(now - lastTick).count();
+        // Clamp: don't predict too far, and ignore negative
+        if (dtSince < 0.0f) dtSince = 0.0f;
+        if (dtSince > 0.12f) dtSince = 0.12f; // max 120ms prediction
+        if (dtSince > 0.001f && s_hasVelocity) {
+            // Only apply if velocity is reasonable (not teleport)
+            float velSq = velX*velX + velY*velY + velZ*velZ;
+            if (velSq < 2500.0f) { // <50 blocks/s
+                aabb.min.x += velX * dtSince;
+                aabb.min.y += velY * dtSince;
+                aabb.min.z += velZ * dtSince;
+                aabb.max.x += velX * dtSince;
+                aabb.max.y += velY * dtSince;
+                aabb.max.z += velZ * dtSince;
+            }
+        }
+    }
+
+    // --- Interpolated bone angles for smooth flap between ticks ---
+    if (g_wings) {
+        // Use interpolated angles if available (adds extra flap time)
+        angles = g_wings->currentBoneAnglesInterpolated();
     }
 
     std::uintptr_t tessPtr = *(std::uintptr_t*)((std::uintptr_t)screenContext + ScreenContext::mTessellator);
@@ -516,6 +583,10 @@ void WingsModule::onEnable() {
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_boneAngles = WingBoneAngles{};
+        s_velX = s_velY = s_velZ = 0.0f;
+        s_hSpeed = s_vSpeed = 0.0f;
+        s_hasVelocity = false;
+        s_lastTickTimeValid = false;
     }
 }
 
@@ -524,6 +595,9 @@ void WingsModule::onDisable() {
     std::lock_guard<std::mutex> lock(s_stateMutex);
     s_hasPlayer = false;
     s_localPlayerPtr = nullptr;
+    s_velX = s_velY = s_velZ = 0.0f;
+    s_hasVelocity = false;
+    s_lastTickTimeValid = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +660,55 @@ WingBoneAngles WingsModule::currentBoneAngles() const {
     return out;
 }
 
+WingBoneAngles WingsModule::currentBoneAnglesInterpolated() const {
+    // Ultra-low latency: add time since last tick to flapTime for smooth 60+ FPS animation
+    float effectiveFlapTime = m_flapTime;
+    if (m_flapClockStarted) {
+        auto now = std::chrono::steady_clock::now();
+        float extra = std::chrono::duration<float>(now - m_lastFlapTick).count();
+        if (extra < 0.0f) extra = 0.0f;
+        if (extra > 0.1f) extra = 0.1f; // clamp to 100ms to avoid large jumps after hitch
+        effectiveFlapTime += extra;
+    }
+
+    WingBoneAngles out;
+    const float phase = effectiveFlapTime * kFlapBaseRate * m_flapSpeed;
+    const float idlePh = effectiveFlapTime * kIdleRate * m_flapSpeed;
+    const float glidePh = effectiveFlapTime * kGlideRate * m_flapSpeed;
+    const float w = m_intensity;
+    const float g = m_glide;
+
+    const float shoulderFlap = lerpFloat(kIdleBaseDegrees, kFlightBaseDegrees, w)
+        + lerpFloat(kIdleAmplitudeDegrees * std::sin(idlePh),
+                    kFlapAmplitudeDegrees * std::sin(phase), w);
+    const float upperFlap = lerpFloat(6.0f, 0.0f, w)
+        + lerpFloat(4.0f * std::sin(idlePh - kIdleUpperLag),
+                    kFlightUpperAmplitudeDegrees * std::sin(phase - kUpperLag), w);
+    const float tipFlap = lerpFloat(8.0f, 0.0f, w)
+        + lerpFloat(3.0f * std::sin(idlePh - kIdleTipLag),
+                    kFlightTipAmplitudeDegrees * std::sin(phase - kTipLag), w);
+
+    const float shoulderGlide = kGlideBaseDegrees + 3.0f * std::sin(glidePh);
+    const float upperGlide = -15.0f + 3.0f * std::sin(glidePh - 0.5235988f);
+    const float tipGlide = -15.0f + 2.0f * std::sin(glidePh - 1.0471976f);
+
+    out.shoulderDeg = lerpFloat(shoulderFlap, shoulderGlide, g);
+    out.upperDeg = lerpFloat(upperFlap, upperGlide, g);
+    out.tipDeg = lerpFloat(tipFlap, tipGlide, g);
+    for (int i = 0; i < 4; ++i) {
+        const float fi = static_cast<float>(i);
+        const float featherFlap =
+            lerpFloat(2.5f * std::sin(idlePh - kIdleFeatherLagBase - fi * kIdleFeatherLagStep),
+                      kFlightFeatherAmplitudeDegrees * std::sin(phase - kFeatherLagBase - fi * kFeatherLagStep), w);
+        const float featherGlide = 4.0f + 2.0f * std::sin(glidePh - 1.5707963f - fi * kIdleFeatherLagStep);
+        out.featherDeg[i] = lerpFloat(featherFlap, featherGlide, g);
+    }
+    out.flapPhase = phase;
+    out.intensity = w;
+    out.glide = g;
+    return out;
+}
+
 void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, float verticalSpeed) {
     if (dtSeconds <= 0.0f) return;
     m_flapTime += dtSeconds;
@@ -594,9 +717,9 @@ void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, f
     verticalSpeed = std::clamp(verticalSpeed, -40.0f, 40.0f);
 
     // Flap target from horizontal movement; rising fast (e.g. jumping off a
-    // ledge) also triggers strong flapping.
+    // ledge) also triggers strong flapping - instant full flap on jump for zero latency.
     float moveT = std::clamp(horizontalSpeed / kWalkSpeedFull, 0.0f, 1.0f);
-    if (verticalSpeed > kRiseSpeedFlap) moveT = std::max(moveT, 0.85f);
+    if (verticalSpeed > kRiseSpeedFlap) moveT = std::max(moveT, 1.0f);
 
     // Glide target requires a sustained descent so short hops do not count.
     const bool descending = verticalSpeed < kGlideFallSpeed;
@@ -629,6 +752,9 @@ void WingsModule::onLocalPlayerTick(void* player) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_hasPlayer = false;
         s_localPlayerPtr = nullptr;
+        s_velX = s_velY = s_velZ = 0.0f;
+        s_hasVelocity = false;
+        s_lastTickTimeValid = false;
         return;
     }
 
@@ -636,6 +762,9 @@ void WingsModule::onLocalPlayerTick(void* player) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_hasPlayer = false;
         s_localPlayerPtr = nullptr;
+        s_velX = s_velY = s_velZ = 0.0f;
+        s_hasVelocity = false;
+        s_lastTickTimeValid = false;
         return;
     }
 
@@ -658,9 +787,12 @@ void WingsModule::onLocalPlayerTick(void* player) {
     const float centerY = (aabb.min.y + aabb.max.y) * 0.5f;
     const float centerZ = (aabb.min.z + aabb.max.z) * 0.5f;
 
+    float horizontalSpeed = 0.0f;
+    float verticalSpeed = 0.0f;
+    float velX = 0.0f, velY = 0.0f, velZ = 0.0f;
+    bool hasVel = false;
+
     if (dt > 0.0f) {
-        float horizontalSpeed = 0.0f;
-        float verticalSpeed = 0.0f;
         if (m_hasPrevCenter) {
             const float dx = centerX - m_prevCenterX;
             const float dy = centerY - m_prevCenterY;
@@ -668,6 +800,10 @@ void WingsModule::onLocalPlayerTick(void* player) {
             if (dx * dx + dy * dy + dz * dz < 25.0f) { // 5 blocks: not a teleport
                 horizontalSpeed = std::sqrt(dx * dx + dz * dz) / dt;
                 verticalSpeed = dy / dt;
+                velX = dx / dt;
+                velY = dy / dt;
+                velZ = dz / dt;
+                hasVel = true;
             }
         }
         advanceWingAnimation(dt, horizontalSpeed, verticalSpeed);
@@ -684,6 +820,20 @@ void WingsModule::onLocalPlayerTick(void* player) {
         s_playerRot = rot;
         s_localPlayerPtr = player;
         s_hasPlayer = true;
+        // Store velocity for prediction in render thread
+        if (hasVel) {
+            s_velX = velX; s_velY = velY; s_velZ = velZ;
+            s_hSpeed = horizontalSpeed; s_vSpeed = verticalSpeed;
+            s_hasVelocity = true;
+        } else if (dt > 0.0f) {
+            // If no velocity this tick, decay quickly to zero to avoid stale prediction
+            s_velX *= 0.5f; s_velY *= 0.5f; s_velZ *= 0.5f;
+            if (std::abs(s_velX) < 0.01f && std::abs(s_velY) < 0.01f && std::abs(s_velZ) < 0.01f) {
+                s_hasVelocity = false;
+            }
+        }
+        s_lastTickTime = now;
+        s_lastTickTimeValid = true;
     }
 }
 
