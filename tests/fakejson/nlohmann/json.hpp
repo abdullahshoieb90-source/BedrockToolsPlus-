@@ -39,6 +39,9 @@ public:
             return m_integer != 0;
         } else if constexpr (std::is_integral_v<T>) {
             return static_cast<T>(m_integer);
+        } else if constexpr (std::is_floating_point_v<T>) {
+            if (m_type == Type::Float) return static_cast<T>(m_float);
+            return static_cast<T>(m_integer);
         } else if constexpr (std::is_same_v<T, std::string>) {
             return m_string;
         } else {
@@ -46,18 +49,20 @@ public:
         }
     }
 
-    json& operator=(int value) { m_type = Type::Integer; m_integer = value; return *this; }
-    json& operator=(bool value) { m_type = Type::Boolean; m_integer = value ? 1 : 0; return *this; }
-    json& operator=(double value) { m_type = Type::Integer; m_integer = static_cast<long long>(value); return *this; }
+    json& operator=(int value) { m_type = Type::Integer; m_integer = value; m_float = static_cast<double>(value); return *this; }
+    json& operator=(bool value) { m_type = Type::Boolean; m_integer = value ? 1 : 0; m_float = value ? 1.0 : 0.0; return *this; }
+    json& operator=(float value) { m_type = Type::Float; m_float = value; m_integer = static_cast<long long>(value); return *this; }
+    json& operator=(double value) { m_type = Type::Float; m_float = value; m_integer = static_cast<long long>(value); return *this; }
     json& operator=(const char* value) { return (*this) = std::string(value); }
     json& operator=(const std::string& value) { m_type = Type::String; m_string = value; return *this; }
 
 private:
-    enum class Type { Null, Boolean, Integer, String };
+    enum class Type { Null, Boolean, Integer, Float, String };
 
     std::map<std::string, json> m_children;
     Type m_type = Type::Null;
     long long m_integer = 0;
+    double m_float = 0.0;
     std::string m_string;
 };
 
