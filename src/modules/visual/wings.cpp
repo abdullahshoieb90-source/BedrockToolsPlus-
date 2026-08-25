@@ -180,9 +180,13 @@ static std::string wingsDirectoryForConfig() {
 // Articulated 3D wings.
 //
 // The tables below mirror the bone hierarchy embedded in
-// wings_default::GeometryJson (resources/wings/wings_geometry.json) one to
-// one - same pivots, anchors and cube sizes, in Bedrock pixels (16 px = 1
-// block). Bone chain (per side):
+// wings_default::GeometryJson (resources/wings/wings_geometry.json) - same
+// anchors and cube sizes, in Bedrock pixels (16 px = 1 block), with two
+// deliberate placement differences measured in-game: the z bands are
+// mirrored (negative z, i.e. behind the back - the overlay's "-forward"
+// mapping lands positive z on the chest side) and the root pivots sit at
+// x = +/-2 px so the shoulder joints never peek past the torso edges from
+// the front. Bone chain (per side):
 //
 //   shoulder (root)
 //   +-- upper
@@ -212,44 +216,56 @@ struct WingBoneDef {
     float anchorX, anchorY;         // pivot offset relative to the parent pivot (px)
     float boxOX, boxOY;             // cube origin relative to the own pivot (px)
     float boxSX, boxSY;             // cube size on the wing plane (px)
-    float zMin, zMax;               // cube z range, absolute JSON z (px); the
-                                    // back of the body is at +Z, so the wings
-                                    // live at z >= 2.5, behind the back
-    const unsigned char* colOuter;  // zMax face (faces away from the body)
-    const unsigned char* colInner;  // zMin face (faces the body)
+    float zMin, zMax;               // cube z range, absolute overlay z (px); in
+                                    // the live overlay the back of the body is
+                                    // at NEGATIVE z, so the wings live at
+                                    // z <= -2.5, behind the back
+    const unsigned char* colOuter;  // zMin face (faces away from the body)
+    const unsigned char* colInner;  // zMax face (faces the body)
     const unsigned char* colEdge;   // x faces and the yMax face
     const unsigned char* colBottom; // yMin face (feather tips get the highlight)
 };
 
-// Z coordinates mirror resources/wings/wings_geometry.json: the body spans
-// z in [-2, +2] (Bedrock model space faces -Z, so the cape/back side is
-// +Z). Wing boxes sit at z = [2.5, 4.5] (shoulder joint) and [3.0, 4.0]
-// (membranes/feathers) - fixed directly behind the back with a 0.5 px
-// standoff from the back surface so nothing clips the torso or pokes
-// through the chest/shoulders when the player is seen from the front.
+// Z coordinates: the overlay maps cube z through "-forward" (see
+// emitWingBox), and in-game the positive z band lands on the CHEST side of
+// the player (the actor rotation component's yaw runs opposite to the
+// model-space facing assumption), which made the wings cover the chest and
+// shoulders when seen from the front. The bands are therefore mirrored to
+// the NEGATIVE side: z = [-4.5, -2.5] (shoulder joint) and [-4.0, -3.0]
+// (membranes/feathers). The body spans z in [-2, +2], so the wings hug the
+// back surface with a 0.5 px standoff - fully behind the torso, nothing
+// pokes through the chest/shoulders from the front. (The exported
+// wings_geometry.json keeps Bedrock's native model-space convention -
+// back = +Z - for use in resource packs; the overlay mirrors z on purpose.)
 static const WingBoneDef kRightWingBones[7] = {
-    // parent  anchorX  anchorY   boxOX  boxOY  boxSX boxSY  zMin   zMax   outer                      inner                          edges+bottom
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f,  4.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  0, -2.0f,  0.0f,  -6.0f, -1.5f, 6.0f, 3.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1, -6.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  1, -4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2, -1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2, -4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    // parent  anchorX  anchorY   boxOX  boxOY  boxSX boxSY  zMin    zMax   outer                      inner                          edges+bottom
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f, -4.5f, -2.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  0, -2.0f,  0.0f,  -6.0f, -1.5f, 6.0f, 3.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1, -6.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  1, -4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2, -1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2, -4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
 };
 
 static const WingBoneDef kLeftWingBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f,  4.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  0,  2.0f,  0.0f,   0.0f, -1.5f, 6.0f, 3.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1,  6.0f,  0.0f,   0.0f, -1.0f, 5.0f, 2.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1,  2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  1,  4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2,  1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2,  4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f, -4.5f, -2.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  0,  2.0f,  0.0f,   0.0f, -1.5f, 6.0f, 3.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1,  6.0f,  0.0f,   0.0f, -1.0f, 5.0f, 2.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1,  2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  1,  4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2,  1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2,  4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f, -4.0f, -3.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
 };
 
-static constexpr float kRightRootPivotX = -3.0f;
-static constexpr float kLeftRootPivotX = 3.0f;
+// Root (shoulder) pivot. x is tucked in to +/-2 px so the 3 px-wide
+// shoulder joint box stays fully inside the torso silhouette (the torso
+// spans x in [-4, +4]): with a pivot at +/-3 the joint box reached
+// x = +/-4.5 and peeked 0.5 px past the chest/shoulder edges when the
+// player was seen from the front. y = 21 px keeps the wings mounted on the
+// shoulder line of the upper back.
+static constexpr float kRightRootPivotX = -2.0f;
+static constexpr float kLeftRootPivotX = 2.0f;
 static constexpr float kRootPivotY = 21.0f;
 static constexpr int kWingBoneCount = 7;
 static constexpr int kWingBoxFaces = 6;
@@ -296,11 +312,12 @@ static void emitWingBox(void* tess, const WingBoneDef& def, const WingCornerPose
         planeY[i] = pose.s * x + pose.c * y + pose.ty;
     }
 
-    // 8 world-space corners (camera relative). Bedrock model space faces
-    // -Z (north), so the back/cape side is +Z: JSON axes map as x -> -right
-    // (right side spans negative X), y -> up, z -> -forward (back is +Z).
-    // Wing boxes therefore carry POSITIVE z (2.5..4.5 px, see the bone
-    // tables) and land behind the player, never inside the chest.
+    // 8 world-space corners (camera relative). JSON axes map as x -> -right
+    // (right side spans negative X), y -> up, z -> -forward. In-game the
+    // actor yaw runs opposite to the model-space facing assumption, so the
+    // back side of the body is the NEGATIVE z band here: the wing boxes
+    // carry negative z (-4.5..-2.5 px, see the bone tables) and land behind
+    // the player, never inside the chest.
     float corners[8][3];
     for (int i = 0; i < 8; ++i) {
         const float px = planeX[i & 3];
@@ -312,15 +329,16 @@ static void emitWingBox(void* tess, const WingBoneDef& def, const WingCornerPose
     }
 
     static const int kFaces[6][4] = {
-        {0, 1, 2, 3}, // zMin (inner, faces the body)
-        {4, 5, 6, 7}, // zMax (outer, faces away)
+        {0, 1, 2, 3}, // zMin (outer, faces away from the body - the back side
+                      // of the mirrored negative-z band)
+        {4, 5, 6, 7}, // zMax (inner, faces the body)
         {0, 3, 7, 4}, // xMin
         {1, 2, 6, 5}, // xMax
         {0, 1, 5, 4}, // yMin (bottom)
         {3, 2, 6, 7}, // yMax (top)
     };
     const unsigned char* faceColors[6] = {
-        def.colInner, def.colOuter, def.colEdge, def.colEdge, def.colBottom, def.colEdge,
+        def.colOuter, def.colInner, def.colEdge, def.colEdge, def.colBottom, def.colEdge,
     };
     for (int f = 0; f < 6; ++f) emitFace(tess, corners, kFaces[f], faceColors[f]);
 }
