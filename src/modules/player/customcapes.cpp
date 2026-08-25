@@ -217,8 +217,48 @@ void CustomCapesModule::clearPatchState() {
     m_backup = CapeBackup{};
 }
 
+bool CustomCapesModule::playerHasLiveLevel(const void* player) {
+    if (!player) return false;
+    // Actor::mLevel is the first link the engine severs on Leave World,
+    // before the player and its skin objects are destroyed. A live level
+    // link means the skin object this player owns is still live.
+    const void* level = *reinterpret_cast<const void* const*>(
+        reinterpret_cast<std::uintptr_t>(player) + Actor::mLevel);
+    return level != nullptr;
+}
+
+void CustomCapesModule::onWorldExit() {
+    // The level is gone, so the player and its skin are gone or on their
+    // way out. Two hard rules:
+    //   1. Never write to the skin here. Restoring the vanilla cape into a
+    //      freed SerializedSkinImpl is the use-after-free that crashed the
+    //      game on Leave World; restoreOriginalCape() only runs while the
+    //      level is live (see onLocalPlayerTick).
+    //   2. Never free m_injectedBlob here. The blob was handed to the skin
+    //      tagged with freeBlobDeleter, so the engine frees it while it
+    //      destroys the skin — freeing it again would double-free.
+    // Dropping our references is all that is needed: m_pixels (the cape
+    // file) is module-owned and stays loaded, so the cape is re-applied to
+    // the fresh skin object when the player joins a world again.
+    m_patchedSkin = nullptr;
+    m_injectedBlob = nullptr; // ownership: engine (frees via the deleter tag)
+    m_hasBackup = false;
+    m_backup = CapeBackup{};
+    m_needsApply = true; // next live skin must be (re)patched from scratch
+}
+
 void CustomCapesModule::onLocalPlayerTick(void* player) {
-    if (!player) return;
+    // --- World-exit guard (Leave World crash fix) -----------------------
+    // While the engine tears down the world it (1) detaches the player
+    // from its level and then (2) destroys the player and its skin. Any
+    // tick that reaches us after step 1 must not read or write the skin
+    // object: it is freed memory, and writing the vanilla cape back into
+    // it — or freeing our injected blob a second time — is the access
+    // violation / double-free that crashed the game on Leave World.
+    if (!player || !playerHasLiveLevel(player)) {
+        onWorldExit();
+        return;
+    }
 
     if (m_selectedIndex > 0 && !m_capeLoaded && enabled) {
         if (m_retryTicks <= 0) {
