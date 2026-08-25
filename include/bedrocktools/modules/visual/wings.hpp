@@ -39,44 +39,12 @@
 // at angle = amplitude * sin(flapTime * baseRate * flapSpeed), and the pose is
 // blended between idle (gentle breathing pulse), flap (strong motion while
 // moving) and glide (spread wings while descending) based on the player's
-// horizontal/vertical speed measured from consecutive player anchors:
+// horizontal/vertical speed measured from consecutive player AABBs:
 //
 //   moveT    = clamp(horizontalSpeed / kWalkSpeedFull, 0, 1)
 //   glideT   = 1 while sustained descent (vy < -1.5 for > 0.35 s), else 0
 //   target   = moveT * (1 - glideT)
 //   intensity smoothly lerps to target; glide lerps to glideT.
-//
-// ---------------------------------------------------------------------------
-// Frame sync (why the wings no longer lag behind the skin)
-// ---------------------------------------------------------------------------
-//
-// Bedrock renders the player model every frame but moves it in 20 Hz ticks:
-// each frame the model is drawn interpolated between the last two tick
-// positions ("partial tick" blend). The first overlay version drew the wings
-// from the position/rotation captured at tick time, so the wings trailed the
-// skin by up to a full tick and stepped at 20 Hz while the model glided at
-// frame rate - visible as lag while walking and as the wings detaching from
-// the back during fast turns.
-//
-// The module now reproduces the renderer's own interpolation:
-//
-//   * LocalPlayerPreTickEvent freezes the actor's live anchor (the point the
-//     renderer just finished blending towards) as the interpolation start.
-//   * LocalPlayerTickEvent captures the post-movement anchor as the blend end,
-//     measures the real tick interval and derives the player speed from the
-//     prev->curr displacement.
-//   * The RenderLevel hook samples the actor's anchor + body yaw LIVE every
-//     frame (zero tick latency) and blends prev->curr with the same partial
-//     tick factor the model uses, so the wing pivot sits on the back at the
-//     exact instant the skin is drawn there. Body yaw is taken from the
-//     per-frame value the renderer itself uses (mouse input updates it every
-//     frame), so fast turns never leave the wings behind the torso.
-//   * Measured speeds pass through a one-pole low-pass (kSpeedSmoothingTau)
-//     so per-tick physics jitter cannot shake the flap/glide blend, and
-//     teleports collapse the interpolation pair instead of swinging the
-//     wings across the jump.
-//   * The flap clock itself advances per rendered frame (not per tick), so
-//     the wing pose is as smooth as the rest of the frame.
 //
 // flapSpeed is exposed as "Flap Speed" in the launcher menu in [0.1, 10.0].
 // On init the module writes the embedded geometry/animation/controller JSON
@@ -111,18 +79,6 @@ public:
     // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
 
-    // Called from the LocalPlayerPreTickEvent subscription: freezes the
-    // actor's live anchor before the tick moves the player. That anchor is
-    // the point the renderer has just finished blending towards, so it is
-    // the exact start point for the next tick's interpolation window.
-    void onLocalPlayerPreTick(void* player);
-
-    // Called from the RenderLevel hook once per rendered frame: advances the
-    // flap clock by the real frame dt (frame-rate smooth wing motion) using
-    // the smoothed speeds published by the tick handler. Keeps the wing pose
-    // in lockstep with the frame being drawn.
-    void onRenderFrame();
-
     // Advances the wing animation by dtSeconds given the player's current
     // horizontal and vertical speed (blocks/second). This blends the pose
     // between idle, flap and glide and stores the resulting bone angles for
@@ -136,32 +92,6 @@ public:
     // Current per-bone pose computed from the flap clock, flight intensity
     // and glide factor.
     WingBoneAngles currentBoneAngles() const;
-
-    // Partial tick factor the model renderer uses: how far into the current
-    // tick the frame is (0 = tick just finished, 1 = next tick due). Pure
-    // function of the tick clock so it stays host-testable.
-    static float tickBlendFactor(double nowSeconds, double tickStartSeconds, float tickIntervalSeconds);
-
-    // One-pole low-pass: eases "current" towards "target" with the given time
-    // constant. Used to smooth measured speeds (kills per-tick jitter without
-    // adding visible latency) and the measured tick interval.
-    static float smoothTowards(float current, float target, float dtSeconds, float tauSeconds);
-
-    // Tick pair captured for interpolation (test/read helpers).
-    struct WingAnchor {
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-    };
-    // Anchor captured at the end of the previous tick (blend start).
-    WingAnchor tickAnchorPrev() const;
-    // Anchor captured at the end of the latest tick (blend end).
-    WingAnchor tickAnchorCurr() const;
-    // Smoothed player speeds the animation blend consumes (blocks/second).
-    float smoothedHorizontalSpeed() const;
-    float smoothedVerticalSpeed() const;
-    // Smoothed measured interval between the last two ticks (seconds).
-    float smoothedTickInterval() const;
 
     // Directory the module writes its assets to; kept for menu description
     // compatibility.
@@ -224,16 +154,6 @@ public:
     static constexpr float kGlideAttackRate = 4.0f;
     static constexpr float kGlideDecayRate = 3.0f;
 
-    // Frame-sync / smoothing constants.
-    static constexpr float kTickIntervalNominal = 1.0f / 20.0f;  // 50 ms
-    static constexpr float kTickIntervalMin = 1.0f / 120.0f;     // clamp measured dt
-    static constexpr float kTickIntervalMax = 0.25f;             // clamp after hitches
-    static constexpr float kTickIntervalTau = 0.5f;              // tick clock low-pass
-    static constexpr float kSpeedSmoothingTau = 0.10f;           // speed low-pass
-    static constexpr float kMaxMeasuredSpeed = 40.0f;            // blocks/s sanity cap
-    static constexpr float kTeleportDistance = 5.0f;  // blocks/tick: snap, don't blend
-    static constexpr float kAnchorDriftReset = 8.0f;  // live vs snapshot: stale snap
-
     // Face palette shared with the generated texture (see wings_default.hpp);
     // the host test cross-checks both copies stay in sync.
     static constexpr unsigned char kColorFrame[3] = {94, 62, 36};
@@ -247,23 +167,19 @@ private:
 
     std::string m_wingsDir;
 
-    // Animation state (clock driven per rendered frame).
+    // Animation state (clock driven per tick).
     float m_flapTime = 0.0f;
     float m_intensity = 0.0f;   // smoothed idle->flight blend
     float m_glide = 0.0f;       // smoothed glide blend
     float m_airTime = 0.0f;     // sustained descent time used for glide
-    bool m_frameClockStarted = false;
-    std::chrono::steady_clock::time_point m_lastFrameTick;
+    bool m_flapClockStarted = false;
+    std::chrono::steady_clock::time_point m_lastFlapTick;
 
-    // Tick interpolation state (written by the game-thread tick callbacks,
-    // published to the render hook under s_stateMutex).
-    bool m_hasPrevAnchor = false;       // pre-tick anchor captured
-    WingAnchor m_prevAnchor{};          // anchor before the tick moved the player
-    bool m_tickClockStarted = false;    // tick interval measured at least once
-    double m_lastTickStamp = 0.0;       // steady-clock seconds of the last post-tick
-    float m_tickInterval = kTickIntervalNominal;
-    float m_smoothHSpeed = 0.0f;        // low-passed player speeds
-    float m_smoothVSpeed = 0.0f;
+    // Player speed estimation from consecutive AABBs.
+    bool m_hasPrevCenter = false;
+    float m_prevCenterX = 0.0f;
+    float m_prevCenterY = 0.0f;
+    float m_prevCenterZ = 0.0f;
 
     // Render hook state
     bool m_patched = false;
