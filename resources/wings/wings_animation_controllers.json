@@ -1,0 +1,31 @@
+{
+  "format_version": "1.10.0",
+  "animation_controllers": {
+    "controller.animation.wings": {
+      "initial_state": "idle",
+      "states": {
+        "idle": {
+          "animations": ["wings.idle"],
+          "transitions": [
+            { "glide": "query.is_gliding" },
+            { "fly": "query.modified_move_speed > 0.18 || query.vertical_speed < -0.2" }
+          ]
+        },
+        "fly": {
+          "animations": ["wings.flap"],
+          "transitions": [
+            { "glide": "query.is_gliding" },
+            { "idle": "query.modified_move_speed <= 0.18 && query.is_on_ground" }
+          ]
+        },
+        "glide": {
+          "animations": ["wings.glide"],
+          "transitions": [
+            { "fly": "!query.is_gliding && query.modified_move_speed > 0.18" },
+            { "idle": "!query.is_gliding && query.is_on_ground" }
+          ]
+        }
+      }
+    }
+  }
+}

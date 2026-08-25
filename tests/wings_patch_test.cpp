@@ -5,18 +5,29 @@
 // geometry on classic skins, so that made the player disappear.
 //
 // The new implementation renders wings as a world-space overlay attached to
-// the player via RenderLevel hook + tessellator, preserving sin(time) flapping
-// and Flap Speed option, without ever touching skin memory.
+// the player via RenderLevel hook + tessellator, without ever touching skin
+// memory. The wings are articulated 3D boxes driven by a bone hierarchy
+// (shoulder -> upper -> tip + feathers) that mirrors the embedded
+// geo/animation JSON, and the idle/flap/glide animation is driven by the
+// player's horizontal/vertical speed.
 //
 // This host test verifies the new logic without needing Minecraft:
 //
-//   * flap animation is sin(time) driven and respects flap speed
+//   * flap animation driver is sin(time) driven and respects flap speed
 //   * dt <= 0 does not advance the clock
 //   * loadConfig clamps flap speed to [0.1, 10.0]
 //   * onLocalPlayerTick does not modify any fake skin buffer (proving no skin patch)
 //   * onLocalPlayerTick with null / fake player does not crash
 //   * wingsDirectory() is non-empty
-//   * constants are sane (amplitude 35deg, base rate 6 rad/s, wing size >0)
+//   * constants are sane
+//   * speed-driven blending: intensity ramps up while moving, decays to idle
+//     pose at rest; sustained descent engages glide; glide suppresses flap
+//   * bone angles follow the shoulder->tip->feather lag wave
+//   * embedded geo/animation/controller JSON contain the new bone hierarchy
+//     (bone_wing_right / bone_wing_left and children) and speed queries
+//   * the C++ face palette matches the generated texture palette, and the
+//     texture pixels paint outer/inner membranes, frame and feather tips
+//   * ensureWingsAssetFiles writes geo JSON, animation JSON and a PNG
 //
 // Build and run standalone (no game required):
 //     g++ -std=c++20 -I src -I include -I third_party
@@ -26,16 +37,23 @@
 //     /tmp/wings_patch_test
 
 #include <bedrocktools/modules/visual/wings.hpp>
+#include <bedrocktools/modules/visual/wings_default.hpp>
 #include "config/ConfigManager.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/Types.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb/stb_image_write.h>
+
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -58,6 +76,10 @@ std::string g_testConfigPath = "/tmp/bt-wings-test/config.json";
 constexpr float kPi = 3.14159265358979323846f;
 bool approxEqual(float a, float b, float eps = 1e-3f) {
     return std::fabs(a - b) <= eps;
+}
+
+bool contains(const char* haystack, const std::string& needle) {
+    return haystack != nullptr && std::string(haystack).find(needle) != std::string::npos;
 }
 
 } // namespace
@@ -273,12 +295,221 @@ int main() {
     float rad = radMod.currentFlapAngleRadians();
     check(approxEqual(rad, deg * kPi / 180.0f, 1e-3f), "radians = degrees * pi/180");
 
+    // ==================================================================
+    // 3D bone hierarchy animation, driven by player speed
+    // ==================================================================
+    std::printf("bone hierarchy / speed-driven animation\n");
+
+    // Lag constants form a wave from shoulder to feathers
+    check(WingsModule::kUpperLag > 0.0f && WingsModule::kUpperLag < WingsModule::kTipLag &&
+          WingsModule::kTipLag < WingsModule::kFeatherLagBase,
+          "flap lag window: upper < tip < feathers");
+
+    // Idle pose at rest (fresh module, zero speed): gentle breathing around
+    // kIdleBaseDegrees with kIdleAmplitudeDegrees.
+    WingsModule idleMod;
+    idleMod.onInit();
+    idleMod.m_flapSpeed = 1.0f;
+    idleMod.advanceFlapAnimation(1.0f); // idlePh = pi/2 -> sin = 1 exactly
+    {
+        WingBoneAngles a = idleMod.currentBoneAngles();
+        check(a.intensity < 1e-6f, "idle: intensity stays 0 at rest");
+        check(approxEqual(a.shoulderDeg, WingsModule::kIdleBaseDegrees + WingsModule::kIdleAmplitudeDegrees, 0.01f),
+              "idle: shoulder = base + amplitude at pulse peak");
+        check(approxEqual(a.upperDeg, 6.0f + 4.0f * std::sin(WingsModule::kIdleRate - WingsModule::kIdleUpperLag), 0.01f),
+              "idle: upper segment follows with lag");
+        check(a.shoulderDeg > 0.0f && a.featherDeg[0] < 0.0f,
+              "idle: feathers sway opposite to the shoulder at pulse peak");
+    }
+
+    // Full flight: feed running speed until intensity saturates, then measure
+    // the per-bone oscillation envelope over one flap period.
+    WingsModule flyMod;
+    flyMod.onInit();
+    flyMod.m_flapSpeed = 1.0f;
+    for (int i = 0; i < 120 && flyMod.flightIntensity() < 0.995f; ++i) {
+        flyMod.advanceWingAnimation(0.05f, 6.0f, 0.0f);
+    }
+    check(flyMod.flightIntensity() > 0.98f, "running at 6 blocks/s ramps flap intensity to ~1");
+    {
+        float shoulderMin = 1e9f, shoulderMax = -1e9f;
+        float upperAbsMax = 0.0f, tipAbsMax = 0.0f;
+        float featherAbsMax[4] = {0, 0, 0, 0};
+        WingsModule probe;
+        probe.onInit();
+        probe.m_flapSpeed = 1.0f;
+        for (int i = 0; i < 200 && probe.flightIntensity() < 0.999f; ++i) {
+            probe.advanceWingAnimation(0.05f, 6.0f, 0.0f);
+        }
+        // one full flap period at base rate 6: 2*pi/6 ~ 1.0472 s
+        const int steps = 400;
+        for (int i = 0; i < steps; ++i) {
+            probe.advanceWingAnimation((2.0f * kPi / WingsModule::kFlapBaseRate) / steps, 6.0f, 0.0f);
+            WingBoneAngles a = probe.currentBoneAngles();
+            shoulderMin = std::min(shoulderMin, a.shoulderDeg);
+            shoulderMax = std::max(shoulderMax, a.shoulderDeg);
+            upperAbsMax = std::max(upperAbsMax, std::fabs(a.upperDeg));
+            tipAbsMax = std::max(tipAbsMax, std::fabs(a.tipDeg));
+            for (int f = 0; f < 4; ++f) featherAbsMax[f] = std::max(featherAbsMax[f], std::fabs(a.featherDeg[f]));
+        }
+        check(approxEqual(shoulderMin, WingsModule::kFlightBaseDegrees - WingsModule::kFlapAmplitudeDegrees, 0.25f),
+              "flight: shoulder bottoms at base - amplitude");
+        check(approxEqual(shoulderMax, WingsModule::kFlightBaseDegrees + WingsModule::kFlapAmplitudeDegrees, 0.25f),
+              "flight: shoulder peaks at base + amplitude");
+        check(approxEqual(upperAbsMax, WingsModule::kFlightUpperAmplitudeDegrees, 0.25f),
+              "flight: upper oscillates with its own amplitude");
+        check(approxEqual(tipAbsMax, WingsModule::kFlightTipAmplitudeDegrees, 0.25f),
+              "flight: tip oscillates with its own amplitude");
+        check(approxEqual(featherAbsMax[0], WingsModule::kFlightFeatherAmplitudeDegrees, 0.25f) &&
+              approxEqual(featherAbsMax[3], WingsModule::kFlightFeatherAmplitudeDegrees, 0.25f),
+              "flight: feathers oscillate at feather amplitude");
+        check(featherAbsMax[0] < tipAbsMax && tipAbsMax < WingsModule::kFlapAmplitudeDegrees,
+              "flight: amplitude shrinks along the chain (feathers < tip < shoulder)");
+    }
+
+    // Decay back to idle when the player stops moving.
+    WingsModule stopMod;
+    stopMod.onInit();
+    for (int i = 0; i < 120 && stopMod.flightIntensity() < 0.995f; ++i) {
+        stopMod.advanceWingAnimation(0.05f, 6.0f, 0.0f);
+    }
+    for (int i = 0; i < 240; ++i) stopMod.advanceWingAnimation(0.05f, 0.0f, 0.0f); // 12 s idle
+    check(stopMod.flightIntensity() < 0.05f, "stopping decays intensity back to idle");
+    {
+        WingBoneAngles a = stopMod.currentBoneAngles();
+        check(std::fabs(a.shoulderDeg) < WingsModule::kIdleBaseDegrees + WingsModule::kIdleAmplitudeDegrees + 0.5f,
+              "idle pose range after decay stays within idle envelope");
+    }
+
+    // Glide: sustained fast descent spreads the wings and suppresses flapping.
+    WingsModule glideMod;
+    glideMod.onInit();
+    for (int i = 0; i < 4; ++i) glideMod.advanceWingAnimation(0.05f, 0.0f, -3.0f); // 0.2 s fall
+    check(glideMod.glideFactor() < 0.05f, "short 0.2s fall does not engage glide");
+    for (int i = 0; i < 30; ++i) glideMod.advanceWingAnimation(0.05f, 6.0f, -3.0f); // fast + falling, 1.5 s
+    check(glideMod.glideFactor() > 0.7f, "sustained descent engages glide");
+    check(glideMod.flightIntensity() < 0.15f, "glide suppresses flapping even at high speed");
+    {
+        // landing stops the descent: glide blends out, movement flaps again
+        for (int i = 0; i < 60; ++i) glideMod.advanceWingAnimation(0.05f, 6.0f, 0.0f);
+        check(glideMod.glideFactor() < 0.05f, "glide decays after landing");
+        check(glideMod.flightIntensity() > 0.5f, "flapping resumes when running after landing");
+    }
+
+    // Rising fast flaps hard even without horizontal speed.
+    WingsModule riseMod;
+    riseMod.onInit();
+    for (int i = 0; i < 60; ++i) riseMod.advanceWingAnimation(0.05f, 0.0f, 4.0f);
+    check(riseMod.flightIntensity() > 0.5f, "rising rapidly also triggers flapping");
+
+    // ==================================================================
+    // Embedded geo / animation / controller JSON assets
+    // ==================================================================
+    std::printf("embedded geo/animation JSON assets\n");
+
+    check(contains(wings_default::GeometryJson, "geometry.wings"), "geometry identifier present");
+    check(contains(wings_default::GeometryJson, "\"bone_wings\""), "bone_wings root present");
+    check(contains(wings_default::GeometryJson, "\"bone_wing_right\""), "bone_wing_right present");
+    check(contains(wings_default::GeometryJson, "\"bone_wing_left\""), "bone_wing_left present");
+    check(contains(wings_default::GeometryJson, "\"bone_wing_right_upper\""), "right upper segment present");
+    check(contains(wings_default::GeometryJson, "\"bone_wing_right_tip\""), "right tip segment present");
+    check(contains(wings_default::GeometryJson, "\"bone_wing_left_feather_2\""), "left feathers present");
+    check(contains(wings_default::GeometryJson, "\"bone_wing_right_feather_4\""), "4 feathers per wing present");
+    check(contains(wings_default::GeometryJson, "\"parent\": \"bone_wing_right_tip\""),
+          "feathers_3/4 are children of the tip bone (hierarchy)");
+    check(contains(wings_default::GeometryJson, "\"mirror\": true"), "left wing bones mirror UVs");
+    check(!contains(wings_default::GeometryJson, "\"wingRight\"") && !contains(wings_default::GeometryJson, "\"wingLeft\""),
+          "old flat wing quads removed from geometry");
+    // every wing cube has real thickness (a non-zero z size)
+    check(contains(wings_default::GeometryJson, "\"size\": [3, 3, 2]"), "shoulder joint is a 3D box");
+    check(contains(wings_default::GeometryJson, "\"size\": [6, 3, 1]"), "upper segment has thickness");
+    check(contains(wings_default::GeometryJson, "\"size\": [2, 6, 1]"), "feathers have thickness");
+
+    check(contains(wings_default::AnimationJson, "\"animation.wings.idle\""), "idle animation present");
+    check(contains(wings_default::AnimationJson, "\"animation.wings.flap\""), "flap animation present");
+    check(contains(wings_default::AnimationJson, "\"animation.wings.glide\""), "glide animation present");
+    check(contains(wings_default::AnimationJson, "\"bone_wing_right\"") && contains(wings_default::AnimationJson, "\"bone_wing_left\""),
+          "animations target both wing roots");
+    check(contains(wings_default::AnimationJson, "\"bone_wing_right_feather_4\""), "animations target feather bones");
+    check(contains(wings_default::AnimationJson, "query.anim_time"), "animations are time driven");
+    check(contains(wings_default::AnimationJson, "35 * math.sin"), "flap amplitude matches module constant");
+
+    check(contains(wings_default::AnimationControllerJson, "controller.animation.wings"), "animation controller present");
+    check(contains(wings_default::AnimationControllerJson, "query.modified_move_speed"),
+          "controller reacts to player move speed");
+    check(contains(wings_default::AnimationControllerJson, "query.vertical_speed"),
+          "controller reacts to vertical speed");
+    check(contains(wings_default::AnimationControllerJson, "query.is_gliding"), "controller reacts to gliding");
+    check(contains(wings_default::AnimationControllerJson, "wings.flap") &&
+          contains(wings_default::AnimationControllerJson, "wings.idle") &&
+          contains(wings_default::AnimationControllerJson, "wings.glide"),
+          "controller binds all three animations");
+
+    // ==================================================================
+    // Texture mapping: C++ palette must match the generated texture paints
+    // ==================================================================
+    std::printf("texture mapping / palette\n");
+
+    auto colorEq = [](const unsigned char a[3], const unsigned char b[3]) {
+        return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+    };
+    check(colorEq(WingsModule::kColorFrame, wings_default::kColorFrame), "frame color matches texture palette");
+    check(colorEq(WingsModule::kColorMembraneOuter, wings_default::kColorMembraneOuter), "outer membrane color matches");
+    check(colorEq(WingsModule::kColorMembraneInner, wings_default::kColorMembraneInner), "inner membrane color matches");
+    check(colorEq(WingsModule::kColorFeatherTip, wings_default::kColorFeatherTip), "feather tip color matches");
+    check(colorEq(WingsModule::kColorJointInner, wings_default::kColorJointInner), "joint inner color matches");
+
+    auto texel = [](int x, int y, int ch) {
+        return wings_default::TexturePixels[((std::size_t)y * wings_default::TextureWidth + (std::size_t)x) * 4 + (std::size_t)ch];
+    };
+    auto texelIs = [&](int x, int y, unsigned char r, unsigned char g, unsigned char b) {
+        return texel(x, y, 0) == r && texel(x, y, 1) == g && texel(x, y, 2) == b && texel(x, y, 3) == 255;
+    };
+    check(wings_default::TextureWidth == 64 && wings_default::TextureHeight == 64, "texture is 64x64");
+    check(texelIs(19, 34, 18, 18, 24), "upper outer membrane painted dark");
+    check(texelIs(20, 34, 94, 62, 36), "upper finger stripe painted with frame color");
+    check(texelIs(11, 34, 28, 28, 36), "upper inner membrane painted lighter");
+    check(texelIs(11, 33, 94, 62, 36), "upper top edge row painted with frame color");
+    check(texelIs(8, 34, 94, 62, 36), "shoulder outer face painted with frame color");
+    check(texelIs(4, 40, 18, 18, 24), "feather outer membrane painted dark");
+    check(texelIs(4, 43, 46, 46, 60) && texelIs(3, 38, 46, 46, 60) && texelIs(1, 43, 46, 46, 60),
+          "feather tip highlight on outer face, bottom edge and inner face");
+    check(texelIs(1, 40, 28, 28, 36), "feather inner membrane painted lighter");
+    check(texelIs(32, 34, 18, 18, 24) && texelIs(34, 34, 94, 62, 36), "tip segment membrane + finger stripe");
+
+    // ==================================================================
+    // ensureWingsAssetFiles writes geo + animation + texture next to config
+    // ==================================================================
+    std::printf("asset file writing\n");
+
+    check(!tickMod.wingsDirectory().empty(), "wingsDirectory() non-empty (again)");
+    tickMod.ensureWingsAssetFiles();
+    tickMod.ensureWingsAssetFiles(); // must be a no-op the second time
+    auto readFile = [](const std::string& path) {
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    };
+    const std::string dir = tickMod.wingsDirectory();
+    check(contains(readFile(dir + "/wings_geometry.json").c_str(), "bone_wing_right"),
+          "written wings_geometry.json contains bone_wing_right");
+    check(contains(readFile(dir + "/wings_animation.json").c_str(), "animation.wings.flap"),
+          "written wings_animation.json contains animation.wings.flap");
+    check(contains(readFile(dir + "/wings_animation_controllers.json").c_str(), "query.modified_move_speed"),
+          "written controller reacts to movement speed");
+    {
+        const std::string png = readFile(dir + "/wings.png");
+        check(png.size() > 8 && png[0] == '\x89' && png[1] == 'P' && png[2] == 'N' && png[3] == 'G',
+              "written wings.png is a valid PNG");
+    }
+
     // ------------------------------------------------------------------
     std::printf("\n");
     if (g_failures != 0) {
         std::printf("%d check(s) FAILED\n", g_failures);
         return 1;
     }
-    std::printf("all wings patch checks passed (world-space overlay)\n");
+    std::printf("all wings checks passed (3D bone hierarchy + speed-driven animation)\n");
     return 0;
 }
