@@ -22,7 +22,13 @@
 //   * constants are sane
 //   * speed-driven blending: intensity ramps up while moving, decays to idle
 //     pose at rest; sustained descent engages glide; glide suppresses flap
-//   * bone angles follow the shoulder->tip->feather lag wave
+//     * bone angles follow the shoulder->tip->feather lag wave
+//   * frame sync: the partial-tick blend factor runs 0 -> 1 across a tick,
+//     the speed low-pass converges without overshoot and absorbs one-tick
+//     spikes, the pre/post tick pair captures the interpolation anchors
+//     around a tick's movement, teleports collapse the pair instead of
+//     blending across the jump, and the flap clock is driven per rendered
+//     frame (onRenderFrame), not per tick
 //   * embedded geo/animation/controller JSON contain the new bone hierarchy
 //     (bone_wing_right / bone_wing_left and children) and speed queries
 //   * the C++ face palette matches the generated texture palette, and the
@@ -48,6 +54,7 @@
 #include <stb/stb_image_write.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -55,6 +62,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace off = bedrocktools::sdk::offsets;
@@ -502,6 +510,157 @@ int main() {
         const std::string png = readFile(dir + "/wings.png");
         check(png.size() > 8 && png[0] == '\x89' && png[1] == 'P' && png[2] == 'N' && png[3] == 'G',
               "written wings.png is a valid PNG");
+    }
+
+    // ==================================================================
+    // Frame sync: partial-tick interpolation, shortest-arc yaw, speed
+    // low-pass, live pre/post tick anchor capture, teleport guard and the
+    // frame-driven flap clock.
+    // ==================================================================
+    std::printf("frame sync / tick interpolation\n");
+
+    // Partial-tick blend factor: 0 right after the tick, ~0.5 half a tick
+    // in, 1 when the next tick is due, clamped after hitches, never negative.
+    check(approxEqual(WingsModule::tickBlendFactor(1.0, 1.0, 0.05f), 0.0f), "blend factor 0 at tick start");
+    check(approxEqual(WingsModule::tickBlendFactor(1.025, 1.0, 0.05f), 0.5f, 0.001f), "blend factor 0.5 half a tick in");
+    check(approxEqual(WingsModule::tickBlendFactor(1.05, 1.0, 0.05f), 1.0f), "blend factor 1 at tick end");
+    check(approxEqual(WingsModule::tickBlendFactor(9.0, 1.0, 0.05f), 1.0f), "blend factor clamps to 1 after hitches");
+    check(approxEqual(WingsModule::tickBlendFactor(0.9, 1.0, 0.05f), 0.0f), "blend factor never negative");
+    check(approxEqual(WingsModule::tickBlendFactor(1.0, 1.0, 0.0f), 1.0f), "degenerate tick interval handled");
+
+    // Speed low-pass: monotonic approach, no overshoot, converges.
+    {
+        float v = 0.0f;
+        bool monotonic = true;
+        bool noOvershoot = true;
+        for (int i = 0; i < 200; ++i) {
+            const float prev = v;
+            v = WingsModule::smoothTowards(v, 10.0f, 0.05f, 0.1f);
+            if (v < prev) monotonic = false;
+            if (v > 10.0f + 1e-4f) noOvershoot = false;
+        }
+        check(monotonic, "speed smoothing approaches target monotonically");
+        check(noOvershoot, "speed smoothing never overshoots");
+        check(std::fabs(v - 10.0f) < 0.2f, "speed smoothing converges to target");
+        check(approxEqual(WingsModule::smoothTowards(5.0f, 9.0f, 0.0f, 0.1f), 5.0f), "smoothing no-op at dt 0");
+        check(approxEqual(WingsModule::smoothTowards(5.0f, 9.0f, 0.05f, 0.0f), 9.0f), "degenerate tau snaps to target");
+        // A single one-tick speed spike must not shove the smoothed value to
+        // the spike's magnitude (this is what stops the wings from shaking
+        // while turning/juking). With tau = 0.1 s a 50 ms tick blends
+        // 1 - e^-0.5 ~ 39% of the gap, and a heavier tau suppresses more.
+        float s = 4.3f;
+        s = WingsModule::smoothTowards(s, 40.0f, 0.05f, 0.1f);
+        check(s < 20.0f, "one-tick speed spike is largely absorbed by the smoothing");
+        float heavy = 4.3f;
+        heavy = WingsModule::smoothTowards(heavy, 40.0f, 0.05f, 0.3f);
+        check(heavy < s, "heavier tau suppresses the spike further");
+    }
+
+    // Live pre/post tick anchor capture with a fake player whose position
+    // component can be moved between the two events, exactly like a real
+    // tick advances the local player.
+    {
+        FakeAABBComponent* aabbComp = new FakeAABBComponent();
+        aabbComp->aabb = {9.7f, 63.1f, 19.7f, 10.3f, 64.9f, 20.3f};
+
+        // StateVectorComponent: Vec3 position at offset 0 (what
+        // getActorPosition reads).
+        struct FakeStateVector { float x, y, z; };
+        FakeStateVector* svc = new FakeStateVector{10.0f, 64.0f, 20.0f};
+
+        std::size_t playerSize2 = std::max(off::Actor::mStateVectorComponent,
+                                           off::Actor::mActorRotationComponent) + sizeof(void*) + 16;
+        std::vector<std::uint8_t> playerBuf2(playerSize2, 0);
+        std::uintptr_t svcAddr = reinterpret_cast<std::uintptr_t>(svc);
+        std::uintptr_t aabbAddr2 = reinterpret_cast<std::uintptr_t>(aabbComp);
+        // The actor stores the state-vector pointer at +0x208 and the AABB
+        // component pointer 8 bytes later (mStateVectorComponent +
+        // mAABBShapeComponent), which is what getActorAABB dereferences.
+        std::memcpy(playerBuf2.data() + off::Actor::mStateVectorComponent, &svcAddr, sizeof(void*));
+        std::memcpy(playerBuf2.data() + off::Actor::mStateVectorComponent +
+                        off::BuiltInActorComponents::mAABBShapeComponent,
+                    &aabbAddr2, sizeof(void*));
+
+        WingsModule syncMod;
+        syncMod.onInit();
+        syncMod.enabled = true;
+
+        // Tick 1: player stands still -> zero speed, pair collapses on curr.
+        syncMod.onLocalPlayerPreTick(playerBuf2.data());
+        syncMod.onLocalPlayerTick(playerBuf2.data());
+        check(approxEqual(syncMod.smoothedHorizontalSpeed(), 0.0f), "standing still measures zero speed");
+        check(approxEqual(syncMod.flapTime(), 0.0f), "flap clock stays frame-driven (tick alone does not advance it)");
+
+        // Tick 2: pre-tick freezes the outgoing anchor, then the tick moves
+        // the player sideways by 0.5 blocks before post-tick captures curr.
+        svc->x = 10.4f;
+        svc->z = 20.3f;
+        aabbComp->aabb = {10.1f, 63.1f, 20.0f, 10.7f, 64.9f, 20.6f};
+        syncMod.onLocalPlayerPreTick(playerBuf2.data());
+        {
+            WingsModule::WingAnchor prev = syncMod.tickAnchorPrev();
+            check(approxEqual(prev.x, 10.0f, 1e-3f) && approxEqual(prev.z, 20.0f, 1e-3f),
+                  "pre-tick anchor captured at the tick-start position");
+        }
+        svc->x = 10.8f;
+        svc->z = 20.6f;
+        aabbComp->aabb = {10.5f, 63.1f, 20.3f, 11.1f, 64.9f, 20.9f};
+        syncMod.onLocalPlayerTick(playerBuf2.data());
+        {
+            WingsModule::WingAnchor prev = syncMod.tickAnchorPrev();
+            WingsModule::WingAnchor curr = syncMod.tickAnchorCurr();
+            check(approxEqual(prev.x, 10.4f, 1e-3f) && approxEqual(prev.z, 20.3f, 1e-3f),
+                  "interpolation pair start = anchor before the tick moved the player");
+            check(approxEqual(curr.x, 10.8f, 1e-3f) && approxEqual(curr.z, 20.6f, 1e-3f),
+                  "interpolation pair end = anchor after the tick moved the player");
+            check(approxEqual(prev.y, 63.1f, 1e-3f) && approxEqual(curr.y, 63.1f, 1e-3f),
+                  "feet height anchored to the collision box floor");
+            check(syncMod.smoothedHorizontalSpeed() > 0.0f &&
+                  syncMod.smoothedHorizontalSpeed() <= WingsModule::kMaxMeasuredSpeed,
+                  "walking tick produces a sane smoothed speed");
+            check(syncMod.smoothedTickInterval() >= WingsModule::kTickIntervalMin &&
+                  syncMod.smoothedTickInterval() <= WingsModule::kTickIntervalMax,
+                  "measured tick interval stays clamped");
+        }
+
+        // Teleport: the jump happens between pre-tick and post-tick, so the
+        // pair must collapse onto the destination (wings never swing across
+        // the jump) and the speed filter resets instead of spiking.
+        syncMod.onLocalPlayerPreTick(playerBuf2.data()); // still at 10.8, 20.6
+        svc->x = 500.0f;
+        svc->z = 500.0f;
+        syncMod.onLocalPlayerTick(playerBuf2.data());
+        {
+            WingsModule::WingAnchor prev = syncMod.tickAnchorPrev();
+            WingsModule::WingAnchor curr = syncMod.tickAnchorCurr();
+            check(approxEqual(prev.x, curr.x, 1e-3f) && approxEqual(prev.z, curr.z, 1e-3f),
+                  "teleport collapses the interpolation pair (no blend across jumps)");
+            check(approxEqual(syncMod.smoothedHorizontalSpeed(), 0.0f),
+                  "teleport resets the smoothed speed");
+        }
+
+        delete aabbComp;
+        delete svc;
+    }
+
+    // Frame-driven flap clock: onRenderFrame advances with the real frame dt.
+    {
+        WingsModule frameMod;
+        frameMod.onInit();
+        frameMod.enabled = true;
+        frameMod.onRenderFrame(); // starts the frame clock
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        const float before = frameMod.flapTime();
+        frameMod.onRenderFrame();
+        check(frameMod.flapTime() > before, "onRenderFrame advances the flap clock per frame");
+
+        WingsModule offMod;
+        offMod.onInit();
+        offMod.enabled = false;
+        offMod.onRenderFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        offMod.onRenderFrame();
+        check(approxEqual(offMod.flapTime(), 0.0f), "disabled module does not animate");
     }
 
     // ------------------------------------------------------------------
