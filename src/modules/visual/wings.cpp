@@ -1,4 +1,5 @@
 #include <bedrocktools/modules/visual/wings.hpp>
+#include <bedrocktools/modules/visual/wings_default.hpp>
 
 #include "modules/ModuleRegistry.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
@@ -8,11 +9,16 @@
 #include "core/memory/Hooks.hpp"
 #include "../../config/ConfigManager.hpp"
 
+#include <stb/stb_image_write.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <system_error>
 #include <mutex>
 
 namespace {
@@ -116,7 +122,7 @@ struct AABB {
 static std::mutex s_stateMutex;
 static AABB s_playerAABB{};
 static bedrocktools::sdk::Vec2 s_playerRot{0,0};
-static float s_flapAngleRad = 0.0f;
+static WingBoneAngles s_boneAngles{};
 static void* s_localPlayerPtr = nullptr;
 static bool s_hasPlayer = false;
 
@@ -171,6 +177,162 @@ static std::string wingsDirectoryForConfig() {
 }
 
 // ---------------------------------------------------------------------------
+// Articulated 3D wings.
+//
+// The tables below mirror the bone hierarchy embedded in
+// wings_default::GeometryJson (resources/wings/wings_geometry.json) one to
+// one - same pivots, anchors and cube sizes, in Bedrock pixels (16 px = 1
+// block). Bone chain (per side):
+//
+//   shoulder (root)
+//   +-- upper
+//   |   +-- feather_1
+//   |   +-- feather_2
+//   |   +-- tip
+//   |       +-- feather_3
+//   |       +-- feather_4
+//
+// Each bone rotates around the Z axis (the player's front-back axis) by the
+// per-bone angles the animation controller produces: positive "raise" lifts
+// the wing tip, right-side bones apply the negated angle (their span runs
+// along -X) and left-side bones apply it directly. Cube z ranges are fixed
+// by geometry and never rotated, so they are stored as absolute JSON z.
+// ---------------------------------------------------------------------------
+
+constexpr float kPxToBlocks = 1.0f / 16.0f;
+constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+
+struct WingCornerPose {
+    float c, s;    // 2D rotation
+    float tx, ty;  // translation to absolute JSON xy (px)
+};
+
+struct WingBoneDef {
+    int parent;                     // bone table index; -1 for the root (shoulder)
+    float anchorX, anchorY;         // pivot offset relative to the parent pivot (px)
+    float boxOX, boxOY;             // cube origin relative to the own pivot (px)
+    float boxSX, boxSY;             // cube size on the wing plane (px)
+    float zMin, zMax;               // cube z range, absolute JSON z (px)
+    const unsigned char* colOuter;  // zMin face (faces away from the body)
+    const unsigned char* colInner;  // zMax face (faces the body)
+    const unsigned char* colEdge;   // x faces and the yMax face
+    const unsigned char* colBottom; // yMin face (feather tips get the highlight)
+};
+
+static const WingBoneDef kRightWingBones[7] = {
+    // parent  anchorX  anchorY   boxOX  boxOY  boxSX boxSY  zMin   zMax   outer                      inner                          edges+bottom
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f, -4.0f, -2.0f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  0, -2.0f,  0.0f,  -6.0f, -1.5f, 6.0f, 3.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1, -6.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  1, -4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2, -1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2, -4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+};
+
+static const WingBoneDef kLeftWingBones[7] = {
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f, -4.0f, -2.0f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  0,  2.0f,  0.0f,   0.0f, -1.5f, 6.0f, 3.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1,  6.0f,  0.0f,   0.0f, -1.0f, 5.0f, 2.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1,  2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  1,  4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2,  1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2,  4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+};
+
+static constexpr float kRightRootPivotX = -3.0f;
+static constexpr float kLeftRootPivotX = 3.0f;
+static constexpr float kRootPivotY = 21.0f;
+static constexpr int kWingBoneCount = 7;
+static constexpr int kWingBoxFaces = 6;
+static constexpr int kWingVertexCount = 2 * kWingBoneCount * kWingBoxFaces * 4 * 2; // both windings
+
+static WingCornerPose composePose(const WingCornerPose& parent, float anchorX, float anchorY, float angleRad) {
+    const float rc = std::cos(angleRad);
+    const float rs = std::sin(angleRad);
+    WingCornerPose out;
+    out.c = parent.c * rc - parent.s * rs;
+    out.s = parent.s * rc + parent.c * rs;
+    out.tx = parent.c * anchorX - parent.s * anchorY + parent.tx;
+    out.ty = parent.s * anchorX + parent.c * anchorY + parent.ty;
+    return out;
+}
+
+static void emitFace(void* tess, const float corners[8][3], const int face[4], const unsigned char* color) {
+    s_tessColor(tess, color[0] / 255.0f, color[1] / 255.0f, color[2] / 255.0f, 1.0f);
+    for (int i = 0; i < 4; ++i) {
+        const float* v = corners[face[i]];
+        s_tessVertex(tess, v[0], v[1], v[2]);
+    }
+    // Double-sided: also emit the reversed winding.
+    for (int i = 3; i >= 0; --i) {
+        const float* v = corners[face[i]];
+        s_tessVertex(tess, v[0], v[1], v[2]);
+    }
+}
+
+static void emitWingBox(void* tess, const WingBoneDef& def, const WingCornerPose& pose,
+                        float feetX, float feetY, float feetZ,
+                        float rightX, float rightZ, float fwdX, float fwdZ,
+                        float camX, float camY, float camZ) {
+    // 2D cube corners on the wing plane (local -> absolute JSON xy). The 2D
+    // rotation couples x and y, so the four plane corners are transformed as
+    // points (bit 0 = x side, bit 1 = y side).
+    const float lx[2] = { def.boxOX, def.boxOX + def.boxSX };
+    const float ly[2] = { def.boxOY, def.boxOY + def.boxSY };
+    float planeX[4], planeY[4];
+    for (int i = 0; i < 4; ++i) {
+        const float x = lx[i & 1];
+        const float y = ly[(i >> 1) & 1];
+        planeX[i] = pose.c * x - pose.s * y + pose.tx;
+        planeY[i] = pose.s * x + pose.c * y + pose.ty;
+    }
+
+    // 8 world-space corners (camera relative). JSON axes: x -> -right
+    // (right side spans negative X), y -> up, z -> forward (back is -Z).
+    float corners[8][3];
+    for (int i = 0; i < 8; ++i) {
+        const float px = planeX[i & 3];
+        const float py = planeY[i & 3];
+        const float pz = ((i >> 2) & 1) ? def.zMax : def.zMin;
+        corners[i][0] = feetX + rightX * (-px * kPxToBlocks) + fwdX * (pz * kPxToBlocks) - camX;
+        corners[i][1] = feetY + py * kPxToBlocks - camY;
+        corners[i][2] = feetZ + rightZ * (-px * kPxToBlocks) + fwdZ * (pz * kPxToBlocks) - camZ;
+    }
+
+    static const int kFaces[6][4] = {
+        {0, 1, 2, 3}, // zMin (outer)
+        {4, 5, 6, 7}, // zMax (inner)
+        {0, 3, 7, 4}, // xMin
+        {1, 2, 6, 5}, // xMax
+        {0, 1, 5, 4}, // yMin (bottom)
+        {3, 2, 6, 7}, // yMax (top)
+    };
+    const unsigned char* faceColors[6] = {
+        def.colOuter, def.colInner, def.colEdge, def.colEdge, def.colBottom, def.colEdge,
+    };
+    for (int f = 0; f < 6; ++f) emitFace(tess, corners, kFaces[f], faceColors[f]);
+}
+
+static void emitWing(void* tess, const WingBoneDef (&bones)[7], float rootPivotX,
+                     const float (&anglesDeg)[7], float angleSign,
+                     float feetX, float feetY, float feetZ,
+                     float rightX, float rightZ, float fwdX, float fwdZ,
+                     float camX, float camY, float camZ) {
+    WingCornerPose poses[kWingBoneCount];
+    for (int i = 0; i < kWingBoneCount; ++i) {
+        const WingBoneDef& def = bones[i];
+        const float angleRad = angleSign * anglesDeg[i] * kDegToRad;
+        if (def.parent < 0) {
+            poses[i] = { std::cos(angleRad), std::sin(angleRad), rootPivotX, kRootPivotY };
+        } else {
+            poses[i] = composePose(poses[def.parent], def.anchorX, def.anchorY, angleRad);
+        }
+        emitWingBox(tess, def, poses[i], feetX, feetY, feetZ, rightX, rightZ, fwdX, fwdZ, camX, camY, camZ);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Wing rendering
 // ---------------------------------------------------------------------------
 
@@ -181,13 +343,13 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
 
     AABB aabb;
     bedrocktools::sdk::Vec2 rot;
-    float flapRad;
+    WingBoneAngles angles;
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         if (!s_hasPlayer) return;
         aabb = s_playerAABB;
         rot = s_playerRot;
-        flapRad = s_flapAngleRad;
+        angles = s_boneAngles;
     }
 
     // Validate AABB
@@ -238,92 +400,24 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float feetY = aabb.min.y;
     float feetZ = (aabb.min.z + aabb.max.z) * 0.5f;
 
-    // Pivot offsets in local (right, up, forward)
-    constexpr float kPivotRightOffset = 0.3f;
-    constexpr float kPivotUp = 1.2f;
-    constexpr float kPivotBack = -0.20f; // behind player (negative forward)
-
-    // Wing dimensions
-    constexpr float kWingW = WingsModule::kWingWidth;  // 0.5
-    constexpr float kWingH = WingsModule::kWingHeight; // 0.7
-
-    struct Local2 { float x; float y; };
-    // Right wing local corners before flap rotation (relative to pivot)
-    Local2 rCorners[4] = {
-        {0.0f, 0.0f},
-        {kWingW, 0.0f},
-        {kWingW, -kWingH},
-        {0.0f, -kWingH}
+    // Per-bone, raise-positive angles in animation order:
+    // [shoulder, upper, tip, feather_1, feather_2, feather_3, feather_4]
+    const float wingAngles[7] = {
+        angles.shoulderDeg, angles.upperDeg, angles.tipDeg,
+        angles.featherDeg[0], angles.featherDeg[1], angles.featherDeg[2], angles.featherDeg[3],
     };
-    // Left wing
-    Local2 lCorners[4] = {
-        {0.0f, 0.0f},
-        {-kWingW, 0.0f},
-        {-kWingW, -kWingH},
-        {0.0f, -kWingH}
-    };
-
-    float cosFlapR = std::cos(flapRad);
-    float sinFlapR = std::sin(flapRad);
-    float cosFlapL = std::cos(-flapRad);
-    float sinFlapL = std::sin(-flapRad);
-
-    auto rotateZ = [](Local2 p, float c, float s) -> Local2 {
-        return { p.x * c - p.y * s, p.x * s + p.y * c };
-    };
-
-    Local2 rRot[4], lRot[4];
-    for (int i = 0; i < 4; ++i) rRot[i] = rotateZ(rCorners[i], cosFlapR, sinFlapR);
-    for (int i = 0; i < 4; ++i) lRot[i] = rotateZ(lCorners[i], cosFlapL, sinFlapL);
-
-    // Compute pivot world positions
-    // pivot = feetCenter + right* xPivot + up* yPivot + forward* zPivot
-    float rPivotX = feetX + rightX * kPivotRightOffset + fwdX * kPivotBack;
-    float rPivotY = feetY + kPivotUp;
-    float rPivotZ = feetZ + rightZ * kPivotRightOffset + fwdZ * kPivotBack;
-
-    float lPivotX = feetX + rightX * (-kPivotRightOffset) + fwdX * kPivotBack;
-    float lPivotY = feetY + kPivotUp;
-    float lPivotZ = feetZ + rightZ * (-kPivotRightOffset) + fwdZ * kPivotBack;
-
-    struct WorldPos { float x, y, z; };
-    WorldPos rWorld[4], lWorld[4];
-    for (int i = 0; i < 4; ++i) {
-        rWorld[i].x = rPivotX + rightX * rRot[i].x + fwdX * 0.0f;
-        rWorld[i].y = rPivotY + rRot[i].y;
-        rWorld[i].z = rPivotZ + rightZ * rRot[i].x + fwdZ * 0.0f;
-    }
-    for (int i = 0; i < 4; ++i) {
-        lWorld[i].x = lPivotX + rightX * lRot[i].x;
-        lWorld[i].y = lPivotY + lRot[i].y;
-        lWorld[i].z = lPivotZ + rightZ * lRot[i].x;
-    }
-
-    // Convert to camera-relative
-    for (int i = 0; i < 4; ++i) { rWorld[i].x -= camX; rWorld[i].y -= camY; rWorld[i].z -= camZ; }
-    for (int i = 0; i < 4; ++i) { lWorld[i].x -= camX; lWorld[i].y -= camY; lWorld[i].z -= camZ; }
-
-    // Render - two quads double-sided (8 verts per wing * 2 sides = 16 per wing? Actually 4+4 per wing)
-    // We'll emit 16 vertices total: 2 wings * 8 (front+back)
-    constexpr float kBrownR = 94.0f / 255.0f;
-    constexpr float kBrownG = 62.0f / 255.0f;
-    constexpr float kBrownB = 36.0f / 255.0f;
-    constexpr float kAlpha = 1.0f;
 
     char pad[0x58];
     std::memset(pad, 0, sizeof(pad));
 
-    s_tessBegin(tess, nullptr, 1, 16, 0); // 1 = quad
-    s_tessColor(tess, kBrownR, kBrownG, kBrownB, kAlpha);
+    s_tessBegin(tess, nullptr, 1, kWingVertexCount, 0); // 1 = quad
 
-    // Right wing front
-    for (int i = 0; i < 4; ++i) s_tessVertex(tess, rWorld[i].x, rWorld[i].y, rWorld[i].z);
-    // Right wing back (reversed)
-    for (int i = 3; i >= 0; --i) s_tessVertex(tess, rWorld[i].x, rWorld[i].y, rWorld[i].z);
-    // Left wing front
-    for (int i = 0; i < 4; ++i) s_tessVertex(tess, lWorld[i].x, lWorld[i].y, lWorld[i].z);
-    // Left wing back
-    for (int i = 3; i >= 0; --i) s_tessVertex(tess, lWorld[i].x, lWorld[i].y, lWorld[i].z);
+    // Right wing (span along -X, so a positive lift angle is a negative Z
+    // rotation); left wing mirrors it.
+    emitWing(tess, kRightWingBones, kRightRootPivotX, wingAngles, -1.0f,
+             feetX, feetY, feetZ, rightX, rightZ, fwdX, fwdZ, camX, camY, camZ);
+    emitWing(tess, kLeftWingBones, kLeftRootPivotX, wingAngles, 1.0f,
+             feetX, feetY, feetZ, rightX, rightZ, fwdX, fwdZ, camX, camY, camZ);
 
     s_renderMesh(screenContext, tess, matFill, pad);
 
@@ -343,7 +437,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 } // namespace
 
 WingsModule::WingsModule()
-    : Module("Wings", "Renders wings as a world-space overlay attached to your back (flaps with sin(time), adjustable Flap Speed). Does not modify your skin.") {
+    : Module("Wings", "Renders 3D articulated wings attached to your back (bone hierarchy: shoulder / upper / tip + feathers). Flap, idle and glide animations are driven by your movement speed. Geo and animation JSON + texture are written to the wings folder next to config.json. Does not modify your skin.") {
     g_wings = this;
     showInMenu = true;
     hideInHudEditor = true; // world overlay, not HUD
@@ -355,6 +449,7 @@ WingsModule::~WingsModule() {
 
 void WingsModule::onInit() {
     m_wingsDir = wingsDirectoryForConfig();
+    ensureWingsAssetFiles();
 
     std::uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderLevel);
     if (addr != 0) m_patchTarget = (void*)addr;
@@ -402,10 +497,14 @@ void WingsModule::applyPatch() {
 void WingsModule::onEnable() {
     applyPatch();
     m_flapTime = 0.0f;
+    m_intensity = 0.0f;
+    m_glide = 0.0f;
+    m_airTime = 0.0f;
     m_flapClockStarted = false;
+    m_hasPrevCenter = false;
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
-        s_flapAngleRad = 0.0f;
+        s_boneAngles = WingBoneAngles{};
     }
 }
 
@@ -416,23 +515,102 @@ void WingsModule::onDisable() {
     s_localPlayerPtr = nullptr;
 }
 
+// ---------------------------------------------------------------------------
+// Idle / flap / glide animation driven by the player's speed
+// ---------------------------------------------------------------------------
+
+static float lerpFloat(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
 float WingsModule::currentFlapAngleDegrees() const {
     return kFlapAmplitudeDegrees * std::sin(m_flapTime * kFlapBaseRate * m_flapSpeed);
 }
 
 float WingsModule::currentFlapAngleRadians() const {
-    constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
     return currentFlapAngleDegrees() * kDegToRad;
 }
 
-void WingsModule::advanceFlapAnimation(float dtSeconds) {
+WingBoneAngles WingsModule::currentBoneAngles() const {
+    WingBoneAngles out;
+    const float phase = m_flapTime * kFlapBaseRate * m_flapSpeed;
+    const float idlePh = m_flapTime * kIdleRate * m_flapSpeed;
+    const float glidePh = m_flapTime * kGlideRate * m_flapSpeed;
+    const float w = m_intensity;
+    const float g = m_glide;
+
+    // idle <-> flap blended pose (a wave travelling from the shoulder out to
+    // the feathers, matching animation.wings.idle / animation.wings.flap).
+    const float shoulderFlap = lerpFloat(kIdleBaseDegrees, kFlightBaseDegrees, w)
+        + lerpFloat(kIdleAmplitudeDegrees * std::sin(idlePh),
+                    kFlapAmplitudeDegrees * std::sin(phase), w);
+    const float upperFlap = lerpFloat(6.0f, 0.0f, w)
+        + lerpFloat(4.0f * std::sin(idlePh - kIdleUpperLag),
+                    kFlightUpperAmplitudeDegrees * std::sin(phase - kUpperLag), w);
+    const float tipFlap = lerpFloat(8.0f, 0.0f, w)
+        + lerpFloat(3.0f * std::sin(idlePh - kIdleTipLag),
+                    kFlightTipAmplitudeDegrees * std::sin(phase - kTipLag), w);
+
+    // glide pose (animation.wings.glide): wings spread high, segments
+    // straightened outward. Signs match the "raise positive" value the JSON
+    // animations produce for the right-side bones.
+    const float shoulderGlide = kGlideBaseDegrees + 3.0f * std::sin(glidePh);
+    const float upperGlide = -15.0f + 3.0f * std::sin(glidePh - 0.5235988f); // -30 deg
+    const float tipGlide = -15.0f + 2.0f * std::sin(glidePh - 1.0471976f);   // -60 deg
+
+    out.shoulderDeg = lerpFloat(shoulderFlap, shoulderGlide, g);
+    out.upperDeg = lerpFloat(upperFlap, upperGlide, g);
+    out.tipDeg = lerpFloat(tipFlap, tipGlide, g);
+    for (int i = 0; i < 4; ++i) {
+        const float fi = static_cast<float>(i);
+        const float featherFlap =
+            lerpFloat(2.5f * std::sin(idlePh - kIdleFeatherLagBase - fi * kIdleFeatherLagStep),
+                      kFlightFeatherAmplitudeDegrees * std::sin(phase - kFeatherLagBase - fi * kFeatherLagStep), w);
+        const float featherGlide = 4.0f + 2.0f * std::sin(glidePh - 1.5707963f - fi * kIdleFeatherLagStep);
+        out.featherDeg[i] = lerpFloat(featherFlap, featherGlide, g);
+    }
+    out.flapPhase = phase;
+    out.intensity = w;
+    out.glide = g;
+    return out;
+}
+
+void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, float verticalSpeed) {
     if (dtSeconds <= 0.0f) return;
     m_flapTime += dtSeconds;
-    float angleRad = currentFlapAngleRadians();
-    {
+
+    horizontalSpeed = std::clamp(horizontalSpeed, 0.0f, 40.0f);
+    verticalSpeed = std::clamp(verticalSpeed, -40.0f, 40.0f);
+
+    // Flap target from horizontal movement; rising fast (e.g. jumping off a
+    // ledge) also triggers strong flapping.
+    float moveT = std::clamp(horizontalSpeed / kWalkSpeedFull, 0.0f, 1.0f);
+    if (verticalSpeed > kRiseSpeedFlap) moveT = std::max(moveT, 0.85f);
+
+    // Glide target requires a sustained descent so short hops do not count.
+    const bool descending = verticalSpeed < kGlideFallSpeed;
+    m_airTime = descending ? m_airTime + dtSeconds : 0.0f;
+    const float glideT = (m_airTime > kGlideAirTime) ? 1.0f : 0.0f;
+
+    // While gliding the wings are spread instead of flapping.
+    const float intensityT = std::clamp(moveT * (1.0f - glideT), 0.0f, 1.0f);
+
+    const float rate = (intensityT > m_intensity) ? kIntensityAttackRate : kIntensityDecayRate;
+    m_intensity += (intensityT - m_intensity) * std::min(1.0f, dtSeconds * rate);
+    const float grate = (glideT > m_glide) ? kGlideAttackRate : kGlideDecayRate;
+    m_glide += (glideT - m_glide) * std::min(1.0f, dtSeconds * grate);
+
+    // Publish the pose for the render hook (only the live module instance,
+    // so host-test instances cannot clobber the in-game render state).
+    if (this == g_wings) {
+        WingBoneAngles angles = currentBoneAngles();
         std::lock_guard<std::mutex> lock(s_stateMutex);
-        s_flapAngleRad = angleRad;
+        s_boneAngles = angles;
     }
+}
+
+void WingsModule::advanceFlapAnimation(float dtSeconds) {
+    advanceWingAnimation(dtSeconds, 0.0f, 0.0f);
 }
 
 void WingsModule::onLocalPlayerTick(void* player) {
@@ -450,20 +628,44 @@ void WingsModule::onLocalPlayerTick(void* player) {
         return;
     }
 
-    // Advance flap clock with real elapsed time
+    // Tick dt from the real clock (clamped after hitches).
     const auto now = std::chrono::steady_clock::now();
     float dt = 0.0f;
     if (m_flapClockStarted) {
         dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
-        if (dt > 0.25f) dt = 0.25f; // clamp after hitch
+        if (dt > 0.25f) dt = 0.25f;
     }
     m_lastFlapTick = now;
     m_flapClockStarted = true;
-    if (dt > 0.0f) advanceFlapAnimation(dt);
 
-    // Track player AABB and rotation for rendering
+    // Track player AABB and rotation for rendering, and derive the player's
+    // speed from consecutive AABB centers (teleports are ignored).
     AABB aabb = getActorAABB(player);
     bedrocktools::sdk::Vec2 rot = getActorRotation(player);
+
+    const float centerX = (aabb.min.x + aabb.max.x) * 0.5f;
+    const float centerY = (aabb.min.y + aabb.max.y) * 0.5f;
+    const float centerZ = (aabb.min.z + aabb.max.z) * 0.5f;
+
+    if (dt > 0.0f) {
+        float horizontalSpeed = 0.0f;
+        float verticalSpeed = 0.0f;
+        if (m_hasPrevCenter) {
+            const float dx = centerX - m_prevCenterX;
+            const float dy = centerY - m_prevCenterY;
+            const float dz = centerZ - m_prevCenterZ;
+            if (dx * dx + dy * dy + dz * dz < 25.0f) { // 5 blocks: not a teleport
+                horizontalSpeed = std::sqrt(dx * dx + dz * dz) / dt;
+                verticalSpeed = dy / dt;
+            }
+        }
+        advanceWingAnimation(dt, horizontalSpeed, verticalSpeed);
+    }
+
+    m_prevCenterX = centerX;
+    m_prevCenterY = centerY;
+    m_prevCenterZ = centerZ;
+    m_hasPrevCenter = true;
 
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
@@ -471,6 +673,40 @@ void WingsModule::onLocalPlayerTick(void* player) {
         s_playerRot = rot;
         s_localPlayerPtr = player;
         s_hasPlayer = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Embedded asset files
+// ---------------------------------------------------------------------------
+
+static bool writeTextFileIfMissing(const std::string& path, const char* contents) {
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) return true;
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out << contents;
+    return out.good();
+}
+
+void WingsModule::ensureWingsAssetFiles() {
+    if (m_wingsDir.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(m_wingsDir, ec);
+    if (ec) return;
+
+    writeTextFileIfMissing(m_wingsDir + "/wings_geometry.json", wings_default::GeometryJson);
+    writeTextFileIfMissing(m_wingsDir + "/wings_animation.json", wings_default::AnimationJson);
+    writeTextFileIfMissing(m_wingsDir + "/wings_animation_controllers.json", wings_default::AnimationControllerJson);
+
+    const std::string pngPath = m_wingsDir + "/wings.png";
+    std::error_code ec2;
+    if (!std::filesystem::exists(pngPath, ec2)) {
+        stbi_write_png(pngPath.c_str(),
+                       static_cast<int>(wings_default::TextureWidth),
+                       static_cast<int>(wings_default::TextureHeight),
+                       4, wings_default::TexturePixels,
+                       static_cast<int>(wings_default::TextureWidth * 4));
     }
 }
 
