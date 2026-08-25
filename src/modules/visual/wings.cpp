@@ -212,32 +212,40 @@ struct WingBoneDef {
     float anchorX, anchorY;         // pivot offset relative to the parent pivot (px)
     float boxOX, boxOY;             // cube origin relative to the own pivot (px)
     float boxSX, boxSY;             // cube size on the wing plane (px)
-    float zMin, zMax;               // cube z range, absolute JSON z (px)
-    const unsigned char* colOuter;  // zMin face (faces away from the body)
-    const unsigned char* colInner;  // zMax face (faces the body)
+    float zMin, zMax;               // cube z range, absolute JSON z (px); the
+                                    // back of the body is at +Z, so the wings
+                                    // live at z >= 2.5, behind the back
+    const unsigned char* colOuter;  // zMax face (faces away from the body)
+    const unsigned char* colInner;  // zMin face (faces the body)
     const unsigned char* colEdge;   // x faces and the yMax face
     const unsigned char* colBottom; // yMin face (feather tips get the highlight)
 };
 
+// Z coordinates mirror resources/wings/wings_geometry.json: the body spans
+// z in [-2, +2] (Bedrock model space faces -Z, so the cape/back side is
+// +Z). Wing boxes sit at z = [2.5, 4.5] (shoulder joint) and [3.0, 4.0]
+// (membranes/feathers) - fixed directly behind the back with a 0.5 px
+// standoff from the back surface so nothing clips the torso or pokes
+// through the chest/shoulders when the player is seen from the front.
 static const WingBoneDef kRightWingBones[7] = {
     // parent  anchorX  anchorY   boxOX  boxOY  boxSX boxSY  zMin   zMax   outer                      inner                          edges+bottom
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f, -4.0f, -2.0f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  0, -2.0f,  0.0f,  -6.0f, -1.5f, 6.0f, 3.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1, -6.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  1, -4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2, -1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2, -4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f,  4.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  0, -2.0f,  0.0f,  -6.0f, -1.5f, 6.0f, 3.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1, -6.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  1, -4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2, -1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2, -4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
 };
 
 static const WingBoneDef kLeftWingBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f, -4.0f, -2.0f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  0,  2.0f,  0.0f,   0.0f, -1.5f, 6.0f, 3.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1,  6.0f,  0.0f,   0.0f, -1.0f, 5.0f, 2.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1,  2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  1,  4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2,  1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2,  4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f, -3.5f, -2.5f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f,  4.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  0,  2.0f,  0.0f,   0.0f, -1.5f, 6.0f, 3.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1,  6.0f,  0.0f,   0.0f, -1.0f, 5.0f, 2.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
+    {  1,  2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  1,  4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2,  1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+    {  2,  4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
 };
 
 static constexpr float kRightRootPivotX = -3.0f;
@@ -288,28 +296,31 @@ static void emitWingBox(void* tess, const WingBoneDef& def, const WingCornerPose
         planeY[i] = pose.s * x + pose.c * y + pose.ty;
     }
 
-    // 8 world-space corners (camera relative). JSON axes: x -> -right
-    // (right side spans negative X), y -> up, z -> forward (back is -Z).
+    // 8 world-space corners (camera relative). Bedrock model space faces
+    // -Z (north), so the back/cape side is +Z: JSON axes map as x -> -right
+    // (right side spans negative X), y -> up, z -> -forward (back is +Z).
+    // Wing boxes therefore carry POSITIVE z (2.5..4.5 px, see the bone
+    // tables) and land behind the player, never inside the chest.
     float corners[8][3];
     for (int i = 0; i < 8; ++i) {
         const float px = planeX[i & 3];
         const float py = planeY[i & 3];
         const float pz = ((i >> 2) & 1) ? def.zMax : def.zMin;
-        corners[i][0] = feetX + rightX * (-px * kPxToBlocks) + fwdX * (pz * kPxToBlocks) - camX;
+        corners[i][0] = feetX + rightX * (-px * kPxToBlocks) - fwdX * (pz * kPxToBlocks) - camX;
         corners[i][1] = feetY + py * kPxToBlocks - camY;
-        corners[i][2] = feetZ + rightZ * (-px * kPxToBlocks) + fwdZ * (pz * kPxToBlocks) - camZ;
+        corners[i][2] = feetZ + rightZ * (-px * kPxToBlocks) - fwdZ * (pz * kPxToBlocks) - camZ;
     }
 
     static const int kFaces[6][4] = {
-        {0, 1, 2, 3}, // zMin (outer)
-        {4, 5, 6, 7}, // zMax (inner)
+        {0, 1, 2, 3}, // zMin (inner, faces the body)
+        {4, 5, 6, 7}, // zMax (outer, faces away)
         {0, 3, 7, 4}, // xMin
         {1, 2, 6, 5}, // xMax
         {0, 1, 5, 4}, // yMin (bottom)
         {3, 2, 6, 7}, // yMax (top)
     };
     const unsigned char* faceColors[6] = {
-        def.colOuter, def.colInner, def.colEdge, def.colEdge, def.colBottom, def.colEdge,
+        def.colInner, def.colOuter, def.colEdge, def.colEdge, def.colBottom, def.colEdge,
     };
     for (int f = 0; f < 6; ++f) emitFace(tess, corners, kFaces[f], faceColors[f]);
 }
