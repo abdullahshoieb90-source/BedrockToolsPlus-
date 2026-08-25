@@ -209,6 +209,12 @@ static std::string wingsDirectoryForConfig() {
 constexpr float kPxToBlocks = 1.0f / 16.0f;
 constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
 
+// Camera-inside-AABB tolerance for WingsModule::isThirdPersonCamera. In
+// first-person the camera is inside the player's head (inside the collision
+// box); the small margin absorbs jitter at the box edges. A third-person
+// camera is pulled back well outside the box.
+constexpr float kFirstPersonMargin = 0.05f;  // blocks
+
 struct WingCornerPose {
     float c, s;    // 2D rotation
     float tx, ty;  // translation to absolute JSON xy (px)
@@ -447,6 +453,21 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float camY = *(float*)(lrpPtr + LevelRendererPlayer::mCamPos + 4);
     float camZ = *(float*)(lrpPtr + LevelRendererPlayer::mCamPos + 8);
 
+    // Feet center (AABB bottom). Computed here (before the color holder is
+    // touched) so the first-person guard below can early-return without leaving
+    // the GPU color stuck at white, and later reused to place the wings.
+    float feetX = (aabb.min.x + aabb.max.x) * 0.5f;
+    float feetY = aabb.min.y;
+    float feetZ = (aabb.min.z + aabb.max.z) * 0.5f;
+
+    // First-person: the camera sits inside the player's head (inside the AABB),
+    // so the back-mounted wings overlap/clip the view. Only draw them from a
+    // real third-person point of view, matching how the Hitbox module hides its
+    // own box in first-person.
+    if (!WingsModule::isThirdPersonCamera(camX, camY, camZ,
+                                          aabb.min.x, aabb.min.y, aabb.min.z,
+                                          aabb.max.x, aabb.max.y, aabb.max.z)) return;
+
     ensureMaterials();
     void* overlayMat = (void*)(lrpPtr + LevelRendererPlayer::mSelectionOverlayMaterial);
     void* matInner = s_matSelection ? (void*)&s_matSelection : overlayMat;
@@ -472,11 +493,6 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float rightZ = -sinYaw;
     float fwdX = -sinYaw;
     float fwdZ = cosYaw;
-
-    // Feet center
-    float feetX = (aabb.min.x + aabb.max.x) * 0.5f;
-    float feetY = aabb.min.y;
-    float feetZ = (aabb.min.z + aabb.max.z) * 0.5f;
 
     // Per-bone, raise-positive angles in animation order:
     // [shoulder, upper, tip, feather_1, feather_2, feather_3, feather_4]
@@ -835,6 +851,19 @@ void WingsModule::onLocalPlayerTick(void* player) {
         s_lastTickTime = now;
         s_lastTickTimeValid = true;
     }
+}
+
+bool WingsModule::isThirdPersonCamera(float camX, float camY, float camZ,
+                                      float aabbMinX, float aabbMinY, float aabbMinZ,
+                                      float aabbMaxX, float aabbMaxY, float aabbMaxZ) {
+    // In first-person the camera is at the player's head, which lies inside the
+    // collision box. A third-person camera is pulled back outside the box.
+    const float m = kFirstPersonMargin;
+    const bool cameraInsideBox =
+        camX >= aabbMinX - m && camX <= aabbMaxX + m &&
+        camY >= aabbMinY - m && camY <= aabbMaxY + m &&
+        camZ >= aabbMinZ - m && camZ <= aabbMaxZ + m;
+    return !cameraInsideBox;
 }
 
 // ---------------------------------------------------------------------------

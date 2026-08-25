@@ -140,6 +140,30 @@ int main() {
     check(WingsModule::kWingWidth > 0.0f && WingsModule::kWingHeight > 0.0f, "wing dimensions positive");
 
     // ------------------------------------------------------------------
+    // First-person vs third-person camera detection
+    // ------------------------------------------------------------------
+    std::printf("first/third-person camera detection\n");
+    // Player collision box spans [0,0,0]..[0.6,1.8,0.6]; the first-person eye
+    // is inside the box (standing ~1.62, sneaking ~1.27).
+    const float bx0 = 0.0f, by0 = 0.0f, bz0 = 0.0f;
+    const float bx1 = 0.6f, by1 = 1.8f, bz1 = 0.6f;
+    // Standing first-person: camera at the head, inside the box => no wings.
+    check(!WingsModule::isThirdPersonCamera(0.3f, 1.62f, 0.3f, bx0, by0, bz0, bx1, by1, bz1),
+          "camera inside the box (standing) is first-person (no wings)");
+    // Sneaking drops the eye -> camera still inside the (shorter) box => no wings.
+    check(!WingsModule::isThirdPersonCamera(0.3f, 1.27f, 0.3f, bx0, by0, bz0, bx1, 1.5f, bz1),
+          "camera inside the box (sneaking) is still first-person (no wings)");
+    check(!WingsModule::isThirdPersonCamera(0.62f, 1.62f, 0.3f, bx0, by0, bz0, bx1, by1, bz1),
+          "camera just past the box edge (within margin) stays first-person");
+    // A third-person camera pulls back outside the box => draw wings.
+    check(WingsModule::isThirdPersonCamera(0.3f, 2.4f, 3.0f, bx0, by0, bz0, bx1, by1, bz1),
+          "camera pulled back is third-person (draw wings)");
+    check(WingsModule::isThirdPersonCamera(2.0f, 3.0f, 0.3f, bx0, by0, bz0, bx1, by1, bz1),
+          "camera off to the side is third-person (draw wings)");
+    check(!WingsModule::isThirdPersonCamera(0.3f, 0.4f, 0.3f, bx0, by0, bz0, bx1, by1, bz1),
+          "camera just under the feet (inside box) is first-person (no wings)");
+
+    // ------------------------------------------------------------------
     // Flap animation: sin(time) driven
     // ------------------------------------------------------------------
     WingsModule mod;
