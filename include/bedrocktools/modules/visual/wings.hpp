@@ -79,6 +79,19 @@ public:
     // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
 
+    // True when the render camera is outside the local player's collision box,
+    // i.e. the player is being viewed from behind in third-person. In
+    // first-person the camera sits inside the player's head (within the AABB),
+    // so the back-mounted wings would overlap/clip the view; the module only
+    // draws its wings when this returns true. Testing the box rather than a
+    // fixed eye height keeps this correct while sneaking/swimming, where the
+    // eye drops but the camera stays inside the box. Mirrors the Hitbox
+    // module's convention of not rendering the player's own geometry in
+    // first-person.
+    static bool isThirdPersonCamera(float camX, float camY, float camZ,
+                                    float aabbMinX, float aabbMinY, float aabbMinZ,
+                                    float aabbMaxX, float aabbMaxY, float aabbMaxZ);
+
     // Advances the wing animation by dtSeconds given the player's current
     // horizontal and vertical speed (blocks/second). This blends the pose
     // between idle, flap and glide and stores the resulting bone angles for
