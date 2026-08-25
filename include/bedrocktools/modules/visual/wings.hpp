@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/Module.hpp"
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -36,6 +37,15 @@
 // skin image, geometry data and default-geometry name are backed up and
 // restored when the module is disabled or the assets are removed.
 //
+// Flapping:
+// On every tick the module advances an internal clock, computes
+//   angle = amplitude * sin(clock * baseRate * m_flapSpeed)
+// and rewrites the `"rotation"` array of the wingRight / wingLeft bones in
+// the geometry JSON (right wing = +angle around Z, left wing = -angle so both
+// mirror each other). The animated JSON is then re-injected into
+// mGeometryData. m_flapSpeed is exposed in the launcher menu as a speed
+// multiplier in [0.1, 10.0]; 1.0 is the default fast flap.
+//
 // Expected geometry format: a Bedrock skin pack geometry JSON, i.e. a
 // `format_version` object containing either `"minecraft:geometry"` or
 // `"geometry"` as an array whose first entry carries
@@ -66,13 +76,23 @@ public:
     // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
 
+    // Advances the flap clock by dt seconds and rebuilds the animated
+    // geometry. Called automatically from the tick with real elapsed time;
+    // also public so host tests can drive a deterministic clock.
+    void advanceFlapAnimation(float dtSeconds);
+
     // Directory the module watches; exposed for the menu description.
     const std::string& wingsDirectory() const { return m_wingsDir; }
+
+    // Flap speed multiplier shown in the launcher menu (0.1 = slow, 10 = very
+    // fast, 1.0 = default). Public so the menu/test can read/write it directly.
+    float m_flapSpeed = 1.0f;
 
 private:
     void loadWingsAssets();
     void loadDefaultAssets();
     void releaseWingsAssets();
+    void buildAnimatedGeometry();
 
     bool applyWings(void* skin);
     void restoreOriginalSkin(void* skin);
@@ -90,6 +110,15 @@ private:
     std::vector<std::uint8_t> m_texturePixels; // RGBA8
     int m_textureWidth = 0;
     int m_textureHeight = 0;
+
+    // Animation state (clock driven per tick).
+    float m_flapTime = 0.0f;
+    bool m_flapClockStarted = false;
+    std::chrono::steady_clock::time_point m_lastFlapTick;
+
+    // Base JSON the animation is derived from each tick; m_geometryData holds
+    // the current (animated) copy that is written into the skin.
+    std::string m_geometryTemplate;
 
     // State of the in-game skin patch.
     void* m_patchedSkin = nullptr;  // SerializedSkinImpl* currently patched

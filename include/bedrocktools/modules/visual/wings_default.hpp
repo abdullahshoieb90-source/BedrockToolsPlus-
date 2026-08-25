@@ -63,12 +63,14 @@ inline constexpr const char* GeometryJson = R"json({
           "name": "wingRight",
           "parent": "body",
           "pivot": [4, 20, -2],
+          "rotation": [0.0, 0.0, 0.0],
           "cubes": [ { "origin": [2, 12, -3], "size": [6, 10, 1], "uv": [48, 16] } ]
         },
         {
           "name": "wingLeft",
           "parent": "body",
           "pivot": [-4, 20, -2],
+          "rotation": [0.0, 0.0, 0.0],
           "cubes": [ { "origin": [-8, 12, -3], "size": [6, 10, 1], "uv": [48, 32] } ]
         }
       ]

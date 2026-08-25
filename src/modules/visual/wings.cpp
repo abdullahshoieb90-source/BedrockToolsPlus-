@@ -10,7 +10,11 @@
 // only use the loader declarations here.
 #include <stb/stb_image.h>
 
+#include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -158,6 +162,123 @@ std::string readStdString(uintptr_t addr) {
     return data ? std::string(data, len) : std::string();
 }
 
+// ---------------------------------------------------------------------------
+// Geometry bone-rotation helper.
+//
+// Skin-pack geometry carries each bone's resting transform as a static JSON
+// array, e.g. `"rotation": [0.0, 0.0, 20.0]` (euler degrees, X/Y/Z). The wing
+// animation rewrites that array for wingRight / wingLeft every tick, then
+// re-injects the resulting mGeometryData into the skin. The rewrite is plain
+// text so it works on the embedded default pack as well as any user-supplied
+// wings_geometry.json, without depending on a JSON runtime.
+// ---------------------------------------------------------------------------
+
+constexpr const char* kWingRightBone = "wingRight";
+constexpr const char* kWingLeftBone = "wingLeft";
+constexpr float kFlapAmplitudeDegrees = 35.0f;
+constexpr float kFlapBaseRate = 6.0f; // radians/second at m_flapSpeed == 1.0
+
+std::size_t skipWhitespace(const std::string& s, std::size_t pos) {
+    while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos]))) ++pos;
+    return pos;
+}
+
+bool readQuotedString(const std::string& s, std::size_t quotePos, std::string& out) {
+    if (quotePos >= s.size() || s[quotePos] != '"') return false;
+    std::size_t pos = quotePos + 1;
+    const std::size_t begin = pos;
+    while (pos < s.size() && s[pos] != '"') {
+        if (s[pos] == '\\') ++pos;
+        if (pos < s.size()) ++pos;
+    }
+    if (pos >= s.size()) return false;
+    out = s.substr(begin, pos - begin);
+    return true;
+}
+
+std::size_t findClosingBracket(const std::string& s, std::size_t openPos) {
+    if (openPos >= s.size() || (s[openPos] != '[' && s[openPos] != '{')) return std::string::npos;
+    const char open = s[openPos];
+    const char close = open == '[' ? ']' : '}';
+    int depth = 0;
+    for (std::size_t i = openPos; i < s.size(); ++i) {
+        if (s[i] == open) ++depth;
+        else if (s[i] == close) {
+            --depth;
+            if (depth == 0) return i;
+        }
+    }
+    return std::string::npos;
+}
+
+std::size_t findEnclosingObjectStart(const std::string& s, std::size_t beforePos) {
+    // Walk backwards from beforePos matching braces so nested arrays/objects
+    // before the bone's "name" key cannot confuse the search.
+    int depth = 0;
+    for (std::size_t i = beforePos; i > 0; --i) {
+        const char c = s[i - 1];
+        if (c == '}') {
+            ++depth;
+        } else if (c == '{') {
+            if (depth == 0) return i - 1;
+            --depth;
+        }
+    }
+    return std::string::npos;
+}
+
+std::string formatRotation(float x, float y, float z) {
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "[%.3f,%.3f,%.3f]", x, y, z);
+    return std::string(buffer);
+}
+
+// Finds the first bone object whose "name" value equals boneName and rewrites
+// its "rotation" array (inserting one if the bone has none). Returns false if
+// the bone cannot be located — the caller then keeps the base geometry intact.
+bool setBoneRotation(std::string& geometry, const std::string& boneName,
+                     float x, float y, float z) {
+    const std::string nameKey = "\"name\"";
+    std::size_t searchFrom = 0;
+    while (searchFrom < geometry.size()) {
+        const std::size_t keyPos = geometry.find(nameKey, searchFrom);
+        if (keyPos == std::string::npos) break;
+        std::size_t colon = skipWhitespace(geometry, keyPos + nameKey.size());
+        if (colon < geometry.size() && geometry[colon] == ':') {
+            const std::size_t valueQuote = skipWhitespace(geometry, colon + 1);
+            std::string found;
+            if (valueQuote < geometry.size() && readQuotedString(geometry, valueQuote, found) &&
+                found == boneName) {
+                const std::size_t objStart = findEnclosingObjectStart(geometry, keyPos);
+                const std::size_t objEnd = findClosingBracket(geometry, objStart);
+                if (objStart == std::string::npos || objEnd == std::string::npos) return false;
+
+                const std::string rotationKey = "\"rotation\"";
+                const std::size_t rotKey = geometry.find(rotationKey, objStart);
+                if (rotKey != std::string::npos && rotKey < objEnd) {
+                    const std::size_t rotColon = skipWhitespace(geometry, rotKey + rotationKey.size());
+                    const std::size_t bracketOpen = skipWhitespace(geometry, rotColon + 1);
+                    const std::size_t bracketClose = findClosingBracket(geometry, bracketOpen);
+                    if (bracketOpen < geometry.size() && geometry[bracketOpen] == '[' &&
+                        bracketClose != std::string::npos) {
+                        geometry.replace(bracketOpen, bracketClose - bracketOpen + 1,
+                                         formatRotation(x, y, z));
+                        return true;
+                    }
+                    return false; // malformed rotation value — do not corrupt JSON
+                }
+
+                const bool objectEmpty = geometry[objEnd - 1] == '{';
+                geometry.insert(objEnd, std::string(objectEmpty ? "" : ",") +
+                                            "\"rotation\":" + formatRotation(x, y, z));
+                return true;
+            }
+        }
+        searchFrom = keyPos + nameKey.size();
+    }
+    return false;
+}
+
 } // namespace
 
 WingsModule* g_wings = nullptr;
@@ -184,10 +305,13 @@ void WingsModule::onEnable() {
     // Re-resolve on every enable: external files in the wings folder take
     // priority, and the built-in defaults are the fallback when they are not
     // present. This also picks up files the user dropped in while the module
-    // was running the default pack.
+    // was running the default pack. The flap clock restarts from zero so the
+    // wings start in the neutral pose.
     m_loadFailed = false;
     m_retryTicks = 0;
     loadWingsAssets();
+    m_flapTime = 0.0f;
+    m_flapClockStarted = false;
     m_needsApply = true;
 }
 
@@ -199,6 +323,8 @@ void WingsModule::onDisable() {
 void WingsModule::releaseWingsAssets() {
     m_geometryData.clear();
     m_geometryData.shrink_to_fit();
+    m_geometryTemplate.clear();
+    m_geometryTemplate.shrink_to_fit();
     m_defaultGeometryName.clear();
     m_defaultGeometryName.shrink_to_fit();
     m_texturePixels.clear();
@@ -209,11 +335,14 @@ void WingsModule::releaseWingsAssets() {
     m_useDefaults = false;
     m_loadFailed = false;
     m_retryTicks = 0;
+    m_flapTime = 0.0f;
+    m_flapClockStarted = false;
 }
 
 // Loads the embedded default pack into the module-owned buffers.
 void WingsModule::loadDefaultAssets() {
-    m_geometryData = wings_default::GeometryJson;
+    m_geometryTemplate = wings_default::GeometryJson;
+    m_geometryData = m_geometryTemplate;
     m_defaultGeometryName = wings_default::GeometryIdentifier;
 
     const std::size_t bytes = wings_default::TextureWidth * wings_default::TextureHeight * 4u;
@@ -241,15 +370,18 @@ void WingsModule::loadWingsAssets() {
     const std::string geometryPath = m_wingsDir + "/wings_geometry.json";
     const std::string texturePath = m_wingsDir + "/wings.png";
 
-    if (!readFile(geometryPath, m_geometryData) || m_geometryData.empty()) {
+    std::string externalGeometry;
+    if (!readFile(geometryPath, externalGeometry) || externalGeometry.empty()) {
         loadDefaultAssets();
         return;
     }
-    m_defaultGeometryName = parseGeometryIdentifier(m_geometryData);
+    m_defaultGeometryName = parseGeometryIdentifier(externalGeometry);
     if (m_defaultGeometryName.empty()) {
         loadDefaultAssets();
         return;
     }
+    m_geometryTemplate = std::move(externalGeometry);
+    m_geometryData = m_geometryTemplate;
 
     int width = 0, height = 0, channels = 0;
     stbi_uc* decoded = stbi_load(texturePath.c_str(), &width, &height, &channels, 4);
@@ -274,6 +406,27 @@ void WingsModule::loadWingsAssets() {
     m_needsApply = true;
 }
 
+// Rebuilds m_geometryData from m_geometryTemplate with the current flap phase
+// applied to the wing bones. Bones that are missing keep the geometry as-is.
+void WingsModule::buildAnimatedGeometry() {
+    if (m_geometryTemplate.empty()) return;
+
+    const float phase = m_flapTime * (kFlapBaseRate * m_flapSpeed);
+    const float angle = kFlapAmplitudeDegrees * std::sin(phase);
+
+    std::string geometry = m_geometryTemplate;
+    setBoneRotation(geometry, kWingRightBone, 0.0f, 0.0f, angle);
+    setBoneRotation(geometry, kWingLeftBone, 0.0f, 0.0f, -angle);
+    m_geometryData = std::move(geometry);
+    m_needsApply = true;
+}
+
+void WingsModule::advanceFlapAnimation(float dtSeconds) {
+    if (dtSeconds <= 0.0f || !m_assetsLoaded) return;
+    m_flapTime += dtSeconds;
+    buildAnimatedGeometry();
+}
+
 void WingsModule::clearPatchState() {
     m_patchedSkin = nullptr;
     m_injectedBlob = nullptr;
@@ -291,6 +444,20 @@ void WingsModule::onLocalPlayerTick(void* player) {
         } else {
             --m_retryTicks;
         }
+    }
+
+    // Advance the flap clock with real elapsed time, so the flapping stays
+    // smooth across standing and moving (which both run the same tick).
+    if (enabled && m_assetsLoaded) {
+        const auto now = std::chrono::steady_clock::now();
+        float dt = 0.0f;
+        if (m_flapClockStarted) {
+            dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
+            if (dt > 0.25f) dt = 0.25f; // clamped after a hitch/join
+        }
+        m_lastFlapTick = now;
+        m_flapClockStarted = true;
+        advanceFlapAnimation(dt);
     }
 
     void* skin = resolvePlayerSkin(player);
@@ -350,43 +517,47 @@ bool WingsModule::applyWings(void* skin) {
         m_needsApply = true;
     }
 
-    // Patch already in place and untouched? Nothing to do this tick.
-    const bool geometryIntact =
-        readStdString(geometryDataAddr) == m_geometryData &&
-        readStdString(geometryNameAddr) == m_defaultGeometryName;
-    if (!m_needsApply && m_injectedBlob != nullptr &&
-        *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) == m_injectedBlob &&
+    // Texture patch: replace the pixel blob only when it is not ours yet or
+    // when the asset dimensions changed. The flap animation rewrites geometry
+    // every tick, so this must not churn the texture blob on every tick.
+    const bool dimensionsMatch =
         *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) ==
             static_cast<uint32_t>(m_textureWidth) &&
         *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) ==
-            static_cast<uint32_t>(m_textureHeight) &&
-        geometryIntact) {
-        return true;
+            static_cast<uint32_t>(m_textureHeight);
+    if (m_injectedBlob == nullptr ||
+        *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) != m_injectedBlob ||
+        !dimensionsMatch) {
+        const std::size_t bytes = m_texturePixels.size();
+        void* newBlob = std::malloc(bytes);
+        if (!newBlob) return false;
+        std::memcpy(newBlob, m_texturePixels.data(), bytes);
+
+        // Point the skin image at the new blob before releasing the previous
+        // one so the skin never references freed memory.
+        void* previousBlob = m_injectedBlob;
+        *reinterpret_cast<uint32_t*>(skinImage + Image::mImageFormat) = kSkinImageFormat;
+        *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) =
+            static_cast<uint32_t>(m_textureWidth);
+        *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) =
+            static_cast<uint32_t>(m_textureHeight);
+        *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) = newBlob;
+        *reinterpret_cast<void**>(skinImage + Image::mBlobDeleterOffset) =
+            reinterpret_cast<void*>(&freeBlobDeleter);
+        *reinterpret_cast<std::size_t*>(skinImage + Image::mBlobSizeOffset) = bytes;
+        m_injectedBlob = newBlob;
+        if (previousBlob != nullptr) std::free(previousBlob);
     }
 
-    const std::size_t bytes = m_texturePixels.size();
-    void* newBlob = std::malloc(bytes);
-    if (!newBlob) return false;
-    std::memcpy(newBlob, m_texturePixels.data(), bytes);
-
-    // Point the skin image at the new blob before releasing the previous one so
-    // the skin never references freed memory.
-    void* previousBlob = m_injectedBlob;
-    *reinterpret_cast<uint32_t*>(skinImage + Image::mImageFormat) = kSkinImageFormat;
-    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) =
-        static_cast<uint32_t>(m_textureWidth);
-    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) =
-        static_cast<uint32_t>(m_textureHeight);
-    *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) = newBlob;
-    *reinterpret_cast<void**>(skinImage + Image::mBlobDeleterOffset) =
-        reinterpret_cast<void*>(&freeBlobDeleter);
-    *reinterpret_cast<std::size_t*>(skinImage + Image::mBlobSizeOffset) = bytes;
-    m_injectedBlob = newBlob;
-    if (previousBlob != nullptr) std::free(previousBlob);
-
-    // Make the engine render the custom model instead of the default humanoid.
-    writeStdString(geometryDataAddr, m_geometryData);
-    writeStdString(geometryNameAddr, m_defaultGeometryName);
+    // Geometry animation: write the (possibly newly flapped) geometry and the
+    // model name into the skin whenever they differ from what is already there.
+    const bool geometrySame =
+        readStdString(geometryDataAddr) == m_geometryData &&
+        readStdString(geometryNameAddr) == m_defaultGeometryName;
+    if (!geometrySame) {
+        writeStdString(geometryDataAddr, m_geometryData);
+        writeStdString(geometryNameAddr, m_defaultGeometryName);
+    }
 
     m_needsApply = false;
     return true;
@@ -434,8 +605,14 @@ void WingsModule::restoreOriginalSkin(void* skin) {
 
 void WingsModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
+    if (j.contains("m_flapSpeed")) {
+        const float speed = j["m_flapSpeed"].get<float>();
+        m_flapSpeed = std::clamp(speed, 0.1f, 10.0f);
+    }
 }
 
 void WingsModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
+    const float flapSpeed = std::clamp(m_flapSpeed, 0.1f, 10.0f);
+    j["m_flapSpeed"] = flapSpeed;
 }

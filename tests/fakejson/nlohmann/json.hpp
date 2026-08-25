@@ -48,6 +48,7 @@ public:
 
     json& operator=(int value) { m_type = Type::Integer; m_integer = value; return *this; }
     json& operator=(bool value) { m_type = Type::Boolean; m_integer = value ? 1 : 0; return *this; }
+    json& operator=(double value) { m_type = Type::Integer; m_integer = static_cast<long long>(value); return *this; }
     json& operator=(const char* value) { return (*this) = std::string(value); }
     json& operator=(const std::string& value) { m_type = Type::String; m_string = value; return *this; }
 

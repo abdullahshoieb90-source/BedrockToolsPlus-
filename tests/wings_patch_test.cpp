@@ -156,7 +156,20 @@ int main() {
         "texture_width": 64,
         "texture_height": 64
       },
-      "bones": []
+      "bones": [
+        {
+          "name": "wingRight",
+          "pivot": [4, 20, -2],
+          "rotation": [0.0, 0.0, 0.0],
+          "cubes": [ { "origin": [2, 12, -3], "size": [6, 10, 1], "uv": [48, 16] } ]
+        },
+        {
+          "name": "wingLeft",
+          "pivot": [-4, 20, -2],
+          "rotation": [0.0, 0.0, 0.0],
+          "cubes": [ { "origin": [-8, 12, -3], "size": [6, 10, 1], "uv": [48, 32] } ]
+        }
+      ]
     }
   ]
 })JSON";
@@ -246,14 +259,15 @@ int main() {
           "mCapeImage (168) is untouched");
 
     // ------------------------------------------------------------------
-    // A second tick must not churn the blob.
+    // A second tick advances the flap phase but must not churn the texture
+    // blob.
     // ------------------------------------------------------------------
-    std::printf("second tick stays idle\n");
+    std::printf("second tick advances flap without churning the blob\n");
     mod.onLocalPlayerTick(player.data());
     check(readPtr(skinBase + off::SerializedSkinImpl::mSkinImage, off::Image::mBytesOffset) == injected,
           "skin blob pointer unchanged on the next tick");
-    check(readFakeString(skinBase, off::SerializedSkinImpl::mGeometryData) == geometryJson,
-          "geometry data unchanged after two ticks");
+    check(readFakeString(skinBase, off::SerializedSkinImpl::mGeometryData) != geometryJson,
+          "geometry data advances with the flap clock");
     check(readFakeString(skinBase, off::SerializedSkinImpl::mDefaultGeometryName) == "geometry.wings",
           "geometry name unchanged after two ticks");
 
@@ -325,6 +339,60 @@ int main() {
               sameBytes(static_cast<const std::uint8_t*>(defaultBlob),
                         wings_default::TexturePixels, defaultBytes),
           "default texture pixels are used");
+
+    // ------------------------------------------------------------------
+    // Flapping: advancing the clock rewrites the wing bone rotations with a
+    // sin(time) value and re-injects the animated geometry.
+    // ------------------------------------------------------------------
+    std::printf("flap animation drives wing bone rotations\n");
+    skin = skinSnapshot;
+    skinBase = skin.data();
+    skinSlot = skinBase;
+    g_testConfigPath = root + "/config.json"; // back to the external-wings folder
+    WingsModule animMod;
+    animMod.onInit();
+    animMod.m_flapSpeed = 3.0f;
+    animMod.enabled = true;
+    animMod.onLocalPlayerTick(player.data()); // first tick: base geometry, clock armed
+
+    std::string baseGeo = readFakeString(skinBase, off::SerializedSkinImpl::mGeometryData);
+    check(baseGeo == geometryJson,
+          "first tick applies the base geometry (no dt yet)");
+
+    animMod.advanceFlapAnimation(0.25f); // phase = 0.25 * 3.0 = 0.75 rad
+    animMod.onLocalPlayerTick(player.data());
+    const std::string flappedGeo = readFakeString(skinBase, off::SerializedSkinImpl::mGeometryData);
+    check(flappedGeo != baseGeo,
+          "animated geometry differs from the base geometry");
+    check(flappedGeo.find("\"rotation\": [0.000,0.000,") != std::string::npos,
+          "wingRight/Left rotation arrays carry a sin-driven Z angle");
+    check(flappedGeo.find("\"name\": \"wingRight\"") != std::string::npos &&
+              flappedGeo.find("\"name\": \"wingLeft\"") != std::string::npos,
+          "both wing bones remain present in the animated geometry");
+
+    animMod.advanceFlapAnimation(0.25f); // phase moves on
+    animMod.onLocalPlayerTick(player.data());
+    const std::string laterGeo = readFakeString(skinBase, off::SerializedSkinImpl::mGeometryData);
+    check(laterGeo != flappedGeo,
+          "later tick changes the flap phase (continuous sin animation)");
+
+    // A very slow setting and the default must produce different phases.
+    std::string slowGeo;
+    {
+        skin = skinSnapshot;
+        skinBase = skin.data();
+        skinSlot = skinBase;
+        WingsModule slowMod;
+        slowMod.onInit();
+        slowMod.m_flapSpeed = 0.1f;
+        slowMod.enabled = true;
+        slowMod.onLocalPlayerTick(player.data()); // load + arm clock
+        slowMod.advanceFlapAnimation(1.0f);
+        slowMod.onLocalPlayerTick(player.data());
+        slowGeo = readFakeString(skinBase, off::SerializedSkinImpl::mGeometryData);
+    }
+    check(slowGeo != laterGeo,
+          "flap speed setting changes the animation");
 
     // ------------------------------------------------------------------
     std::printf("\n");
