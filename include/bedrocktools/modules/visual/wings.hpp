@@ -7,61 +7,30 @@
 #include <string>
 #include <vector>
 
-// Wings
+// Wings - world-space overlay version
 //
-// Wears a custom "4D" skin on the local player: a Bedrock geometry file plus
-// the RGBA texture it samples. When the module is enabled it reads
-// `<configDir>/wings/wings_geometry.json` and `<configDir>/wings/wings.png`
-// (the same directory that holds config.json — typically
-// `/sdcard/games/BedrockTools/wings` on Android) and injects both into the
-// local player's SerializedSkinImpl:
+// The previous implementation patched SerializedSkinImpl (mSkinImage,
+// mGeometryData, mDefaultGeometryName) to inject a custom geometry. Bedrock
+// has removed support for custom geometry on classic skins, so that approach
+// made the player disappear when the module was enabled.
 //
-//   * mSkinImage            -> the decoded wings.png pixels (the engine's
-//                              model renders this texture through the custom
-//                              geometry's UVs).
-//   * mGeometryData         -> the raw contents of wings_geometry.json.
-//   * mDefaultGeometryName  -> the geometry identifier parsed from the JSON
-//                              (e.g. "geometry.wings"), which makes the game
-//                              pick the custom model instead of the default
-//                              humanoid one.
+// This version draws the wings as a world-space overlay attached to the local
+// player via a RenderLevel hook + tessellator, instead of touching the skin at
+// all. The flap animation is preserved as:
 //
-// When the external files are present they win. If the folder/files are
-// missing the module falls back to the built-in default pack
-// (resources/wings generated into wings_default.hpp), so the wings work
-// immediately after install with no manual setup.
+//   angle = amplitude * sin(flapTime * baseRate * flapSpeed)
 //
-// The module is tick driven exactly like CustomCapes: the local-player tick
-// re-resolves a fresh skin object every frame, so a skin that the engine
-// rebuilds afterwards is patched again on the next tick, and the injected
-// pixel blob is handed to the engine with free() as its deleter. The original
-// skin image, geometry data and default-geometry name are backed up and
-// restored when the module is disabled or the assets are removed.
+// where amplitude = 35 degrees, baseRate = 6 rad/s at flapSpeed == 1.0.
+// flapSpeed is exposed as "Flap Speed" in the launcher menu in [0.1, 10.0].
 //
-// Flapping:
-// On every tick the module advances an internal clock, computes
-//   angle = amplitude * sin(clock * baseRate * m_flapSpeed)
-// and rewrites the `"rotation"` array of the wingRight / wingLeft bones in
-// the geometry JSON (right wing = +angle around Z, left wing = -angle so both
-// mirror each other). The animated JSON is then re-injected into
-// mGeometryData. m_flapSpeed is exposed in the launcher menu as a speed
-// multiplier in [0.1, 10.0]; 1.0 is the default fast flap.
+// Rendering:
+//   * Hook RenderLevel (same pattern as Hitbox/Breadcrumbs/BlockOutline)
+//   * Track local player AABB, yaw, and flap phase from LocalPlayerTick
+//   * In the hook, compute two quads (right/left wing) attached to the back,
+//     rotated around Z by +/- flapAngle, then yaw-rotated to face with the
+//     player, and rendered with Tessellator + selection_box material.
 //
-// Expected geometry format: a Bedrock skin pack geometry JSON, i.e. a
-// `format_version` object containing either `"minecraft:geometry"` or
-// `"geometry"` as an array whose first entry carries
-// `description.identifier`, `description.texture_width` and
-// `description.texture_height`. The JSON must define the standard player bones
-// (head/body/rightArm/leftArm/rightLeg/leftLeg) for the body to keep
-// rendering, plus any extra bones for the wings. The texture should be the
-// full skin canvas (e.g. 64x64 or 128x128) with the wing artwork baked into
-// the UV region referenced by those bones.
-//
-// Memory safety follows the CustomCapes module: every patch happens inside the
-// local-player tick so only a freshly resolved, live skin object is touched;
-// if the engine replaces the skin object it destroys our previous blob through
-// the deleter we installed, so no dangling pointers are left behind. Persona
-// skins render through the persona/animated-image pipeline and are left
-// untouched.
+// The module never touches skin memory, so it cannot make the player vanish.
 class WingsModule : public Module {
 public:
     WingsModule();
@@ -76,69 +45,46 @@ public:
     // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
 
-    // Advances the flap clock by dt seconds and rebuilds the animated
-    // geometry. Called automatically from the tick with real elapsed time;
-    // also public so host tests can drive a deterministic clock.
+    // Advances the flap clock by dt seconds. Called automatically from the
+    // tick with real elapsed time; also public so host tests can drive a
+    // deterministic clock.
     void advanceFlapAnimation(float dtSeconds);
 
-    // Directory the module watches; exposed for the menu description.
+    // Directory the module watches; kept for menu description compatibility.
     const std::string& wingsDirectory() const { return m_wingsDir; }
 
-    // Flap speed multiplier shown in the launcher menu (0.1 = slow, 10 = very
-    // fast, 1.0 = default). Public so the menu/test can read/write it directly.
+    // Flap speed multiplier shown in the launcher menu (0.1 = slow,
+    // 10 = very fast, 1.0 = default).
     float m_flapSpeed = 1.0f;
 
-private:
-    void loadWingsAssets();
-    void loadDefaultAssets();
-    void releaseWingsAssets();
-    void buildAnimatedGeometry();
+    // Test / rendering helpers
+    float flapTime() const { return m_flapTime; }
+    float currentFlapAngleDegrees() const;
+    float currentFlapAngleRadians() const;
 
-    bool applyWings(void* skin);
-    void restoreOriginalSkin(void* skin);
-    void clearPatchState();
+    // Constants exposed for tests
+    static constexpr float kFlapAmplitudeDegrees = 35.0f;
+    static constexpr float kFlapBaseRate = 6.0f; // rad/s at speed 1.0
+    static constexpr float kWingWidth = 0.5f;    // blocks
+    static constexpr float kWingHeight = 0.7f;   // blocks
+
+private:
+    void applyPatch();
 
     std::string m_wingsDir;
-    bool m_assetsLoaded = false;
-    bool m_useDefaults = false; // true when the built-in pack is active
-    bool m_loadFailed = false;
-    int m_retryTicks = 0;
-
-    // The loaded assets (module-owned).
-    std::string m_geometryData;
-    std::string m_defaultGeometryName;
-    std::vector<std::uint8_t> m_texturePixels; // RGBA8
-    int m_textureWidth = 0;
-    int m_textureHeight = 0;
 
     // Animation state (clock driven per tick).
     float m_flapTime = 0.0f;
     bool m_flapClockStarted = false;
     std::chrono::steady_clock::time_point m_lastFlapTick;
 
-    // Base JSON the animation is derived from each tick; m_geometryData holds
-    // the current (animated) copy that is written into the skin.
-    std::string m_geometryTemplate;
-
-    // State of the in-game skin patch.
-    void* m_patchedSkin = nullptr;  // SerializedSkinImpl* currently patched
-    void* m_injectedBlob = nullptr; // pixel buffer currently handed to the game
-    bool m_needsApply = true;
-
-    // Backup of the skin fields we overwrite so disabling can restore the
-    // vanilla skin exactly.
-    struct SkinBackup {
-        std::uint32_t format = 0;
-        std::uint32_t width = 0;
-        std::uint32_t height = 0;
-        std::uint32_t depth = 0;
-        std::uint32_t usage = 0;
-        void* blob = nullptr;      // original pixel pointer (detached, kept alive)
-        void* deleter = nullptr;   // original mce::Blob deleter
-        std::size_t size = 0;
-        std::string geometryData;
-        std::string defaultGeometryName;
-    };
-    SkinBackup m_backup;
-    bool m_hasBackup = false;
+    // Render hook state
+    bool m_patched = false;
+    void* m_patchTarget = nullptr;
+    void* m_tessBeginAddr = nullptr;
+    void* m_tessColorAddr = nullptr;
+    void* m_tessVertexAddr = nullptr;
+    void* m_renderMaterialGroupAddr = nullptr;
+    void* m_renderMeshAddr = nullptr;
+    void* m_renderMesh2Addr = nullptr;
 };

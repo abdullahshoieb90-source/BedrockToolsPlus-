@@ -1,291 +1,352 @@
 #include <bedrocktools/modules/visual/wings.hpp>
-#include <bedrocktools/modules/visual/wings_default.hpp>
 
 #include "modules/ModuleRegistry.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
+#include <bedrocktools/sdk/Types.hpp>
 #include <bedrocktools/events/EventBus.hpp>
+#include <bedrocktools/memory/Signatures.hpp>
+#include "core/memory/Hooks.hpp"
 #include "../../config/ConfigManager.hpp"
 
-// STB image implementation is provided by customcapes.cpp in this target; we
-// only use the loader declarations here.
-#include <stb/stb_image.h>
-
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <system_error>
+#include <string>
+#include <mutex>
 
 namespace {
 
 using namespace bedrocktools::sdk::offsets;
 
-constexpr std::uint32_t kSkinImageFormat = 4; // mce::ImageFormat::RGBA8Unorm
-constexpr int kLoadRetryTicks = 120;
-constexpr const char* kFallbackGeometryName = "geometry.wings";
-constexpr std::uint32_t kMaxSourceDimension = 4096;
+// ---------------------------------------------------------------------------
+// RenderLevel hook plumbing (same pattern as Hitbox/Breadcrumbs/BlockOutline)
+// ---------------------------------------------------------------------------
 
-void freeBlobDeleter(unsigned char* data) {
-    std::free(data);
+typedef void (*Tessellator_begin_t)(void* tessellator, void* debugCallback, int primitiveMode, int vertexCount, int noIndices);
+typedef void (*Tessellator_color_t)(void* tessellator, float r, float g, float b, float a);
+typedef void (*Tessellator_vertex_t)(void* tessellator, float x, float y, float z);
+typedef void (*MeshHelpers_renderMeshImmediately_t)(void* screenContext, void* tessellator, void* material, char* pad);
+
+struct HashedString {
+    std::uint64_t mStrHash;
+    std::string mStr;
+    mutable const HashedString* mLastMatch;
+    HashedString() : mStrHash(0), mStr(), mLastMatch(nullptr) {}
+    explicit HashedString(const char* str) : mLastMatch(nullptr) {
+        mStr = str ? str : "";
+        mStrHash = computeHash(mStr);
+    }
+private:
+    static std::uint64_t computeHash(const std::string& s) {
+        if (s.empty()) return 0;
+        constexpr std::uint64_t kOffset = 0xCBF29CE484222325ULL;
+        constexpr std::uint64_t kPrime = 0x100000001B3ULL;
+        std::uint64_t h = kOffset;
+        for (char ch : s) h = static_cast<std::uint64_t>(static_cast<unsigned char>(ch)) ^ (kPrime * h);
+        return h;
+    }
+};
+
+struct MaterialPtr {
+    void* sharedPtrData[2]{nullptr, nullptr};
+    MaterialPtr() = default;
+    MaterialPtr(const MaterialPtr&) = delete;
+    MaterialPtr& operator=(const MaterialPtr&) = delete;
+    MaterialPtr(MaterialPtr&& o) noexcept : sharedPtrData{o.sharedPtrData[0], o.sharedPtrData[1]} {
+        o.sharedPtrData[0] = nullptr; o.sharedPtrData[1] = nullptr;
+    }
+    MaterialPtr& operator=(MaterialPtr&& o) noexcept {
+        if (this != &o) {
+            sharedPtrData[0] = o.sharedPtrData[0];
+            sharedPtrData[1] = o.sharedPtrData[1];
+            o.sharedPtrData[0] = nullptr; o.sharedPtrData[1] = nullptr;
+        }
+        return *this;
+    }
+    ~MaterialPtr() {}
+    explicit operator bool() const { return sharedPtrData[0] != nullptr; }
+};
+
+static std::uintptr_t resolveADRP(std::uint32_t* insns, size_t count, std::uint32_t targetReg) {
+    for (size_t i = 0; i < count; i++) {
+        std::uint32_t insn = insns[i];
+        if ((insn & 0x1F) != targetReg) continue;
+        if ((insn & 0x9F000000) == 0x90000000) {
+            std::uintptr_t page = ((std::uintptr_t)&insns[i] & ~0xFFFULL)
+                + ((int64_t)((uint64_t)((insn >> 3) & 0x1FFFFC | (insn >> 29) & 3) << 43) >> 31);
+            for (size_t j = i + 1; j < count; j++) {
+                std::uint32_t add = insns[j];
+                if ((add & 0xFF000000) == 0x91000000 &&
+                    ((add >> 5) & 0x1F) == targetReg && (add & 0x1F) == targetReg) {
+                    std::uint32_t imm12 = (add >> 10) & 0xFFF;
+                    if (add & 0x400000) imm12 <<= 12;
+                    return page + imm12;
+                }
+                if ((add & 0x1F) == targetReg) break;
+            }
+        }
+        if ((insn & 0x9F000000) == 0x10000000) {
+            int64_t imm = (int64_t)((uint64_t)((insn >> 3) & 0x1FFFFC | (insn >> 29)) << 43) >> 43;
+            return (std::uintptr_t)&insns[i] + imm;
+        }
+    }
+    return 0;
 }
 
-std::string wingsDirectoryForConfig() {
+WingsModule* g_wings = nullptr;
+
+static Tessellator_begin_t s_tessBegin = nullptr;
+static Tessellator_color_t s_tessColor = nullptr;
+static Tessellator_vertex_t s_tessVertex = nullptr;
+static MeshHelpers_renderMeshImmediately_t s_renderMesh = nullptr;
+
+static MaterialPtr s_matSelection;
+static MaterialPtr s_matFill;
+static std::uintptr_t s_renderMaterialGroup = 0;
+
+static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3) = nullptr;
+
+// Player tracking (written in tick, read in render)
+struct AABB {
+    bedrocktools::sdk::Vec3 min{0,0,0};
+    bedrocktools::sdk::Vec3 max{0,0,0};
+};
+
+static std::mutex s_stateMutex;
+static AABB s_playerAABB{};
+static bedrocktools::sdk::Vec2 s_playerRot{0,0};
+static float s_flapAngleRad = 0.0f;
+static void* s_localPlayerPtr = nullptr;
+static bool s_hasPlayer = false;
+
+static AABB getActorAABB(void* actor) {
+    AABB aabb{};
+    std::uintptr_t actorAddr = (std::uintptr_t)actor;
+    if (actorAddr < 0x1000) return aabb;
+    std::uintptr_t builtInPtr = *(std::uintptr_t*)(actorAddr + Actor::mStateVectorComponent);
+    if (builtInPtr < 0x1000) return aabb;
+    std::uintptr_t aabbComp = *(std::uintptr_t*)(actorAddr + Actor::mStateVectorComponent + BuiltInActorComponents::mAABBShapeComponent);
+    if (aabbComp < 0x1000) return aabb;
+    aabb = *(AABB*)(aabbComp + AABBShapeComponent::mAABB);
+    return aabb;
+}
+
+static bedrocktools::sdk::Vec2 getActorRotation(void* actor) {
+    bedrocktools::sdk::Vec2 rot{0,0};
+    std::uintptr_t actorAddr = (std::uintptr_t)actor;
+    if (actorAddr < 0x1000) return rot;
+    std::uintptr_t rotComp = *(std::uintptr_t*)(actorAddr + Actor::mActorRotationComponent);
+    if (rotComp < 0x1000) return rot;
+    rot = *(bedrocktools::sdk::Vec2*)rotComp;
+    return rot;
+}
+
+static MaterialPtr getMaterial(const char* name) {
+    if (!s_renderMaterialGroup) return {};
+    HashedString hs(name);
+    void** vtable = *reinterpret_cast<void***>(s_renderMaterialGroup);
+    if (!vtable || !vtable[2]) return {};
+    using getMat_t = MaterialPtr(*)(void*, const HashedString*);
+    return reinterpret_cast<getMat_t>(vtable[2])((void*)s_renderMaterialGroup, &hs);
+}
+
+static void ensureMaterials() {
+    if (!s_renderMaterialGroup) return;
+    if (!s_matSelection) s_matSelection = getMaterial("selection_box");
+    if (!s_matFill) {
+        static const char* kFillNames[] = { "ui_fill_color", "ui_textured_and_glcolor", "debug_filled_box", "selection_box" };
+        for (const char* n : kFillNames) {
+            s_matFill = getMaterial(n);
+            if (s_matFill) break;
+        }
+    }
+}
+
+static std::string wingsDirectoryForConfig() {
     const std::string configPath = bedrocktools::config::ConfigManager::get().getConfigPath();
     const std::size_t lastSlash = configPath.find_last_of('/');
-    std::string dir = (lastSlash != std::string::npos) ? configPath.substr(0, lastSlash)
-                                                       : "/sdcard/games/BedrockTools";
+    std::string dir = (lastSlash != std::string::npos) ? configPath.substr(0, lastSlash) : "/sdcard/games/BedrockTools";
     return dir + "/wings";
 }
 
-bool readFile(const std::string& path, std::string& out) {
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in) return false;
-    const std::streamsize size = in.tellg();
-    if (size <= 0) return false;
-    in.seekg(0, std::ios::beg);
-    out.resize(static_cast<std::size_t>(size));
-    in.read(out.data(), size);
-    return in.good() || in.eof();
-}
+// ---------------------------------------------------------------------------
+// Wing rendering
+// ---------------------------------------------------------------------------
 
-// Extracts the first geometry identifier out of a modern
-// ("minecraft:geometry") or legacy ("geometry") Bedrock skin-pack JSON. The
-// lookup is deliberately lightweight (no JSON parser): every skin-pack geometry
-// describes its model with a quoted "identifier" key, and that value is all the
-// engine needs to select the custom model.
-std::string parseGeometryIdentifier(const std::string& geometryData) {
-    const std::string key = "\"identifier\"";
-    const std::size_t keyPos = geometryData.find(key);
-    if (keyPos == std::string::npos) return kFallbackGeometryName;
+static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
+    if (!screenContext || (std::uintptr_t)screenContext < 0x1000) return;
+    if (!levelRenderer || (std::uintptr_t)levelRenderer < 0x1000) return;
+    if (!s_tessBegin || !s_tessColor || !s_tessVertex || !s_renderMesh) return;
 
-    std::size_t pos = keyPos + key.size();
-    while (pos < geometryData.size() && std::isspace(static_cast<unsigned char>(geometryData[pos]))) {
-        ++pos;
+    AABB aabb;
+    bedrocktools::sdk::Vec2 rot;
+    float flapRad;
+    {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        if (!s_hasPlayer) return;
+        aabb = s_playerAABB;
+        rot = s_playerRot;
+        flapRad = s_flapAngleRad;
     }
-    if (pos >= geometryData.size() || geometryData[pos] != ':') return kFallbackGeometryName;
-    ++pos;
-    while (pos < geometryData.size() && std::isspace(static_cast<unsigned char>(geometryData[pos]))) {
-        ++pos;
-    }
-    if (pos >= geometryData.size() || geometryData[pos] != '"') return kFallbackGeometryName;
-    ++pos;
 
-    const std::size_t begin = pos;
-    while (pos < geometryData.size() && geometryData[pos] != '"') ++pos;
-    if (pos >= geometryData.size()) return kFallbackGeometryName;
-
-    const std::string identifier = geometryData.substr(begin, pos - begin);
-    return identifier.empty() ? kFallbackGeometryName : identifier;
-}
-
-void* resolvePlayerSkin(void* player) {
-    void* skinRefPtr = *reinterpret_cast<void**>(
-        reinterpret_cast<uintptr_t>(player) + Player::mSkin);
-    if (!skinRefPtr) return nullptr;
-
-    void* sharedBase = reinterpret_cast<void*>(
-        reinterpret_cast<uintptr_t>(skinRefPtr) + SerializedSkinRef::mSkinImpl);
-    if (!sharedBase) return nullptr;
-
-    void* threadOwner = *reinterpret_cast<void**>(sharedBase);
-    if (!threadOwner) return nullptr;
-
-    return reinterpret_cast<void*>(
-        reinterpret_cast<uintptr_t>(threadOwner) + ThreadOwner::mObject);
-}
-
-// The SerializedSkinImpl geometry fields are genuine libc++ std::string
-// objects (24 bytes on Android arm64). Rather than relying on the module's
-// own std::string ABI matching the engine's, we read and write the exact
-// libc++ layout by hand — the same technique CustomCapes uses for the
-// short-string cape id.
-//
-//   short: byte0 = (size << 1) | 0, data[1..size], rest zero (SSO, 22 bytes).
-//   long : size_t cap = (cap | 1) @0, size_t size @8, char* data @16.
-constexpr std::size_t kSsoCapacity = 22;
-
-bool isLongStdString(uintptr_t addr) {
-    return (*reinterpret_cast<const std::uint8_t*>(addr) & 0x01u) != 0;
-}
-
-void freeStdString(uintptr_t addr) {
-    if (isLongStdString(addr)) {
-        void* data = *reinterpret_cast<void**>(addr + 16);
-        std::free(data);
-    }
-}
-
-void writeStdString(uintptr_t addr, const std::string& value) {
-    // Free whatever (heap-owning) string the engine currently has in this
-    // field so the slot never leaks when we overwrite it.
-    freeStdString(addr);
-
-    if (value.size() <= kSsoCapacity) {
-        std::memset(reinterpret_cast<void*>(addr), 0, 24);
-        *reinterpret_cast<std::uint8_t*>(addr) =
-            static_cast<std::uint8_t>(value.size() << 1);
-        if (!value.empty()) {
-            std::memcpy(reinterpret_cast<void*>(addr + 1), value.data(), value.size());
-        }
+    // Validate AABB
+    if (aabb.min.x == 0 && aabb.min.y == 0 && aabb.min.z == 0 &&
+        aabb.max.x == 0 && aabb.max.y == 0 && aabb.max.z == 0) {
         return;
     }
 
-    const std::size_t cap = value.size() + 1;
-    char* buffer = static_cast<char*>(std::malloc(cap));
-    if (!buffer) {
-        // Fall back to an empty short string rather than leaving a dangling
-        // pointer in the skin. The next tick retries the patch.
-        std::memset(reinterpret_cast<void*>(addr), 0, 24);
-        return;
+    std::uintptr_t tessPtr = *(std::uintptr_t*)((std::uintptr_t)screenContext + ScreenContext::mTessellator);
+    if (!tessPtr || tessPtr < 0x1000) return;
+    void* tess = (void*)tessPtr;
+
+    std::uintptr_t lrpPtr = *(std::uintptr_t*)((std::uintptr_t)levelRenderer + LevelRenderer::mLevelRendererPlayer);
+    if (!lrpPtr || lrpPtr < 0x1000) return;
+
+    float camX = *(float*)(lrpPtr + LevelRendererPlayer::mCamPos);
+    float camY = *(float*)(lrpPtr + LevelRendererPlayer::mCamPos + 4);
+    float camZ = *(float*)(lrpPtr + LevelRendererPlayer::mCamPos + 8);
+
+    ensureMaterials();
+    void* overlayMat = (void*)(lrpPtr + LevelRendererPlayer::mSelectionOverlayMaterial);
+    void* matInner = s_matSelection ? (void*)&s_matSelection : overlayMat;
+    void* matFill = s_matFill ? (void*)&s_matFill : matInner;
+    if (!matFill) matFill = overlayMat;
+
+    std::uintptr_t colorHolderPtr = *(std::uintptr_t*)((std::uintptr_t)screenContext + ScreenContext::mColorHolder);
+    if (!colorHolderPtr || colorHolderPtr < 0x1000) return;
+    float* colorHolder = (float*)colorHolderPtr;
+    float savedColor[4] = { colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3] };
+    colorHolder[0] = 1.0f; colorHolder[1] = 1.0f; colorHolder[2] = 1.0f; colorHolder[3] = 1.0f;
+
+    // Player yaw -> right/forward vectors
+    constexpr float kPi = 3.14159265358979323846f;
+    float yawDeg = rot.y;
+    float yawRad = yawDeg * kPi / 180.0f;
+    float cosYaw = std::cos(yawRad);
+    float sinYaw = std::sin(yawRad);
+
+    // right = (-cosYaw, -sinYaw) in XZ, forward = (-sinYaw, cosYaw)
+    // See HitboxModule comments for derivation.
+    float rightX = -cosYaw;
+    float rightZ = -sinYaw;
+    float fwdX = -sinYaw;
+    float fwdZ = cosYaw;
+
+    // Feet center
+    float feetX = (aabb.min.x + aabb.max.x) * 0.5f;
+    float feetY = aabb.min.y;
+    float feetZ = (aabb.min.z + aabb.max.z) * 0.5f;
+
+    // Pivot offsets in local (right, up, forward)
+    constexpr float kPivotRightOffset = 0.3f;
+    constexpr float kPivotUp = 1.2f;
+    constexpr float kPivotBack = -0.20f; // behind player (negative forward)
+
+    // Wing dimensions
+    constexpr float kWingW = WingsModule::kWingWidth;  // 0.5
+    constexpr float kWingH = WingsModule::kWingHeight; // 0.7
+
+    struct Local2 { float x; float y; };
+    // Right wing local corners before flap rotation (relative to pivot)
+    Local2 rCorners[4] = {
+        {0.0f, 0.0f},
+        {kWingW, 0.0f},
+        {kWingW, -kWingH},
+        {0.0f, -kWingH}
+    };
+    // Left wing
+    Local2 lCorners[4] = {
+        {0.0f, 0.0f},
+        {-kWingW, 0.0f},
+        {-kWingW, -kWingH},
+        {0.0f, -kWingH}
+    };
+
+    float cosFlapR = std::cos(flapRad);
+    float sinFlapR = std::sin(flapRad);
+    float cosFlapL = std::cos(-flapRad);
+    float sinFlapL = std::sin(-flapRad);
+
+    auto rotateZ = [](Local2 p, float c, float s) -> Local2 {
+        return { p.x * c - p.y * s, p.x * s + p.y * c };
+    };
+
+    Local2 rRot[4], lRot[4];
+    for (int i = 0; i < 4; ++i) rRot[i] = rotateZ(rCorners[i], cosFlapR, sinFlapR);
+    for (int i = 0; i < 4; ++i) lRot[i] = rotateZ(lCorners[i], cosFlapL, sinFlapL);
+
+    // Compute pivot world positions
+    // pivot = feetCenter + right* xPivot + up* yPivot + forward* zPivot
+    float rPivotX = feetX + rightX * kPivotRightOffset + fwdX * kPivotBack;
+    float rPivotY = feetY + kPivotUp;
+    float rPivotZ = feetZ + rightZ * kPivotRightOffset + fwdZ * kPivotBack;
+
+    float lPivotX = feetX + rightX * (-kPivotRightOffset) + fwdX * kPivotBack;
+    float lPivotY = feetY + kPivotUp;
+    float lPivotZ = feetZ + rightZ * (-kPivotRightOffset) + fwdZ * kPivotBack;
+
+    struct WorldPos { float x, y, z; };
+    WorldPos rWorld[4], lWorld[4];
+    for (int i = 0; i < 4; ++i) {
+        rWorld[i].x = rPivotX + rightX * rRot[i].x + fwdX * 0.0f;
+        rWorld[i].y = rPivotY + rRot[i].y;
+        rWorld[i].z = rPivotZ + rightZ * rRot[i].x + fwdZ * 0.0f;
     }
-    std::memcpy(buffer, value.data(), value.size());
-    buffer[value.size()] = '\0';
-
-    *reinterpret_cast<std::size_t*>(addr) = cap | 0x01u;
-    *reinterpret_cast<std::size_t*>(addr + 8) = value.size();
-    *reinterpret_cast<void**>(addr + 16) = buffer;
-}
-
-std::string readStdString(uintptr_t addr) {
-    if (!isLongStdString(addr)) {
-        const std::size_t len =
-            static_cast<std::size_t>(*reinterpret_cast<const std::uint8_t*>(addr) >> 1);
-        return std::string(reinterpret_cast<const char*>(addr + 1), len);
+    for (int i = 0; i < 4; ++i) {
+        lWorld[i].x = lPivotX + rightX * lRot[i].x;
+        lWorld[i].y = lPivotY + lRot[i].y;
+        lWorld[i].z = lPivotZ + rightZ * lRot[i].x;
     }
-    const std::size_t len = *reinterpret_cast<const std::size_t*>(addr + 8);
-    const char* data = *reinterpret_cast<const char* const*>(addr + 16);
-    return data ? std::string(data, len) : std::string();
+
+    // Convert to camera-relative
+    for (int i = 0; i < 4; ++i) { rWorld[i].x -= camX; rWorld[i].y -= camY; rWorld[i].z -= camZ; }
+    for (int i = 0; i < 4; ++i) { lWorld[i].x -= camX; lWorld[i].y -= camY; lWorld[i].z -= camZ; }
+
+    // Render - two quads double-sided (8 verts per wing * 2 sides = 16 per wing? Actually 4+4 per wing)
+    // We'll emit 16 vertices total: 2 wings * 8 (front+back)
+    constexpr float kBrownR = 94.0f / 255.0f;
+    constexpr float kBrownG = 62.0f / 255.0f;
+    constexpr float kBrownB = 36.0f / 255.0f;
+    constexpr float kAlpha = 1.0f;
+
+    char pad[0x58];
+    std::memset(pad, 0, sizeof(pad));
+
+    s_tessBegin(tess, nullptr, 1, 16, 0); // 1 = quad
+    s_tessColor(tess, kBrownR, kBrownG, kBrownB, kAlpha);
+
+    // Right wing front
+    for (int i = 0; i < 4; ++i) s_tessVertex(tess, rWorld[i].x, rWorld[i].y, rWorld[i].z);
+    // Right wing back (reversed)
+    for (int i = 3; i >= 0; --i) s_tessVertex(tess, rWorld[i].x, rWorld[i].y, rWorld[i].z);
+    // Left wing front
+    for (int i = 0; i < 4; ++i) s_tessVertex(tess, lWorld[i].x, lWorld[i].y, lWorld[i].z);
+    // Left wing back
+    for (int i = 3; i >= 0; --i) s_tessVertex(tess, lWorld[i].x, lWorld[i].y, lWorld[i].z);
+
+    s_renderMesh(screenContext, tess, matFill, pad);
+
+    colorHolder[0] = savedColor[0];
+    colorHolder[1] = savedColor[1];
+    colorHolder[2] = savedColor[2];
+    colorHolder[3] = savedColor[3];
 }
 
-// ---------------------------------------------------------------------------
-// Geometry bone-rotation helper.
-//
-// Skin-pack geometry carries each bone's resting transform as a static JSON
-// array, e.g. `"rotation": [0.0, 0.0, 20.0]` (euler degrees, X/Y/Z). The wing
-// animation rewrites that array for wingRight / wingLeft every tick, then
-// re-injects the resulting mGeometryData into the skin. The rewrite is plain
-// text so it works on the embedded default pack as well as any user-supplied
-// wings_geometry.json, without depending on a JSON runtime.
-// ---------------------------------------------------------------------------
-
-constexpr const char* kWingRightBone = "wingRight";
-constexpr const char* kWingLeftBone = "wingLeft";
-constexpr float kFlapAmplitudeDegrees = 35.0f;
-constexpr float kFlapBaseRate = 6.0f; // radians/second at m_flapSpeed == 1.0
-
-std::size_t skipWhitespace(const std::string& s, std::size_t pos) {
-    while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos]))) ++pos;
-    return pos;
-}
-
-bool readQuotedString(const std::string& s, std::size_t quotePos, std::string& out) {
-    if (quotePos >= s.size() || s[quotePos] != '"') return false;
-    std::size_t pos = quotePos + 1;
-    const std::size_t begin = pos;
-    while (pos < s.size() && s[pos] != '"') {
-        if (s[pos] == '\\') ++pos;
-        if (pos < s.size()) ++pos;
-    }
-    if (pos >= s.size()) return false;
-    out = s.substr(begin, pos - begin);
-    return true;
-}
-
-std::size_t findClosingBracket(const std::string& s, std::size_t openPos) {
-    if (openPos >= s.size() || (s[openPos] != '[' && s[openPos] != '{')) return std::string::npos;
-    const char open = s[openPos];
-    const char close = open == '[' ? ']' : '}';
-    int depth = 0;
-    for (std::size_t i = openPos; i < s.size(); ++i) {
-        if (s[i] == open) ++depth;
-        else if (s[i] == close) {
-            --depth;
-            if (depth == 0) return i;
-        }
-    }
-    return std::string::npos;
-}
-
-std::size_t findEnclosingObjectStart(const std::string& s, std::size_t beforePos) {
-    // Walk backwards from beforePos matching braces so nested arrays/objects
-    // before the bone's "name" key cannot confuse the search.
-    int depth = 0;
-    for (std::size_t i = beforePos; i > 0; --i) {
-        const char c = s[i - 1];
-        if (c == '}') {
-            ++depth;
-        } else if (c == '{') {
-            if (depth == 0) return i - 1;
-            --depth;
-        }
-    }
-    return std::string::npos;
-}
-
-std::string formatRotation(float x, float y, float z) {
-    char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "[%.3f,%.3f,%.3f]", x, y, z);
-    return std::string(buffer);
-}
-
-// Finds the first bone object whose "name" value equals boneName and rewrites
-// its "rotation" array (inserting one if the bone has none). Returns false if
-// the bone cannot be located — the caller then keeps the base geometry intact.
-bool setBoneRotation(std::string& geometry, const std::string& boneName,
-                     float x, float y, float z) {
-    const std::string nameKey = "\"name\"";
-    std::size_t searchFrom = 0;
-    while (searchFrom < geometry.size()) {
-        const std::size_t keyPos = geometry.find(nameKey, searchFrom);
-        if (keyPos == std::string::npos) break;
-        std::size_t colon = skipWhitespace(geometry, keyPos + nameKey.size());
-        if (colon < geometry.size() && geometry[colon] == ':') {
-            const std::size_t valueQuote = skipWhitespace(geometry, colon + 1);
-            std::string found;
-            if (valueQuote < geometry.size() && readQuotedString(geometry, valueQuote, found) &&
-                found == boneName) {
-                const std::size_t objStart = findEnclosingObjectStart(geometry, keyPos);
-                const std::size_t objEnd = findClosingBracket(geometry, objStart);
-                if (objStart == std::string::npos || objEnd == std::string::npos) return false;
-
-                const std::string rotationKey = "\"rotation\"";
-                const std::size_t rotKey = geometry.find(rotationKey, objStart);
-                if (rotKey != std::string::npos && rotKey < objEnd) {
-                    const std::size_t rotColon = skipWhitespace(geometry, rotKey + rotationKey.size());
-                    const std::size_t bracketOpen = skipWhitespace(geometry, rotColon + 1);
-                    const std::size_t bracketClose = findClosingBracket(geometry, bracketOpen);
-                    if (bracketOpen < geometry.size() && geometry[bracketOpen] == '[' &&
-                        bracketClose != std::string::npos) {
-                        geometry.replace(bracketOpen, bracketClose - bracketOpen + 1,
-                                         formatRotation(x, y, z));
-                        return true;
-                    }
-                    return false; // malformed rotation value — do not corrupt JSON
-                }
-
-                const bool objectEmpty = geometry[objEnd - 1] == '{';
-                geometry.insert(objEnd, std::string(objectEmpty ? "" : ",") +
-                                            "\"rotation\":" + formatRotation(x, y, z));
-                return true;
-            }
-        }
-        searchFrom = keyPos + nameKey.size();
-    }
-    return false;
+static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
+    if (_renderLevel_orig) _renderLevel_orig(_this, screenContext, a3);
+    if (!g_wings || !g_wings->enabled) return;
+    if (!s_localPlayerPtr) return;
+    renderWingsOverlay(_this, screenContext);
 }
 
 } // namespace
 
-WingsModule* g_wings = nullptr;
-
 WingsModule::WingsModule()
-    : Module("Wings", "Wear the built-in wings skin pack (or your wings_geometry.json + wings.png in the BedrockTools wings folder).") {
+    : Module("Wings", "Renders wings as a world-space overlay attached to your back (flaps with sin(time), adjustable Flap Speed). Does not modify your skin.") {
     g_wings = this;
+    showInMenu = true;
+    hideInHudEditor = true; // world overlay, not HUD
 }
 
 WingsModule::~WingsModule() {
@@ -295,324 +356,138 @@ WingsModule::~WingsModule() {
 void WingsModule::onInit() {
     m_wingsDir = wingsDirectoryForConfig();
 
+    std::uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderLevel);
+    if (addr != 0) m_patchTarget = (void*)addr;
+
+    std::uintptr_t tb = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorBegin);
+    if (tb) { m_tessBeginAddr = (void*)tb; s_tessBegin = (Tessellator_begin_t)tb; }
+
+    std::uintptr_t tc = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorColor);
+    if (tc) { m_tessColorAddr = (void*)tc; s_tessColor = (Tessellator_color_t)tc; }
+
+    std::uintptr_t tv = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorVertex);
+    if (tv) { m_tessVertexAddr = (void*)tv; s_tessVertex = (Tessellator_vertex_t)tv; }
+
+    std::uintptr_t rm = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MeshHelpersRenderMeshImmediately2);
+    if (rm) {
+        m_renderMesh2Addr = (void*)rm;
+        s_renderMesh = (MeshHelpers_renderMeshImmediately_t)rm;
+    } else {
+        std::uintptr_t rm5 = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MeshHelpersRenderMeshImmediately);
+        if (rm5) {
+            m_renderMeshAddr = (void*)rm5;
+            s_renderMesh = (MeshHelpers_renderMeshImmediately_t)rm5;
+        }
+    }
+
+    std::uintptr_t rmg = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderMaterialGroupCommon);
+    if (rmg) {
+        m_renderMaterialGroupAddr = (void*)rmg;
+        std::uintptr_t groupAddr = resolveADRP(reinterpret_cast<std::uint32_t*>(rmg), 2, 0);
+        if (groupAddr) s_renderMaterialGroup = groupAddr + MaterialGroup::mRenderMaterialGroupOffset;
+    }
+
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [](auto& event) {
             if (g_wings) g_wings->onLocalPlayerTick(event.player);
         });
 }
 
+void WingsModule::applyPatch() {
+    if (m_patched || !m_patchTarget) return;
+    auto handle = bedrocktools::hooks::install(m_patchTarget, (void*)_renderLevel_hook, (void**)&_renderLevel_orig);
+    m_patched = handle != nullptr;
+}
+
 void WingsModule::onEnable() {
-    // Re-resolve on every enable: external files in the wings folder take
-    // priority, and the built-in defaults are the fallback when they are not
-    // present. This also picks up files the user dropped in while the module
-    // was running the default pack. The flap clock restarts from zero so the
-    // wings start in the neutral pose.
-    m_loadFailed = false;
-    m_retryTicks = 0;
-    loadWingsAssets();
+    applyPatch();
     m_flapTime = 0.0f;
     m_flapClockStarted = false;
-    m_needsApply = true;
+    {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        s_flapAngleRad = 0.0f;
+    }
 }
 
 void WingsModule::onDisable() {
-    // The skin is restored on the next local-player tick, exactly like
-    // CustomCapes, so the restore always runs against a live skin object.
+    // No skin to restore; just clear tracked player so overlay disappears immediately
+    std::lock_guard<std::mutex> lock(s_stateMutex);
+    s_hasPlayer = false;
+    s_localPlayerPtr = nullptr;
 }
 
-void WingsModule::releaseWingsAssets() {
-    m_geometryData.clear();
-    m_geometryData.shrink_to_fit();
-    m_geometryTemplate.clear();
-    m_geometryTemplate.shrink_to_fit();
-    m_defaultGeometryName.clear();
-    m_defaultGeometryName.shrink_to_fit();
-    m_texturePixels.clear();
-    m_texturePixels.shrink_to_fit();
-    m_textureWidth = 0;
-    m_textureHeight = 0;
-    m_assetsLoaded = false;
-    m_useDefaults = false;
-    m_loadFailed = false;
-    m_retryTicks = 0;
-    m_flapTime = 0.0f;
-    m_flapClockStarted = false;
+float WingsModule::currentFlapAngleDegrees() const {
+    return kFlapAmplitudeDegrees * std::sin(m_flapTime * kFlapBaseRate * m_flapSpeed);
 }
 
-// Loads the embedded default pack into the module-owned buffers.
-void WingsModule::loadDefaultAssets() {
-    m_geometryTemplate = wings_default::GeometryJson;
-    m_geometryData = m_geometryTemplate;
-    m_defaultGeometryName = wings_default::GeometryIdentifier;
-
-    const std::size_t bytes = wings_default::TextureWidth * wings_default::TextureHeight * 4u;
-    m_texturePixels.assign(wings_default::TexturePixels,
-                           wings_default::TexturePixels + bytes);
-    m_textureWidth = static_cast<int>(wings_default::TextureWidth);
-    m_textureHeight = static_cast<int>(wings_default::TextureHeight);
-    m_assetsLoaded = true;
-    m_useDefaults = true;
-    m_loadFailed = false;
-    m_needsApply = true;
-}
-
-void WingsModule::loadWingsAssets() {
-    releaseWingsAssets();
-
-    std::error_code ec;
-    if (!std::filesystem::is_directory(m_wingsDir, ec)) {
-        // No user-supplied wings folder: use the built-in pack straight away,
-        // so the feature works immediately after install.
-        loadDefaultAssets();
-        return;
-    }
-
-    const std::string geometryPath = m_wingsDir + "/wings_geometry.json";
-    const std::string texturePath = m_wingsDir + "/wings.png";
-
-    std::string externalGeometry;
-    if (!readFile(geometryPath, externalGeometry) || externalGeometry.empty()) {
-        loadDefaultAssets();
-        return;
-    }
-    m_defaultGeometryName = parseGeometryIdentifier(externalGeometry);
-    if (m_defaultGeometryName.empty()) {
-        loadDefaultAssets();
-        return;
-    }
-    m_geometryTemplate = std::move(externalGeometry);
-    m_geometryData = m_geometryTemplate;
-
-    int width = 0, height = 0, channels = 0;
-    stbi_uc* decoded = stbi_load(texturePath.c_str(), &width, &height, &channels, 4);
-    if (!decoded || width <= 0 || height <= 0 ||
-        width > static_cast<int>(kMaxSourceDimension) ||
-        height > static_cast<int>(kMaxSourceDimension)) {
-        if (decoded) stbi_image_free(decoded);
-        loadDefaultAssets();
-        return;
-    }
-
-    const std::size_t bytes =
-        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
-    m_texturePixels.assign(decoded, decoded + bytes);
-    stbi_image_free(decoded);
-
-    m_textureWidth = width;
-    m_textureHeight = height;
-    m_assetsLoaded = true;
-    m_useDefaults = false;
-    m_loadFailed = false;
-    m_needsApply = true;
-}
-
-// Rebuilds m_geometryData from m_geometryTemplate with the current flap phase
-// applied to the wing bones. Bones that are missing keep the geometry as-is.
-void WingsModule::buildAnimatedGeometry() {
-    if (m_geometryTemplate.empty()) return;
-
-    const float phase = m_flapTime * (kFlapBaseRate * m_flapSpeed);
-    const float angle = kFlapAmplitudeDegrees * std::sin(phase);
-
-    std::string geometry = m_geometryTemplate;
-    setBoneRotation(geometry, kWingRightBone, 0.0f, 0.0f, angle);
-    setBoneRotation(geometry, kWingLeftBone, 0.0f, 0.0f, -angle);
-    m_geometryData = std::move(geometry);
-    m_needsApply = true;
+float WingsModule::currentFlapAngleRadians() const {
+    constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+    return currentFlapAngleDegrees() * kDegToRad;
 }
 
 void WingsModule::advanceFlapAnimation(float dtSeconds) {
-    if (dtSeconds <= 0.0f || !m_assetsLoaded) return;
+    if (dtSeconds <= 0.0f) return;
     m_flapTime += dtSeconds;
-    buildAnimatedGeometry();
-}
-
-void WingsModule::clearPatchState() {
-    m_patchedSkin = nullptr;
-    m_injectedBlob = nullptr;
-    m_hasBackup = false;
-    m_backup = SkinBackup{};
+    float angleRad = currentFlapAngleRadians();
+    {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        s_flapAngleRad = angleRad;
+    }
 }
 
 void WingsModule::onLocalPlayerTick(void* player) {
-    if (!player) return;
-
-    if (enabled && !m_assetsLoaded) {
-        if (m_retryTicks <= 0) {
-            loadWingsAssets();
-            if (!m_assetsLoaded) m_retryTicks = kLoadRetryTicks;
-        } else {
-            --m_retryTicks;
-        }
-    }
-
-    // Advance the flap clock with real elapsed time, so the flapping stays
-    // smooth across standing and moving (which both run the same tick).
-    if (enabled && m_assetsLoaded) {
-        const auto now = std::chrono::steady_clock::now();
-        float dt = 0.0f;
-        if (m_flapClockStarted) {
-            dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
-            if (dt > 0.25f) dt = 0.25f; // clamped after a hitch/join
-        }
-        m_lastFlapTick = now;
-        m_flapClockStarted = true;
-        advanceFlapAnimation(dt);
-    }
-
-    void* skin = resolvePlayerSkin(player);
-
-    if (!enabled || !m_assetsLoaded || !skin) {
-        restoreOriginalSkin(skin);
+    if (!player) {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        s_hasPlayer = false;
+        s_localPlayerPtr = nullptr;
         return;
     }
 
-    applyWings(skin);
-}
-
-bool WingsModule::applyWings(void* skin) {
-    // Persona skins render through the animated-image pipeline and would not
-    // pick up the classic skin image we patch here.
-    if (*reinterpret_cast<bool*>(
-            reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mIsPersona)) {
-        return false;
-    }
-
-    // Sanity check the live skin image before touching any derived offset. If
-    // the layout has shifted, all of the offsets below are unreliable too.
-    const uintptr_t skinImage =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mSkinImage;
-    const uint32_t skinW = *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth);
-    const uint32_t skinH = *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight);
-    void* skinPx = *reinterpret_cast<void**>(skinImage + Image::mBytesOffset);
-    const bool layoutOk = skinPx != nullptr && skinW > 0 && skinH > 0 &&
-                          skinW <= 1024 && skinH <= 1024;
-    if (!layoutOk) return false;
-
-    const uintptr_t geometryDataAddr =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mGeometryData;
-    const uintptr_t geometryNameAddr =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mDefaultGeometryName;
-
-    if (m_patchedSkin != skin) {
-        // New skin object: back up its vanilla skin so disable/restore can put
-        // everything back before we patch anything. The original pixel blob is
-        // only detached, never freed, so restoring the raw pointer is safe.
-        m_backup.format = *reinterpret_cast<uint32_t*>(skinImage + Image::mImageFormat);
-        m_backup.width = *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth);
-        m_backup.height = *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight);
-        m_backup.depth = *reinterpret_cast<uint32_t*>(skinImage + Image::mDepth);
-        m_backup.usage = *reinterpret_cast<uint32_t*>(skinImage + Image::mUsage);
-        m_backup.blob = *reinterpret_cast<void**>(skinImage + Image::mBytesOffset);
-        m_backup.deleter = *reinterpret_cast<void**>(skinImage + Image::mBlobDeleterOffset);
-        m_backup.size = *reinterpret_cast<std::size_t*>(skinImage + Image::mBlobSizeOffset);
-        m_backup.geometryData = readStdString(geometryDataAddr);
-        m_backup.defaultGeometryName = readStdString(geometryNameAddr);
-
-        // The engine owns the blob injected into the previous skin object and
-        // frees it through the deleter we tagged; never free it here.
-        m_patchedSkin = skin;
-        m_injectedBlob = nullptr;
-        m_hasBackup = true;
-        m_needsApply = true;
-    }
-
-    // Texture patch: replace the pixel blob only when it is not ours yet or
-    // when the asset dimensions changed. The flap animation rewrites geometry
-    // every tick, so this must not churn the texture blob on every tick.
-    const bool dimensionsMatch =
-        *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) ==
-            static_cast<uint32_t>(m_textureWidth) &&
-        *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) ==
-            static_cast<uint32_t>(m_textureHeight);
-    if (m_injectedBlob == nullptr ||
-        *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) != m_injectedBlob ||
-        !dimensionsMatch) {
-        const std::size_t bytes = m_texturePixels.size();
-        void* newBlob = std::malloc(bytes);
-        if (!newBlob) return false;
-        std::memcpy(newBlob, m_texturePixels.data(), bytes);
-
-        // Point the skin image at the new blob before releasing the previous
-        // one so the skin never references freed memory.
-        void* previousBlob = m_injectedBlob;
-        *reinterpret_cast<uint32_t*>(skinImage + Image::mImageFormat) = kSkinImageFormat;
-        *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) =
-            static_cast<uint32_t>(m_textureWidth);
-        *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) =
-            static_cast<uint32_t>(m_textureHeight);
-        *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) = newBlob;
-        *reinterpret_cast<void**>(skinImage + Image::mBlobDeleterOffset) =
-            reinterpret_cast<void*>(&freeBlobDeleter);
-        *reinterpret_cast<std::size_t*>(skinImage + Image::mBlobSizeOffset) = bytes;
-        m_injectedBlob = newBlob;
-        if (previousBlob != nullptr) std::free(previousBlob);
-    }
-
-    // Geometry animation: write the (possibly newly flapped) geometry and the
-    // model name into the skin whenever they differ from what is already there.
-    const bool geometrySame =
-        readStdString(geometryDataAddr) == m_geometryData &&
-        readStdString(geometryNameAddr) == m_defaultGeometryName;
-    if (!geometrySame) {
-        writeStdString(geometryDataAddr, m_geometryData);
-        writeStdString(geometryNameAddr, m_defaultGeometryName);
-    }
-
-    m_needsApply = false;
-    return true;
-}
-
-void WingsModule::restoreOriginalSkin(void* skin) {
-    if (!m_hasBackup || skin == nullptr || skin != m_patchedSkin) {
-        // Nothing to restore, or the patched skin object is gone (the engine
-        // destroyed it together with our injected blob). Either way the patch
-        // state is stale.
-        clearPatchState();
+    if (!enabled) {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        s_hasPlayer = false;
+        s_localPlayerPtr = nullptr;
         return;
     }
 
-    const uintptr_t skinImage =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mSkinImage;
-    const uintptr_t geometryDataAddr =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mGeometryData;
-    const uintptr_t geometryNameAddr =
-        reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mDefaultGeometryName;
-
-    // Put the vanilla skin back: dimensions, format, blob metadata and the
-    // original pixel pointer before our injected blob is freed, so the skin
-    // never references freed memory. The geometry strings are restored through
-    // libc++ assignment, which frees our injected heap string if it had one.
-    *reinterpret_cast<uint32_t*>(skinImage + Image::mImageFormat) = m_backup.format;
-    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mWidth) = m_backup.width;
-    *reinterpret_cast<uint32_t*>(skinImage + SkinImage::mHeight) = m_backup.height;
-    *reinterpret_cast<uint32_t*>(skinImage + Image::mDepth) = m_backup.depth;
-    *reinterpret_cast<uint32_t*>(skinImage + Image::mUsage) = m_backup.usage;
-    *reinterpret_cast<void**>(skinImage + Image::mBlobDeleterOffset) = m_backup.deleter;
-    *reinterpret_cast<std::size_t*>(skinImage + Image::mBlobSizeOffset) = m_backup.size;
-    *reinterpret_cast<void**>(skinImage + Image::mBytesOffset) = m_backup.blob;
-
-    writeStdString(geometryDataAddr, m_backup.geometryData);
-    writeStdString(geometryNameAddr, m_backup.defaultGeometryName);
-
-    if (m_injectedBlob != nullptr) {
-        std::free(m_injectedBlob);
-        m_injectedBlob = nullptr;
+    // Advance flap clock with real elapsed time
+    const auto now = std::chrono::steady_clock::now();
+    float dt = 0.0f;
+    if (m_flapClockStarted) {
+        dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
+        if (dt > 0.25f) dt = 0.25f; // clamp after hitch
     }
+    m_lastFlapTick = now;
+    m_flapClockStarted = true;
+    if (dt > 0.0f) advanceFlapAnimation(dt);
 
-    clearPatchState();
+    // Track player AABB and rotation for rendering
+    AABB aabb = getActorAABB(player);
+    bedrocktools::sdk::Vec2 rot = getActorRotation(player);
+
+    {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        s_playerAABB = aabb;
+        s_playerRot = rot;
+        s_localPlayerPtr = player;
+        s_hasPlayer = true;
+    }
 }
 
 void WingsModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
     if (j.contains("m_flapSpeed")) {
-        const float speed = j["m_flapSpeed"].get<float>();
+        float speed = j["m_flapSpeed"].get<float>();
+        m_flapSpeed = std::clamp(speed, 0.1f, 10.0f);
+    } else if (j.contains("flapSpeed")) {
+        float speed = j["flapSpeed"].get<float>();
         m_flapSpeed = std::clamp(speed, 0.1f, 10.0f);
     }
 }
 
 void WingsModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
-    const float flapSpeed = std::clamp(m_flapSpeed, 0.1f, 10.0f);
+    float flapSpeed = std::clamp(m_flapSpeed, 0.1f, 10.0f);
     j["m_flapSpeed"] = flapSpeed;
+    j["flapSpeed"] = flapSpeed; // keep both keys for compatibility
 }
