@@ -425,6 +425,22 @@ int main() {
     check(contains(wings_default::GeometryJson, "\"size\": [6, 3, 1]"), "upper segment has thickness");
     check(contains(wings_default::GeometryJson, "\"size\": [2, 6, 1]"), "feathers have thickness");
 
+    // Wings sit BEHIND the back: Bedrock model space faces -Z, so the back
+    // (cape side) is +Z and the torso spans z in [-2, +2]. All wing pivots
+    // and cubes must live at z >= 2.5 (behind the back with a small
+    // standoff) so nothing clips the chest or shoulders from the front.
+    check(contains(wings_default::GeometryJson, "\"pivot\": [-3, 21, 2.5]") &&
+          contains(wings_default::GeometryJson, "\"pivot\": [3, 21, 2.5]"),
+          "wing shoulder pivots are clamped to the back surface (z = +2.5)");
+    check(contains(wings_default::GeometryJson, "\"origin\": [-4.5, 19.5, 2.5]") &&
+          contains(wings_default::GeometryJson, "\"origin\": [1.5, 19.5, 2.5]"),
+          "wing shoulder boxes sit behind the back (z = 2.5..4.5)");
+    check(!contains(wings_default::GeometryJson, "\"pivot\": [-3, 21, -2]") &&
+          !contains(wings_default::GeometryJson, "\"pivot\": [3, 21, -2]") &&
+          !contains(wings_default::GeometryJson, "-3.5") &&
+          !contains(wings_default::GeometryJson, "19.5, -4]"),
+          "no front-side (negative z) wing pivots/cubes remain");
+
     check(contains(wings_default::AnimationJson, "\"animation.wings.idle\""), "idle animation present");
     check(contains(wings_default::AnimationJson, "\"animation.wings.flap\""), "flap animation present");
     check(contains(wings_default::AnimationJson, "\"animation.wings.glide\""), "glide animation present");
