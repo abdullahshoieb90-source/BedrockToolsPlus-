@@ -42,6 +42,12 @@
 //     check on the live skin image aborts the patch if the layout shifts.
 //   * persona skins go through the persona pipeline (no classic cape image),
 //     so the module leaves them untouched.
+//   * on Leave World the engine detaches the player from its level
+//     (Actor::mLevel goes null) before the player and skin are freed; the
+//     tick hook bails on a null player or a null level link and detaches
+//     its engine references WITHOUT touching the skin — the engine frees
+//     the injected blob through its deleter tag, so a teardown tick can
+//     never write freed memory or double-free the blob.
 class CustomCapesModule : public Module {
 public:
     CustomCapesModule();
@@ -56,10 +62,22 @@ public:
     // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
 
+    // World-exit teardown: drops every engine reference (patched skin,
+    // injected blob, backup) without writing to the skin or freeing the
+    // blob — the engine owns both while it destroys the world. Idempotent;
+    // the loaded cape file stays so the cape re-applies on rejoin.
+    void onWorldExit();
+
     // Directory the module watches; exposed for the menu description.
     const std::string& capesDirectory() const { return m_capesDir; }
 
 private:
+    // True when the player pointer and its level link are both usable.
+    // During Leave World the engine nulls Actor::mLevel before the player
+    // and skin objects are freed, so this is the safe early-out for the
+    // tick hook: a null level means the skin must not be touched.
+    static bool playerHasLiveLevel(const void* player);
+
     void ensureCapesDirectory();
     void writeSamplePng(const std::string& path) const;
     void loadSelectedCape();

@@ -17,6 +17,10 @@
 //   * disabling restores the original cape image and cape id bit-for-bit
 //     before our injected blob is freed.
 //   * persona skins and unexpected skin-image layouts are left untouched.
+//   * Leave World: with the level link (Actor::mLevel) gone the tick hook
+//     writes nothing to the skin (no use-after-free), survives a null
+//     player, never double-frees the blob the engine already released via
+//     the deleter tag, and re-applies a fresh blob after rejoin.
 //
 // Build and run standalone (no game required):
 //     g++ -std=c++20 -I src -I include -I third_party
@@ -164,6 +168,12 @@ int main() {
     void* skinSlotAddress = &skinSlot;  // what Player::mSkin points at
     std::memcpy(player.data() + off::Player::mSkin, &skinSlotAddress, sizeof(void*));
 
+    // The tick hook requires a live level link (Actor::mLevel) before it
+    // will touch the skin — give the fake player one, exactly like a
+    // player attached to a world.
+    void* liveLevel = (void*)0x1;
+    std::memcpy(player.data() + off::Actor::mLevel, &liveLevel, sizeof(void*));
+
     // ------------------------------------------------------------------
     // Load the cape through the config path, enable, and tick.
     // ------------------------------------------------------------------
@@ -264,6 +274,80 @@ int main() {
     check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) == capeBlob,
           "original cape blob still in place");
     mod.enabled = false;
+
+    // ------------------------------------------------------------------
+    // World exit (Leave World): the engine detaches the player from its
+    // level, then destroys the skin and frees our injected blob through
+    // the deleter tag we wrote. The module must (a) not write to the
+    // skin once the level link is gone (use-after-free), (b) not free the
+    // injected blob a second time after the engine already did (double
+    // free — proven by running this test under ASan), and (c) re-apply
+    // cleanly to a fresh skin object after rejoin.
+    // ------------------------------------------------------------------
+    std::printf("world exit: safe detach, no skin write, no double free\n");
+    std::memcpy(skin.data(), skinSnapshot.data(), skin.size()); // heal the layout break
+    mod.enabled = true;
+    mod.onLocalPlayerTick(player.data());
+    void* exitInjected = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset);
+    check(exitInjected != nullptr && exitInjected != capeBlob,
+          "patch is in place before Leave World");
+
+    // Step 1: the engine detaches the player from its level. A tick that
+    // still reaches the hook during teardown must not touch the skin —
+    // it may already be freed.
+    void* noLevel = nullptr;
+    std::memcpy(player.data() + off::Actor::mLevel, &noLevel, sizeof(void*));
+    const std::vector<std::uint8_t> skinAtExit = skin;
+    mod.onLocalPlayerTick(player.data());
+    check(sameBytes(skinBase, skinAtExit.data(), skin.size()),
+          "level gone (module on) -> no writes to the skin");
+
+    // Step 2: the engine destroys the skin and frees our injected blob
+    // through the deleter tag we wrote into mCapeImage — exactly what the
+    // real skin destructor does.
+    auto* engineDeleter = reinterpret_cast<void (*)(unsigned char*)>(
+        readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBlobDeleterOffset));
+    check(engineDeleter != nullptr && engineDeleter != originalDeleter,
+          "skin image carries our free() deleter tag for the engine");
+    engineDeleter(static_cast<unsigned char*>(exitInjected));
+
+    // Step 3: worst case — the user had just disabled the module (restore
+    // pending) when the world went away. A teardown tick must neither
+    // restore the vanilla cape into the dead skin nor free the blob the
+    // engine already released.
+    mod.enabled = false;
+    mod.onLocalPlayerTick(player.data());
+    check(sameBytes(skinBase, skinAtExit.data(), skin.size()),
+          "level gone (module off) -> no skin write, no double-free");
+
+    // The hook also survives a null player pointer (defensive null-check).
+    mod.onLocalPlayerTick(nullptr);
+    check(sameBytes(skinBase, skinAtExit.data(), skin.size()),
+          "null player -> still no writes to the skin");
+
+    // Step 4: rejoin — fresh skin object, level link restored.
+    std::memcpy(skin.data(), skinSnapshot.data(), skin.size());
+    void* rejoinLevel = (void*)0x2;
+    std::memcpy(player.data() + off::Actor::mLevel, &rejoinLevel, sizeof(void*));
+    mod.enabled = true;
+    mod.onLocalPlayerTick(player.data());
+    void* rejoinInjected = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset);
+    check(rejoinInjected != nullptr && rejoinInjected != capeBlob,
+          "cape re-applied to the fresh skin after rejoin");
+    check(sameBytes(static_cast<const std::uint8_t*>(rejoinInjected), expectedCape.data(),
+                    expectedCape.size()),
+          "rejoin pixels are still the resampled cape");
+    check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBlobDeleterOffset) !=
+              originalDeleter,
+          "rejoin blob is retagged so the engine can free it safely");
+
+    // Tidy up: disable restores the vanilla cape and frees the fresh blob.
+    mod.enabled = false;
+    mod.onLocalPlayerTick(player.data());
+    check(sameBytes(skinBase + off::SerializedSkinImpl::mCapeImage,
+                    skinSnapshot.data() + off::SerializedSkinImpl::mCapeImage,
+                    off::Image::Size),
+          "mCapeImage restored after rejoin/disable");
 
     std::printf("\n%s\n", g_failures == 0 ? "all custom capes patch tests passed"
                                           : "SOME PATCH TESTS FAILED");
