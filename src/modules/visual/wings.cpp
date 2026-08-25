@@ -126,6 +126,24 @@ static WingBoneAngles s_boneAngles{};
 static void* s_localPlayerPtr = nullptr;
 static bool s_hasPlayer = false;
 
+// Tick interpolation snapshot (published by the post-tick callback, consumed
+// by the render hook). prev = anchor at the end of the previous tick,
+// curr = anchor at the end of the latest tick; the renderer blends between
+// exactly these two points, and so do we.
+using WingAnchor = WingsModule::WingAnchor;
+static WingAnchor s_anchorPrev{};
+static WingAnchor s_anchorCurr{};
+static double s_tickStartSeconds = 0.0;   // steady-clock seconds of the last post-tick
+static float s_tickInterval = WingsModule::kTickIntervalNominal;
+static float s_smoothHSpeed = 0.0f;
+static float s_smoothVSpeed = 0.0f;
+static bool s_hasTickPair = false;
+
+static double steadyClockSeconds() {
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 static AABB getActorAABB(void* actor) {
     AABB aabb{};
     std::uintptr_t actorAddr = (std::uintptr_t)actor;
@@ -136,6 +154,42 @@ static AABB getActorAABB(void* actor) {
     if (aabbComp < 0x1000) return aabb;
     aabb = *(AABB*)(aabbComp + AABBShapeComponent::mAABB);
     return aabb;
+}
+
+static bedrocktools::sdk::Vec3 getActorPosition(void* actor) {
+    // StateVectorComponent origin (offset 0) - the model-space anchor the
+    // entity (and therefore its skin) is rendered from.
+    bedrocktools::sdk::Vec3 pos{0,0,0};
+    std::uintptr_t actorAddr = (std::uintptr_t)actor;
+    if (actorAddr < 0x1000) return pos;
+    std::uintptr_t svc = *(std::uintptr_t*)(actorAddr + Actor::mStateVectorComponent);
+    if (svc < 0x1000) return pos;
+    pos = *(bedrocktools::sdk::Vec3*)svc;
+    return pos;
+}
+
+static WingAnchor captureAnchor(void* actor) {
+    // The render anchor is the model's bottom centre: horizontal placement
+    // from the actor origin, feet height from the collision box floor (same
+    // convention as the previous overlay and Breadcrumbs, which stays correct
+    // when the actor origin sits above the feet). Falls back to the AABB
+    // centre when the position component is unreadable.
+    WingAnchor anchor{};
+    const bedrocktools::sdk::Vec3 pos = getActorPosition(actor);
+    const AABB aabb = getActorAABB(actor);
+    const bool aabbValid = !(aabb.min.x == 0 && aabb.min.y == 0 && aabb.min.z == 0 &&
+                             aabb.max.x == 0 && aabb.max.y == 0 && aabb.max.z == 0);
+    const bool posValid = pos.x != 0.0f || pos.y != 0.0f || pos.z != 0.0f;
+    if (posValid) {
+        anchor.x = pos.x;
+        anchor.z = pos.z;
+        anchor.y = aabbValid ? aabb.min.y : pos.y;
+    } else if (aabbValid) {
+        anchor.x = (aabb.min.x + aabb.max.x) * 0.5f;
+        anchor.y = aabb.min.y;
+        anchor.z = (aabb.min.z + aabb.max.z) * 0.5f;
+    }
+    return anchor;
 }
 
 static bedrocktools::sdk::Vec2 getActorRotation(void* actor) {
@@ -341,21 +395,52 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     if (!levelRenderer || (std::uintptr_t)levelRenderer < 0x1000) return;
     if (!s_tessBegin || !s_tessColor || !s_tessVertex || !s_renderMesh) return;
 
-    AABB aabb;
-    bedrocktools::sdk::Vec2 rot;
+    WingAnchor anchorPrev{}, anchorCurr{};
+    double tickStart = 0.0;
+    float tickInterval = WingsModule::kTickIntervalNominal;
+    bool hasTickPair = false;
+    AABB aabbFallback;
+    bedrocktools::sdk::Vec2 rotFallback{0,0};
     WingBoneAngles angles;
+    void* player = nullptr;
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         if (!s_hasPlayer) return;
-        aabb = s_playerAABB;
-        rot = s_playerRot;
+        anchorPrev = s_anchorPrev;
+        anchorCurr = s_anchorCurr;
+        tickStart = s_tickStartSeconds;
+        tickInterval = s_tickInterval;
+        hasTickPair = s_hasTickPair;
+        aabbFallback = s_playerAABB;
+        rotFallback = s_playerRot;
         angles = s_boneAngles;
+        player = s_localPlayerPtr;
     }
 
-    // Validate AABB
+    // Sample the actor LIVE at render time. The skin on screen this frame is
+    // drawn from exactly this data, so the wings inherit zero tick latency:
+    // body yaw follows the per-frame camera rotation instead of a tick-old
+    // copy, which is what keeps the wings on the back during fast turns.
+    const AABB liveAABB = getActorAABB(player);
+    const bedrocktools::sdk::Vec2 liveRot = getActorRotation(player);
+    const WingAnchor liveAnchor = captureAnchor(player);
+
+    // Validate AABB (live first, tick-time copy as fallback).
+    AABB aabb = liveAABB;
+    if (aabb.min.x == 0 && aabb.min.y == 0 && aabb.min.z == 0 &&
+        aabb.max.x == 0 && aabb.max.y == 0 && aabb.max.z == 0) {
+        aabb = aabbFallback;
+    }
     if (aabb.min.x == 0 && aabb.min.y == 0 && aabb.min.z == 0 &&
         aabb.max.x == 0 && aabb.max.y == 0 && aabb.max.z == 0) {
         return;
+    }
+
+    // Body yaw: per-frame live value (zero latency); fall back to the tick
+    // copy only when the live rotation component is unreadable.
+    bedrocktools::sdk::Vec2 rot = liveRot;
+    if (rot.x == 0.0f && rot.y == 0.0f && (rotFallback.x != 0.0f || rotFallback.y != 0.0f)) {
+        rot = rotFallback;
     }
 
     std::uintptr_t tessPtr = *(std::uintptr_t*)((std::uintptr_t)screenContext + ScreenContext::mTessellator);
@@ -395,10 +480,30 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float fwdX = -sinYaw;
     float fwdZ = cosYaw;
 
-    // Feet center
-    float feetX = (aabb.min.x + aabb.max.x) * 0.5f;
-    float feetY = aabb.min.y;
-    float feetZ = (aabb.min.z + aabb.max.z) * 0.5f;
+    // Feet anchor: blend between the last two tick anchors with the same
+    // partial-tick factor the model renderer uses, so the wing root pivot
+    // rides the interpolated position the skin is drawn at this frame
+    // instead of a tick-old AABB centre. Snap to the live anchor when the
+    // snapshot is missing or stale (teleport / hiccup > kAnchorDriftReset).
+    WingAnchor feet{};
+    float blend = hasTickPair
+        ? WingsModule::tickBlendFactor(steadyClockSeconds(), tickStart, tickInterval)
+        : 1.0f;
+    const float driftX = anchorCurr.x - liveAnchor.x;
+    const float driftY = anchorCurr.y - liveAnchor.y;
+    const float driftZ = anchorCurr.z - liveAnchor.z;
+    const bool stale = (driftX * driftX + driftY * driftY + driftZ * driftZ) >
+                       (WingsModule::kAnchorDriftReset * WingsModule::kAnchorDriftReset);
+    if (!hasTickPair || stale) {
+        feet = liveAnchor;
+    } else {
+        feet.x = anchorPrev.x + (anchorCurr.x - anchorPrev.x) * blend;
+        feet.y = anchorPrev.y + (anchorCurr.y - anchorPrev.y) * blend;
+        feet.z = anchorPrev.z + (anchorCurr.z - anchorPrev.z) * blend;
+    }
+    const float feetX = feet.x;
+    const float feetY = feet.y;
+    const float feetZ = feet.z;
 
     // Per-bone, raise-positive angles in animation order:
     // [shoulder, upper, tip, feather_1, feather_2, feather_3, feather_4]
@@ -431,13 +536,16 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (_renderLevel_orig) _renderLevel_orig(_this, screenContext, a3);
     if (!g_wings || !g_wings->enabled) return;
     if (!s_localPlayerPtr) return;
+    // Advance the flap clock with the real frame dt first, so the pose drawn
+    // below belongs to the exact frame being rendered (no tick stepping).
+    g_wings->onRenderFrame();
     renderWingsOverlay(_this, screenContext);
 }
 
 } // namespace
 
 WingsModule::WingsModule()
-    : Module("Wings", "Renders 3D articulated wings attached to your back (bone hierarchy: shoulder / upper / tip + feathers). Flap, idle and glide animations are driven by your movement speed. Geo and animation JSON + texture are written to the wings folder next to config.json. Does not modify your skin.") {
+    : Module("Wings", "Renders 3D articulated wings locked to your back, frame-synced with your skin: position is interpolated between ticks exactly like the player model, body yaw is sampled live every frame and speeds are low-passed, so the wings never lag or detach while walking or turning. Flap, idle and glide animations are driven by your movement speed. Geo and animation JSON + texture are written to the wings folder next to config.json. Does not modify your skin.") {
     g_wings = this;
     showInMenu = true;
     hideInHudEditor = true; // world overlay, not HUD
@@ -482,6 +590,10 @@ void WingsModule::onInit() {
         if (groupAddr) s_renderMaterialGroup = groupAddr + MaterialGroup::mRenderMaterialGroupOffset;
     }
 
+    bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerPreTickEvent>(
+        [](auto& event) {
+            if (g_wings) g_wings->onLocalPlayerPreTick(event.player);
+        });
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [](auto& event) {
             if (g_wings) g_wings->onLocalPlayerTick(event.player);
@@ -500,11 +612,19 @@ void WingsModule::onEnable() {
     m_intensity = 0.0f;
     m_glide = 0.0f;
     m_airTime = 0.0f;
-    m_flapClockStarted = false;
-    m_hasPrevCenter = false;
+    m_frameClockStarted = false;
+    m_hasPrevAnchor = false;
+    m_tickClockStarted = false;
+    m_tickInterval = kTickIntervalNominal;
+    m_smoothHSpeed = 0.0f;
+    m_smoothVSpeed = 0.0f;
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_boneAngles = WingBoneAngles{};
+        s_hasTickPair = false;
+        s_smoothHSpeed = 0.0f;
+        s_smoothVSpeed = 0.0f;
+        s_tickInterval = kTickIntervalNominal;
     }
 }
 
@@ -513,6 +633,7 @@ void WingsModule::onDisable() {
     std::lock_guard<std::mutex> lock(s_stateMutex);
     s_hasPlayer = false;
     s_localPlayerPtr = nullptr;
+    s_hasTickPair = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -613,67 +734,160 @@ void WingsModule::advanceFlapAnimation(float dtSeconds) {
     advanceWingAnimation(dtSeconds, 0.0f, 0.0f);
 }
 
+// ---------------------------------------------------------------------------
+// Frame sync: pure helpers (host-testable)
+// ---------------------------------------------------------------------------
+
+float WingsModule::tickBlendFactor(double nowSeconds, double tickStartSeconds, float tickIntervalSeconds) {
+    if (tickIntervalSeconds <= 0.0f) return 1.0f;
+    const double t = (nowSeconds - tickStartSeconds) / static_cast<double>(tickIntervalSeconds);
+    if (!(t > 0.0)) return 0.0f;  // also maps NaN to 0
+    return t < 1.0 ? static_cast<float>(t) : 1.0f;
+}
+
+float WingsModule::smoothTowards(float current, float target, float dtSeconds, float tauSeconds) {
+    if (dtSeconds <= 0.0f) return current;
+    if (tauSeconds <= 0.0f) return target;
+    const float blend = 1.0f - std::exp(-dtSeconds / tauSeconds);
+    return current + (target - current) * std::min(1.0f, blend);
+}
+
+WingsModule::WingAnchor WingsModule::tickAnchorPrev() const {
+    std::lock_guard<std::mutex> lock(s_stateMutex);
+    return s_anchorPrev;
+}
+
+WingsModule::WingAnchor WingsModule::tickAnchorCurr() const {
+    std::lock_guard<std::mutex> lock(s_stateMutex);
+    return s_anchorCurr;
+}
+
+float WingsModule::smoothedHorizontalSpeed() const {
+    std::lock_guard<std::mutex> lock(s_stateMutex);
+    return s_smoothHSpeed;
+}
+
+float WingsModule::smoothedVerticalSpeed() const {
+    std::lock_guard<std::mutex> lock(s_stateMutex);
+    return s_smoothVSpeed;
+}
+
+float WingsModule::smoothedTickInterval() const {
+    std::lock_guard<std::mutex> lock(s_stateMutex);
+    return s_tickInterval;
+}
+
+// ---------------------------------------------------------------------------
+// Tick-side tracking: freeze the interpolation pair and measure smooth speeds
+// ---------------------------------------------------------------------------
+
+void WingsModule::onLocalPlayerPreTick(void* player) {
+    if (!player || !enabled) return;
+    // The renderer has just finished blending towards the actor's current
+    // anchor; freeze it as the start point of the next interpolation window.
+    m_prevAnchor = captureAnchor(player);
+    m_hasPrevAnchor = true;
+}
+
 void WingsModule::onLocalPlayerTick(void* player) {
-    if (!player) {
+    if (!player || !enabled) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_hasPlayer = false;
         s_localPlayerPtr = nullptr;
+        s_hasTickPair = false;
         return;
     }
 
-    if (!enabled) {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
-        s_hasPlayer = false;
-        s_localPlayerPtr = nullptr;
-        return;
+    const double now = steadyClockSeconds();
+
+    // Measure the real tick interval and low-pass it: the partial-tick blend
+    // must follow the game's actual cadence (20 Hz nominal) without stepping
+    // when a single tick lands early or late.
+    if (m_tickClockStarted) {
+        float measured = static_cast<float>(now - m_lastTickStamp);
+        measured = std::clamp(measured, kTickIntervalMin, kTickIntervalMax);
+        m_tickInterval = smoothTowards(m_tickInterval, measured, measured, kTickIntervalTau);
+    } else {
+        m_tickInterval = kTickIntervalNominal;
+    }
+    m_lastTickStamp = now;
+    m_tickClockStarted = true;
+
+    // Post-movement anchor: the point the renderer will blend towards during
+    // the upcoming tick window.
+    const WingAnchor curr = captureAnchor(player);
+    WingAnchor prev = m_hasPrevAnchor ? m_prevAnchor : curr;
+    m_hasPrevAnchor = false;
+
+    const float dx = curr.x - prev.x;
+    const float dy = curr.y - prev.y;
+    const float dz = curr.z - prev.z;
+    const float distSq = dx * dx + dy * dy + dz * dz;
+
+    float rawH = 0.0f;
+    float rawV = 0.0f;
+    if (distSq > kTeleportDistance * kTeleportDistance) {
+        // Teleport: never blend across the jump and never feed the speed
+        // filter with it - snap the pair and reset the smoothing.
+        prev = curr;
+        m_smoothHSpeed = 0.0f;
+        m_smoothVSpeed = 0.0f;
+    } else {
+        rawH = std::sqrt(dx * dx + dz * dz) / m_tickInterval;
+        rawV = dy / m_tickInterval;
+        rawH = std::clamp(rawH, 0.0f, kMaxMeasuredSpeed);
+        rawV = std::clamp(rawV, -kMaxMeasuredSpeed, kMaxMeasuredSpeed);
+        // Low-pass the speeds so per-tick physics jitter cannot shake the
+        // flap/glide blend, while the wing pose itself keeps responding
+        // within ~kSpeedSmoothingTau seconds.
+        m_smoothHSpeed = smoothTowards(m_smoothHSpeed, rawH, m_tickInterval, kSpeedSmoothingTau);
+        m_smoothVSpeed = smoothTowards(m_smoothVSpeed, rawV, m_tickInterval, kSpeedSmoothingTau);
     }
 
-    // Tick dt from the real clock (clamped after hitches).
-    const auto now = std::chrono::steady_clock::now();
-    float dt = 0.0f;
-    if (m_flapClockStarted) {
-        dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
-        if (dt > 0.25f) dt = 0.25f;
-    }
-    m_lastFlapTick = now;
-    m_flapClockStarted = true;
-
-    // Track player AABB and rotation for rendering, and derive the player's
-    // speed from consecutive AABB centers (teleports are ignored).
-    AABB aabb = getActorAABB(player);
-    bedrocktools::sdk::Vec2 rot = getActorRotation(player);
-
-    const float centerX = (aabb.min.x + aabb.max.x) * 0.5f;
-    const float centerY = (aabb.min.y + aabb.max.y) * 0.5f;
-    const float centerZ = (aabb.min.z + aabb.max.z) * 0.5f;
-
-    if (dt > 0.0f) {
-        float horizontalSpeed = 0.0f;
-        float verticalSpeed = 0.0f;
-        if (m_hasPrevCenter) {
-            const float dx = centerX - m_prevCenterX;
-            const float dy = centerY - m_prevCenterY;
-            const float dz = centerZ - m_prevCenterZ;
-            if (dx * dx + dy * dy + dz * dz < 25.0f) { // 5 blocks: not a teleport
-                horizontalSpeed = std::sqrt(dx * dx + dz * dz) / dt;
-                verticalSpeed = dy / dt;
-            }
-        }
-        advanceWingAnimation(dt, horizontalSpeed, verticalSpeed);
-    }
-
-    m_prevCenterX = centerX;
-    m_prevCenterY = centerY;
-    m_prevCenterZ = centerZ;
-    m_hasPrevCenter = true;
-
+    // Publish the render snapshot: the interpolation pair, the tick clock and
+    // the smoothed speeds the per-frame animation consumes.
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
-        s_playerAABB = aabb;
-        s_playerRot = rot;
+        s_anchorPrev = prev;
+        s_anchorCurr = curr;
+        s_tickStartSeconds = now;
+        s_tickInterval = m_tickInterval;
+        s_hasTickPair = true;
+        s_smoothHSpeed = m_smoothHSpeed;
+        s_smoothVSpeed = m_smoothVSpeed;
+        s_playerAABB = getActorAABB(player);
+        s_playerRot = getActorRotation(player);
         s_localPlayerPtr = player;
         s_hasPlayer = true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Frame-side animation: the flap clock advances per rendered frame so the
+// wing pose is exactly as smooth as the skin it is synced to.
+// ---------------------------------------------------------------------------
+
+void WingsModule::onRenderFrame() {
+    if (!enabled) return;
+    const auto now = std::chrono::steady_clock::now();
+    float dt = 0.0f;
+    if (m_frameClockStarted) {
+        dt = std::chrono::duration<float>(now - m_lastFrameTick).count();
+        if (dt < 0.0f) dt = 0.0f;
+        if (dt > 0.25f) dt = 0.25f;
+    }
+    m_lastFrameTick = now;
+    m_frameClockStarted = true;
+    if (dt <= 0.0f) return;
+
+    float smoothH = 0.0f;
+    float smoothV = 0.0f;
+    {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        smoothH = s_smoothHSpeed;
+        smoothV = s_smoothVSpeed;
+    }
+    advanceWingAnimation(dt, smoothH, smoothV);
 }
 
 // ---------------------------------------------------------------------------
