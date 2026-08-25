@@ -59,12 +59,14 @@ inline constexpr std::size_t mObject = 0;
 //   mIsPrimaryUser                   444
 //   mOverridesPlayerAppearance       445
 namespace SerializedSkinImpl {
+inline constexpr std::size_t mDefaultGeometryName = 96;
 inline constexpr std::size_t mSkinImage = 120;
 inline constexpr std::size_t mCapeImage = 168;
+inline constexpr std::size_t mSkinAnimatedImages = 216;
+inline constexpr std::size_t mGeometryData = 240;
 inline constexpr std::size_t mCapeId = 336;
 inline constexpr std::size_t mIsPersona = 442;
 inline constexpr std::size_t mIsPersonaCapeOnClassicSkin = 443;
-inline constexpr std::size_t mSkinAnimatedImages = 216;
 }
 
 namespace AnimatedImageData {

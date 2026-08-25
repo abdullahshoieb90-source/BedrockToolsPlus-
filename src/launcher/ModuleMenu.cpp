@@ -252,6 +252,10 @@ void registerModulesWithLauncher() {
                     maxVal = 179.0f;
                 } else if (kLower.find("intensity") != std::string::npos) {
                     maxVal = 10.0f;
+                } else if (kLower.find("flapspeed") != std::string::npos) {
+                    // Wings flap speed multiplier (Wings module).
+                    minVal = 0.1f;
+                    maxVal = 10.0f;
                 } else if (kLower.find("speed") != std::string::npos || kLower.find("strength") != std::string::npos) {
                     minVal = 0.05f;
                     maxVal = 1.0f;
