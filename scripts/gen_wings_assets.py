@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the default Wings assets.
+"""Generate the default Wings assets - Demon Wings / Vampire Bat Wings edition.
 
 Produces five files:
 
@@ -18,36 +18,18 @@ Produces five files:
       +-- bone_wing_left       ("mirror": true, same UV regions)
           +-- ... same children, mirrored
 
-  Every wing part is a real 3D box (thickness in Z), not a flat quad.
-  Coordinates follow the same convention as the vanilla humanoid bones:
-  right side = negative X, and BACK (cape side) = +Z. Bedrock model space
-  faces -Z (north), so the body's chest surface is at z = -2 and the back
-  surface is at z = +2; the wing boxes sit at z = +2.5 and beyond, fixed
-  directly behind the back with a small standoff (0.5 px) so they never
-  clip into the torso or poke through the chest.
+* resources/wings/wings_animation.json
+* resources/wings/wings_animation_controllers.json
+* resources/wings/wings.png - 64x64 RGBA texture with Demon Wings spec:
+  - Frame/Bones: solid black #000000
+  - Membrane: dramatic gradient from glowing red #FF0000/#E60000 in middle
+    and edges to dark bloody #800000 at bone contact
+  - Glow effect: red crimson aura saturated between black separators
+  - Webbed bat wing pattern with serrated lower edges
 
-* resources/wings/wings_animation.json - Bedrock animations for the new
-  bones: "animation.wings.idle", "animation.wings.flap" and
-  "animation.wings.glide" (looping, molang driven).
+* include/bedrocktools/modules/visual/wings_default.hpp
 
-* resources/wings/wings_animation_controllers.json - an animation
-  controller ("controller.animation.wings") that blends idle/flap/glide
-  based on the player's movement
-  (query.modified_move_speed / query.vertical_speed / query.is_gliding).
-
-* resources/wings/wings.png - the matching 64x64 RGBA skin texture. The
-  standard body layout is untouched; the wings use the free UV band
-  (x 0..47, y 32..47) with per-face art: dark outer membrane, lighter
-  inner membrane, brown frame/bone edges and highlighted feather tips,
-  so the 3D model shows outer and inner details correctly.
-
-* include/bedrocktools/modules/visual/wings_default.hpp - the same
-  assets embedded as code (geometry + animations + controller + texture)
-  so the WingsModule works immediately after install and can write the
-  pack files next to config.json even when no external files exist.
-
-Run from the repository root (or anywhere; paths are resolved relative to
-this file):
+Run:
     python3 scripts/gen_wings_assets.py
 """
 
@@ -67,16 +49,31 @@ TEX_H = 64
 IDENTIFIER = "geometry.wings"
 
 # ---------------------------------------------------------------------------
-# Wing palette. These exact RGB values are painted into wings.png and are
-# also embedded in the generated header so the C++ world-space renderer can
-# colour each box face the same way the texture maps onto the geometry
-# (tests cross-check the two copies to keep them in sync).
+# Demon Wings / Vampire Bat Wings palette - per user spec
 # ---------------------------------------------------------------------------
-FRAME = (94, 62, 36)        # brown frame / bones / edges
-MEMBRANE_OUTER = (18, 18, 24)    # dark outer membrane (back of the wing)
-MEMBRANE_INNER = (28, 28, 36)    # softer inner membrane (faces the body)
-FEATHER_TIP = (46, 46, 60)       # highlighted feather tips
-JOINT_INNER = (76, 52, 32)       # lighter brown for the shoulder's inner face
+# Frame/Bones: black #000000
+# Membrane: gradient from #FF0000/#E60000 glowing to #800000 dark bloody
+# ---------------------------------------------------------------------------
+FRAME = (0, 0, 0)              # #000000 black - bones/frame
+MEMBRANE_OUTER = (230, 0, 0)    # #E60000 glowing red - outer membrane bright
+MEMBRANE_INNER = (128, 0, 0)    # #800000 dark bloody - near bones
+FEATHER_TIP = (255, 0, 0)       # #FF0000 bright tip / glow
+JOINT_INNER = (0, 0, 0)         # black joint
+
+# Additional gradient colors for dramatic effect
+GLOW_BRIGHT = (255, 0, 0)       # #FF0000 center glow
+GLOW_MID = (230, 0, 0)          # #E60000 mid
+GLOW_DARK = (128, 0, 0)         # #800000 near bones
+GLOW_EDGE = (255, 26, 26)       # slightly brighter edge for aura
+
+
+def lerp(a: int, b: int, t: float) -> int:
+    return int(round(a + (b - a) * t))
+
+
+def lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    t = max(0.0, min(1.0, t))
+    return (lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t))
 
 
 def shade(c: tuple[int, int, int], f: float) -> tuple[int, int, int]:
@@ -84,20 +81,7 @@ def shade(c: tuple[int, int, int], f: float) -> tuple[int, int, int]:
 
 
 # ---------------------------------------------------------------------------
-# Bedrock geometry. Standard humanoid bones keep the default player body
-# rendering and animating; the wing hierarchy replaces the old flat
-# 6x10x1 quads with articulated 3D boxes.
-#
-# All sizes are integers (Bedrock-safe); pivots sit exactly on the joints
-# so animation rotations bend the wing like a real limb.
-#
-# UV regions (64x64):
-#   head  (0,0) 8x8x8      body (16,16) 8x12x4
-#   right arm (40,16)      left arm (32,48)
-#   right leg (0,16)       left leg (16,48)
-#   shoulder 3x3x2  (0, 32)   upper 6x3x1 (10, 32)   tip 5x2x1 (24, 32)
-#   feathers 2x6x1 (0,38) (6,38) (12,38)   feather 2x5x1 (18,38)
-# Left-side bones reuse the same regions with "mirror": true.
+# Bedrock geometry - same as before, but wings now represent bat/demon wings
 # ---------------------------------------------------------------------------
 GEOMETRY = r'''{
   "format_version": "1.12.0",
@@ -261,17 +245,6 @@ GEOMETRY = r'''{
   ]
 }'''
 
-
-# ---------------------------------------------------------------------------
-# Bedrock animations for the new bone hierarchy.
-#
-# Positive Z-roll lifts a wing whose span runs along +X (left side), so
-# right-side bones use the negated expression of the lift angle.
-# math.sin/math.cos take degrees. Lag offsets (upper 50, tip 105,
-# feathers 140+) make the wave travel from the shoulder out to the
-# feather tips, exactly like the runtime renderer in wings.cpp (which uses
-# the same constants) - keep the two in sync.
-# ---------------------------------------------------------------------------
 ANIMATION = r'''{
   "format_version": "1.8.0",
   "animations": {
@@ -383,12 +356,6 @@ ANIMATION = r'''{
   }
 }'''
 
-
-# ---------------------------------------------------------------------------
-# Animation controller: picks idle / flap / glide from the player's actual
-# movement state (speed and height loss), mirroring the velocity-driven
-# blending the native module does in wings.cpp.
-# ---------------------------------------------------------------------------
 ANIMATION_CONTROLLERS = r'''{
   "format_version": "1.10.0",
   "animation_controllers": {
@@ -421,9 +388,8 @@ ANIMATION_CONTROLLERS = r'''{
   }
 }'''
 
-
 # ---------------------------------------------------------------------------
-# 64x64 skin texture generation.
+# 64x64 skin texture generation - Demon Wings edition
 # ---------------------------------------------------------------------------
 
 def set_px(data: bytearray, x: int, y: int, rgba: tuple[int, int, int, int]) -> None:
@@ -445,16 +411,6 @@ def vline(data: bytearray, x: int, y: int, h: int, rgba: tuple[int, int, int, in
 
 def paint_cube(data: bytearray, u: int, v: int, sx: int, sy: int, sz: int,
                colors: dict[str, tuple[int, int, int, int]]) -> None:
-    """Paints the box-unwrap faces of a cube whose top-left UV is (u,v).
-
-    Face placement follows the Bedrock cube mapping:
-      top    (u+sz, v)              (sx, sz)
-      bottom (u+sz+sx, v)           (sx, sz)
-      right  (u, v+sz)              (sz, sy)
-      front  (u+sz, v+sz)           (sx, sy)   <- faces the body (inner)
-      left   (u+sz+sx, v+sz)        (sz, sy)
-      back   (u+sz+sx+sz, v+sz)     (sx, sy)   <- faces away (outer)
-    """
     fill_rect(data, u + sz, v, sx, sz, colors["top"])
     fill_rect(data, u + sz + sx, v, sx, sz, colors["bottom"])
     fill_rect(data, u, v + sz, sz, sy, colors["right"])
@@ -463,10 +419,10 @@ def paint_cube(data: bytearray, u: int, v: int, sx: int, sy: int, sz: int,
     fill_rect(data, u + sz + sx + sz, v + sz, sx, sy, colors["back"])
 
 
-HEAD = (224, 174, 131, 255)   # face / hands
-HAIR = (94, 62, 36, 255)      # brown hair
-SHIRT = (56, 160, 164, 255)   # teal shirt
-PANTS = (70, 70, 148, 255)    # dark blue pants
+HEAD = (224, 174, 131, 255)
+HAIR = (94, 62, 36, 255)
+SHIRT = (56, 160, 164, 255)
+PANTS = (70, 70, 148, 255)
 SHOE = (48, 48, 52, 255)
 
 A = 255
@@ -474,15 +430,21 @@ FRAME_A = FRAME + (A,)
 OUTER_A = MEMBRANE_OUTER + (A,)
 INNER_A = MEMBRANE_INNER + (A,)
 TIP_A = FEATHER_TIP + (A,)
+GLOW_BRIGHT_A = GLOW_BRIGHT + (A,)
+GLOW_MID_A = GLOW_MID + (A,)
+GLOW_DARK_A = GLOW_DARK + (A,)
 
 
-def paint_wing_cube(data: bytearray, u: int, v: int, sx: int, sy: int, sz: int,
-                    fingers: list[float]) -> None:
-    """Paints a membrane segment (upper arm / tip): dark outer face with
-    brown 'finger' bone stripes, lighter inner face, brown thin edges.
-
-    fingers: stripe positions as fractions of the face width (0..1).
+def paint_wing_cube_demon(data: bytearray, u: int, v: int, sx: int, sy: int, sz: int,
+                          fingers: list[float]) -> None:
     """
+    Demon Wings membrane: black frame, red glowing membrane with gradient
+    - Outer face (back): gradient from dark #800000 near bones to bright #FF0000 in middle
+    - Inner face (front): dark #800000 with glow
+    - Top/bottom/right/left: black #000000
+    - Finger stripes: black prominent extended bones
+    """
+    # Base cube with black edges and red membranes
     paint_cube(data, u, v, sx, sy, sz, {
         "top": FRAME_A, "bottom": FRAME_A, "right": FRAME_A, "left": FRAME_A,
         "front": INNER_A, "back": OUTER_A,
@@ -490,73 +452,205 @@ def paint_wing_cube(data: bytearray, u: int, v: int, sx: int, sy: int, sz: int,
     outer_x = u + sz + sx + sz
     inner_x = u + sz
     face_y = v + sz
-    # Frame border rows on the big faces.
+
+    # Frame border row - black (only top, bottom kept as membrane for small sy to show glow)
     fill_rect(data, outer_x, face_y, sx, 1, FRAME_A)
     fill_rect(data, inner_x, face_y, sx, 1, FRAME_A)
+    if sy > 2:
+        fill_rect(data, outer_x, face_y + sy - 1, sx, 1, FRAME_A)
+        fill_rect(data, inner_x, face_y + sy - 1, sx, 1, FRAME_A)
+
+    # Finger bone stripes - black prominent
     for f in fingers:
         stripe_x = outer_x + min(sx - 1, max(0, int(round(f * (sx - 1)))))
         vline(data, stripe_x, face_y, sy, FRAME_A)
+        # Also on inner face
+        vline(data, inner_x + (stripe_x - outer_x), face_y, sy, FRAME_A)
+
+    # Now apply gradient to outer membrane (back face) - dramatic red glow
+    # Gradient: dark near bones (frame and finger stripes) -> bright in middle
+    # Compute bone positions including borders
+    bone_xs = [0, sx - 1]
+    for f in fingers:
+        bone_xs.append(int(round(f * (sx - 1))))
+    bone_xs = sorted(set(bone_xs))
+
+    for yy in range(sy):
+        for xx in range(sx):
+            # Distance to nearest bone (frame border or finger)
+            min_dist = min(abs(xx - bx) for bx in bone_xs)
+            # Also distance to top/bottom border
+            border_dist = min(yy, sy - 1 - yy)
+            # Combined distance factor
+            # Normalize by half segment width
+            # Find segment width between bones
+            # For gradient, use distance to nearest bone
+            # t = 0 at bone (dark), 1 in middle (bright)
+            # Assume max distance ~ sx / (len(bone_xs)) /2
+            max_seg = sx / (len(bone_xs)) if len(bone_xs) > 1 else sx
+            if max_seg < 1:
+                max_seg = 1
+            t = min_dist / (max_seg * 0.6)
+            t = max(0.0, min(1.0, t))
+            # Also factor in vertical border (serrated lower edge effect)
+            v_t = border_dist / (sy * 0.5) if sy > 1 else 1.0
+            v_t = max(0.0, min(1.0, v_t))
+            # Combine: use min to keep dark near any bone
+            combined_t = min(t, v_t)
+            # Smoothstep for glow effect
+            # Glow: dark #800000 at bone, bright #FF0000 in middle
+            # Use power curve for more dramatic glow
+            glow_t = combined_t ** 0.7
+            # Outer membrane: gradient dark->bright
+            r = lerp(GLOW_DARK[0], GLOW_BRIGHT[0], glow_t)
+            g = lerp(GLOW_DARK[1], GLOW_BRIGHT[1], glow_t)
+            b = lerp(GLOW_DARK[2], GLOW_BRIGHT[2], glow_t)
+            # For inner membrane, darker overall but still gradient
+            # We'll paint outer face here, inner face separately below
+            set_px(data, outer_x + xx, face_y + yy, (r, g, b, 255))
+
+            # Inner face: slightly darker gradient (dark bloody #800000 base, but with glow)
+            inner_glow_t = glow_t * 0.8
+            ir = lerp(GLOW_DARK[0], GLOW_MID[0], inner_glow_t)
+            ig = lerp(GLOW_DARK[1], GLOW_MID[1], inner_glow_t)
+            ib = lerp(GLOW_DARK[2], GLOW_MID[2], inner_glow_t)
+            set_px(data, inner_x + xx, face_y + yy, (ir, ig, ib, 255))
+
+    # Re-apply black bone stripes on top of gradient (prominent)
+    for f in fingers:
+        stripe_x = outer_x + min(sx - 1, max(0, int(round(f * (sx - 1)))))
+        vline(data, stripe_x, face_y, sy, FRAME_A)
+        vline(data, inner_x + (stripe_x - outer_x), face_y, sy, FRAME_A)
+    fill_rect(data, outer_x, face_y, sx, 1, FRAME_A)
+    fill_rect(data, inner_x, face_y, sx, 1, FRAME_A)
+    if sy > 2:
+        fill_rect(data, outer_x, face_y + sy - 1, sx, 1, FRAME_A)
+        fill_rect(data, inner_x, face_y + sy - 1, sx, 1, FRAME_A)
 
 
-def paint_feather(data: bytearray, u: int, v: int, sy: int, light: float) -> None:
-    """Paints one feather cube (2 x sy x 1): dark outer membrane with a brown
-    rib, lighter back edge, brighter lower band (feather tip highlight).
+def paint_feather_demon(data: bytearray, u: int, v: int, sy: int, light: float) -> None:
     """
-    outer = shade(MEMBRANE_OUTER, light) + (A,)
-    inner = shade(MEMBRANE_INNER, light) + (A,)
-    tip = shade(FEATHER_TIP, light) + (A,)
+    Demon bat finger / feather: black frame, red membrane with gradient
+    and serrated lower edge effect.
+    2 x sy x 1 cube
+    """
+    # Base cube
+    outer_base = shade(MEMBRANE_OUTER, light)
+    inner_base = shade(MEMBRANE_INNER, light)
+    tip_base = shade(FEATHER_TIP, light)
+
     paint_cube(data, u, v, 2, sy, 1, {
-        "top": FRAME_A, "bottom": tip, "right": FRAME_A, "left": FRAME_A,
-        "front": inner, "back": outer,
+        "top": FRAME_A, "bottom": (tip_base[0], tip_base[1], tip_base[2], 255),
+        "right": FRAME_A, "left": FRAME_A,
+        "front": (inner_base[0], inner_base[1], inner_base[2], 255),
+        "back": (outer_base[0], outer_base[1], outer_base[2], 255),
     })
     outer_x = u + 1 + 2 + 1
     inner_x = u + 1
     face_y = v + 1
-    # Frame row at the quill and the tip highlight band on both faces.
+
+    # Gradient for finger membrane: dark at quill (top), bright in middle, bright tip at bottom
+    # Serrated/wavy lower edge: create wave pattern in tip highlight
+    for yy in range(sy):
+        # Vertical gradient factor: 0 at top (near bone), 1 at bottom (tip)
+        # But also dark near top bone, bright in middle
+        # Use distance from top
+        dist_top = yy
+        # For serrated effect, vary tip edge
+        # Gradient: dark #800000 at top, bright #FF0000 in middle, glowing edge at bottom
+        if yy == 0:
+            t = 0.0
+        elif yy >= sy - 2:
+            t = 1.0
+        else:
+            t = (yy / (sy - 1)) ** 0.8
+            # Boost middle to be bright
+            if t < 0.5:
+                t = t * 1.5
+                t = min(1.0, t)
+
+        # Outer face gradient
+        r = lerp(GLOW_DARK[0], GLOW_BRIGHT[0], t)
+        g = lerp(GLOW_DARK[1], GLOW_BRIGHT[1], t)
+        b = lerp(GLOW_DARK[2], GLOW_BRIGHT[2], t)
+
+        # Inner face slightly darker
+        ir = lerp(GLOW_DARK[0], GLOW_MID[0], t * 0.9)
+        ig = lerp(GLOW_DARK[1], GLOW_MID[1], t * 0.9)
+        ib = lerp(GLOW_DARK[2], GLOW_MID[2], t * 0.9)
+
+        # Paint 2-pixel wide membrane
+        for xx in range(2):
+            # Horizontal gradient: dark near black bone edges (left/right), bright in center
+            # For 2px wide, left edge near bone = darker, right edge = brighter? Actually both edges are frame?
+            # For finger, left/right are frame, so middle of 2px is bright
+            # We'll make xx=0 slightly darker, xx=1 brighter for depth
+            h_t = 0.3 if xx == 0 else 0.9
+            hr = lerp(r, GLOW_BRIGHT[0], h_t * 0.3)
+            hg = lerp(g, GLOW_BRIGHT[1], h_t * 0.3)
+            hb = lerp(b, GLOW_BRIGHT[2], h_t * 0.3)
+
+            hir = lerp(ir, GLOW_MID[0], h_t * 0.2)
+            hig = lerp(ig, GLOW_MID[1], h_t * 0.2)
+            hib = lerp(ib, GLOW_MID[2], h_t * 0.2)
+
+            set_px(data, outer_x + xx, face_y + yy, (hr, hg, hb, 255))
+            set_px(data, inner_x + xx, face_y + yy, (hir, hig, hib, 255))
+
+    # Frame row at quill (top) - black prominent
     fill_rect(data, outer_x, face_y, 2, 1, FRAME_A)
-    fill_rect(data, outer_x, face_y + sy - 2, 2, 2, tip)
-    fill_rect(data, inner_x, face_y + sy - 2, 2, 2, tip)
+    fill_rect(data, inner_x, face_y, 2, 1, FRAME_A)
+
+    # Tip highlight band - bright glowing red #FF0000 with serrated effect
+    # Bottom 2 rows bright, but with wavy pattern
+    for yy in range(sy - 2, sy):
+        for xx in range(2):
+            # Serrated: alternate brightness for wavy edge
+            wave = 1.0 if (xx + yy) % 2 == 0 else 0.85
+            r = int(tip_base[0] * wave)
+            g = int(tip_base[1] * wave)
+            b = int(tip_base[2] * wave)
+            r = min(255, r)
+            set_px(data, outer_x + xx, face_y + yy, (r, g, b, 255))
+            set_px(data, inner_x + xx, face_y + yy, (r, g, b, 255))
 
 
 def make_texture() -> bytearray:
-    data = bytearray(TEX_W * TEX_H * 4)  # transparent by default
+    data = bytearray(TEX_W * TEX_H * 4)
 
-    # Head (8x8x8 @0,0). Hair on top/sides/back, skin face with a fringe,
-    # eyes and a small mouth.
+    # Head
     paint_cube(data, 0, 0, 8, 8, 8, {
         "top": HAIR, "bottom": HAIR, "right": HAIR, "left": HAIR,
         "front": HEAD, "back": HAIR,
     })
-    fill_rect(data, 8, 8, 8, 2, HAIR)              # hair fringe on the face
-    for x in (10, 13):                             # eyes
+    fill_rect(data, 8, 8, 8, 2, HAIR)
+    for x in (10, 13):
         set_px(data, x, 12, (40, 30, 26, 255))
-    fill_rect(data, 10, 14, 4, 1, (140, 86, 60, 255))  # mouth
+    fill_rect(data, 10, 14, 4, 1, (140, 86, 60, 255))
 
-    # Body (8x12x4 @16,16). Teal shirt.
+    # Body
     paint_cube(data, 16, 16, 8, 12, 4, {
         "top": SHIRT, "bottom": SHIRT, "right": SHIRT, "left": SHIRT,
         "front": SHIRT, "back": (44, 120, 124, 255),
     })
-    # Simple dark shirt stripe down the torso front.
     fill_rect(data, 22, 22, 4, 8, (52, 132, 136, 255))
 
-    # Right arm (4x12x4 @40,16): teal sleeve up to the elbow, skin hand.
+    # Arms
     arm = {"top": SHIRT, "bottom": SHIRT, "right": SHIRT, "left": SHIRT,
            "front": SHIRT, "back": SHIRT}
     paint_cube(data, 40, 16, 4, 12, 4, arm)
-    for face_x in (44, 48, 52, 40):  # front/back/left/right visible columns
+    for face_x in (44, 48, 52, 40):
         fill_rect(data, face_x, 24, 4, 8, HEAD)
-    fill_rect(data, 44, 16, 4, 4, SHIRT)   # sleeve top
+    fill_rect(data, 44, 16, 4, 4, SHIRT)
     fill_rect(data, 48, 16, 4, 4, SHIRT)
 
-    # Left arm (4x12x4 @32,48).
     paint_cube(data, 32, 48, 4, 12, 4, arm)
     for face_x in (36, 40, 44, 32):
         fill_rect(data, face_x, 56, 4, 8, HEAD)
     fill_rect(data, 36, 48, 4, 4, SHIRT)
     fill_rect(data, 40, 48, 4, 4, SHIRT)
 
-    # Right leg (4x12x4 @0,16): dark pants + shoes.
+    # Legs
     paint_cube(data, 0, 16, 4, 12, 4, {
         "top": PANTS, "bottom": PANTS, "right": PANTS, "left": PANTS,
         "front": PANTS, "back": PANTS,
@@ -564,7 +658,6 @@ def make_texture() -> bytearray:
     for face_x in (4, 8, 12, 0):
         fill_rect(data, face_x, 28, 4, 4, SHOE)
 
-    # Left leg (4x12x4 @16,48).
     paint_cube(data, 16, 48, 4, 12, 4, {
         "top": PANTS, "bottom": PANTS, "right": PANTS, "left": PANTS,
         "front": PANTS, "back": PANTS,
@@ -573,39 +666,34 @@ def make_texture() -> bytearray:
         fill_rect(data, face_x, 60, 4, 4, SHOE)
 
     # ------------------------------------------------------------------
-    # Articulated 3D wings. UV band x 0..47, y 32..47 (kept free above).
-    #   shoulder 3x3x2 (0,32) - mostly frame/bone, membrane patch on faces
-    #   upper 6x3x1 (10,32)   - membrane with 2 finger stripes
-    #   tip 5x2x1 (24,32)     - membrane with 1 finger stripe
-    #   feathers 2x6x1 (0,38) (6,38) (12,38), 2x5x1 (18,38)
-    # Both wings share these regions (left bones are "mirror": true).
+    # Demon Wings / Vampire Bat Wings - UV band x 0..47, y 32..47
+    #   shoulder 3x3x2 (0,32) - black frame, dark red inner
+    #   upper 6x3x1 (10,32)   - black bones, red glowing membrane gradient
+    #   tip 5x2x1 (24,32)     - black bones, red glow
+    #   fingers 2x6x1 (0,38) (6,38) (12,38), 2x5x1 (18,38) - bat fingers
     # ------------------------------------------------------------------
-    # Shoulder joint box. Outer (back) face is at (u + 2*sz + sx, v + sz).
+    # Shoulder joint - mostly black frame, membrane patch with dark red
     paint_cube(data, 0, 32, 3, 3, 2, {
         "top": FRAME_A, "bottom": FRAME_A, "right": FRAME_A, "left": FRAME_A,
         "front": JOINT_INNER + (A,), "back": FRAME_A,
     })
-    fill_rect(data, 0 + 2 * 2 + 3, 32 + 2 + 1, 3, 1, shade(FRAME, 0.75) + (A,))
+    # Slight red glow in joint inner
+    fill_rect(data, 0 + 2 * 2 + 3, 32 + 2 + 1, 3, 1, (64, 0, 0, 255))
 
-    # Upper segment: two "finger" bone stripes at 1/3 and 2/3 of the span.
-    paint_wing_cube(data, 10, 32, 6, 3, 1, fingers=[1.0 / 3.0, 2.0 / 3.0])
+    # Upper segment: black bones with red glowing membrane, 2 finger stripes
+    paint_wing_cube_demon(data, 10, 32, 6, 3, 1, fingers=[1.0 / 3.0, 2.0 / 3.0])
 
-    # Tip segment: one stripe near the outer end.
-    paint_wing_cube(data, 24, 32, 5, 2, 1, fingers=[0.75])
+    # Tip segment: black bones, red glow, 1 stripe near outer end
+    paint_wing_cube_demon(data, 24, 32, 5, 2, 1, fingers=[0.75])
 
-    # Feathers: identical except the outermost one is slightly lighter so
-    # the wing silhouette reads with depth.
-    paint_feather(data, 0, 38, 6, 1.0)
-    paint_feather(data, 6, 38, 6, 0.96)
-    paint_feather(data, 12, 38, 6, 0.92)
-    paint_feather(data, 18, 38, 5, 1.06)
+    # Bat fingers / membrane - serrated lower edges, black frame, red glow
+    paint_feather_demon(data, 0, 38, 6, 1.0)
+    paint_feather_demon(data, 6, 38, 6, 0.96)
+    paint_feather_demon(data, 12, 38, 6, 0.92)
+    paint_feather_demon(data, 18, 38, 5, 1.06)
 
     return data
 
-
-# ---------------------------------------------------------------------------
-# Minimal PNG encoder (RGBA8, no external deps).
-# ---------------------------------------------------------------------------
 
 def write_png(path: Path, width: int, height: int, rgba: bytes) -> None:
     def chunk(kind: bytes, payload: bytes) -> bytes:
@@ -615,7 +703,7 @@ def write_png(path: Path, width: int, height: int, rgba: bytes) -> None:
     raw = bytearray()
     stride = width * 4
     for y in range(height):
-        raw.append(0)  # filter type: none
+        raw.append(0)
         raw.extend(rgba[y * stride:(y + 1) * stride])
 
     payload = (b"\x89PNG\r\n\x1a\n"
@@ -624,10 +712,6 @@ def write_png(path: Path, width: int, height: int, rgba: bytes) -> None:
                + chunk(b"IEND", b""))
     path.write_bytes(payload)
 
-
-# ---------------------------------------------------------------------------
-# C++ header embedding.
-# ---------------------------------------------------------------------------
 
 def cpp_bytes_array(data: bytes, per_line: int = 16) -> list[str]:
     lines: list[str] = []
@@ -638,8 +722,7 @@ def cpp_bytes_array(data: bytes, per_line: int = 16) -> list[str]:
 
 
 def cpp_color(name: str, c: tuple[int, int, int]) -> str:
-    return ("inline constexpr unsigned char " + name + "[3] = { "
-            + str(c[0]) + ", " + str(c[1]) + ", " + str(c[2]) + " };")
+    return (f"inline constexpr unsigned char {name}[3] = {{ {c[0]}, {c[1]}, {c[2]} }};")
 
 
 def write_header(path: Path) -> None:
@@ -647,14 +730,14 @@ def write_header(path: Path) -> None:
     lines: list[str] = []
     lines.append("#pragma once")
     lines.append("")
-    lines.append("// Auto-generated by scripts/gen_wings_assets.py - do not edit by hand.")
-    lines.append("// Articulated 3D wings for the Wings module: Bedrock geometry +")
-    lines.append("// wing animations + animation controller + 64x64 RGBA texture.")
+    lines.append("// Auto-generated by scripts/gen_wings_assets.py - Demon Wings edition")
+    lines.append("// Articulated 3D bat/demon wings: black frame #000000, red glowing membrane")
+    lines.append("// Gradient #FF0000/#E60000 -> #800000 with crimson glow aura")
     lines.append("#include <cstddef>")
     lines.append("")
     lines.append("namespace wings_default {")
     lines.append("")
-    lines.append("inline constexpr const char* GeometryIdentifier = \"" + IDENTIFIER + "\";")
+    lines.append(f"inline constexpr const char* GeometryIdentifier = \"{IDENTIFIER}\";")
     lines.append("")
     lines.append("inline constexpr const char* GeometryJson = R\"json(" + GEOMETRY + ")json\";")
     lines.append("")
@@ -662,17 +745,16 @@ def write_header(path: Path) -> None:
     lines.append("")
     lines.append("inline constexpr const char* AnimationControllerJson = R\"json(" + ANIMATION_CONTROLLERS + ")json\";")
     lines.append("")
-    lines.append("// Wing paint palette baked into the texture. The world-space renderer")
-    lines.append("// colours each 3D wing box face with these same values (see wings.cpp),")
-    lines.append("// so the overlay matches what the texture maps onto the geometry.")
+    lines.append("// Demon Wings palette - black bones, red glowing membrane")
+    lines.append("// Matches wings.png 64x64 with black frame and red gradient")
     lines.append(cpp_color("kColorFrame", FRAME))
     lines.append(cpp_color("kColorMembraneOuter", MEMBRANE_OUTER))
     lines.append(cpp_color("kColorMembraneInner", MEMBRANE_INNER))
     lines.append(cpp_color("kColorFeatherTip", FEATHER_TIP))
     lines.append(cpp_color("kColorJointInner", JOINT_INNER))
     lines.append("")
-    lines.append("inline constexpr std::size_t TextureWidth = " + str(TEX_W) + ";")
-    lines.append("inline constexpr std::size_t TextureHeight = " + str(TEX_H) + ";")
+    lines.append(f"inline constexpr std::size_t TextureWidth = {TEX_W};")
+    lines.append(f"inline constexpr std::size_t TextureHeight = {TEX_H};")
     lines.append("")
     lines.append("inline constexpr unsigned char TexturePixels[] = {")
     lines.extend(cpp_bytes_array(bytes(texture)))

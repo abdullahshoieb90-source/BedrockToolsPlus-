@@ -192,12 +192,12 @@ public:
     static constexpr float kGlideDecayRate = 25.0f;       // was 3.0
 
     // Face palette shared with the generated texture (see wings_default.hpp);
-    // the host test cross-checks both copies stay in sync.
-    static constexpr unsigned char kColorFrame[3] = {94, 62, 36};
-    static constexpr unsigned char kColorMembraneOuter[3] = {18, 18, 24};
-    static constexpr unsigned char kColorMembraneInner[3] = {28, 28, 36};
-    static constexpr unsigned char kColorFeatherTip[3] = {46, 46, 60};
-    static constexpr unsigned char kColorJointInner[3] = {76, 52, 32};
+    // Demon Wings edition: black frame #000000, red glowing membrane #FF0000/#E60000 -> #800000
+    static constexpr unsigned char kColorFrame[3] = {0, 0, 0};
+    static constexpr unsigned char kColorMembraneOuter[3] = {230, 0, 0};
+    static constexpr unsigned char kColorMembraneInner[3] = {128, 0, 0};
+    static constexpr unsigned char kColorFeatherTip[3] = {255, 0, 0};
+    static constexpr unsigned char kColorJointInner[3] = {0, 0, 0};
 
 private:
     void applyPatch();
