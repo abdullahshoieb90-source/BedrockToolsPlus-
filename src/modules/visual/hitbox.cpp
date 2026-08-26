@@ -569,7 +569,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         }
     }
 
-    auto renderActor = [&](void* ent) {
+    auto renderActor = [&](void* ent, uint32_t groupColor) {
         AABB aabb = getActorAABB(ent);
         if (aabb.min.x == 0.f && aabb.min.y == 0.f && aabb.min.z == 0.f &&
             aabb.max.x == 0.f && aabb.max.y == 0.f && aabb.max.z == 0.f) return;
@@ -579,7 +579,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         // they belong to the same box.
         if (region && isOccluded(region, camX, camY, camZ, aabb)) return;
 
-        uint32_t boxColor = g_hitboxMod->hitboxColor;
+        uint32_t boxColor = groupColor;
         if (g_hitboxMod->hitboxIndicator) {
             // The indicator is active for the entity currently under the
             // crosshair. Every other nearby entity keeps the default
@@ -636,7 +636,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     };
 
     if (g_hitboxMod->showSelf && isThirdPerson) {
-        renderActor(g_localPlayerPtr);
+        renderActor(g_localPlayerPtr, g_hitboxMod->hitboxColor);
     }
 
     if (actors.begin && actors.end) {
@@ -649,13 +649,19 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
                 isPlayer = s_actorIsPlayer(ent);
             }
 
-            if (isPlayer && !g_hitboxMod->showPlayers) continue;
-
-            if (!isPlayer && (!g_hitboxMod->showEntities || !hasCategory(ent, 2))) continue;
+            uint32_t groupColor = g_hitboxMod->hitboxColor;
+            if (isPlayer) {
+                if (!g_hitboxMod->showPlayers) continue;
+            } else if (hasCategory(ent, bedrocktools::sdk::offsets::ActorCategories::IsMob)) {
+                if (!g_hitboxMod->showEntities) continue;
+            } else {
+                if (!g_hitboxMod->showItems) continue;
+                groupColor = g_hitboxMod->showItemsColor;
+            }
 
             if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
 
-            renderActor(ent);
+            renderActor(ent, groupColor);
         }
     }
 
@@ -753,6 +759,7 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
     showEntities = j.value("showEntities", showEntities);
     showPlayers = j.value("showPlayers", showPlayers);
+    showItems = j.value("showItems", showItems);
     showSelf = j.value("showSelf", showSelf);
     showEyeLine = j.value("showEyeLine", showEyeLine);
     showLookLine = j.value("showLookLine", showLookLine);
@@ -786,6 +793,7 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     };
 
     parseColor("hitboxColor", hitboxColor);
+    parseColor("showItemsColor", showItemsColor);
     parseColor("eyeLineColor", eyeLineColor);
     parseColor("lookLineColor", lookLineColor);
     parseColor("indicatorDefaultColor", indicatorDefaultColor);
@@ -796,6 +804,7 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
     j["showEntities"] = showEntities;
     j["showPlayers"] = showPlayers;
+    j["showItems"] = showItems;
     j["showSelf"] = showSelf;
     j["showEyeLine"] = showEyeLine;
     j["showLookLine"] = showLookLine;
