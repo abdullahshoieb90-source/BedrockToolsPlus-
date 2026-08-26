@@ -1,5 +1,6 @@
 #include "playerhealth.hpp"
 #include "playerhealth_format.hpp"
+#include "selfnametag_patch.hpp"
 
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
@@ -113,7 +114,7 @@ void* findByteDataItemVtable(void* component) {
         const auto type = *reinterpret_cast<const std::uint8_t*>(
             address + bedrocktools::sdk::offsets::DataItem::mType
         );
-        if (type == 0) return *reinterpret_cast<void**>(item);
+        if (type == bedrocktools::sdk::offsets::DataItem::ByteType) return *reinterpret_cast<void**>(item);
     }
 
     return nullptr;
@@ -139,7 +140,7 @@ bool readAlwaysShowItem(void* actor, std::int8_t& value) {
     const auto itemId = *reinterpret_cast<const std::uint16_t*>(
         address + bedrocktools::sdk::offsets::DataItem::mId
     );
-    if (type != 0 || itemId != id) return false;
+    if (type != bedrocktools::sdk::offsets::DataItem::ByteType || itemId != id) return false;
 
     value = *reinterpret_cast<const std::int8_t*>(
         address + bedrocktools::sdk::offsets::DataItem::mValue
@@ -174,7 +175,7 @@ bool writeAlwaysShowItem(void* actor, std::int8_t value) {
         *reinterpret_cast<void**>(item) = vtable;
         *reinterpret_cast<std::uint8_t*>(
             reinterpret_cast<std::uintptr_t>(item) + bedrocktools::sdk::offsets::DataItem::mType
-        ) = 0;
+        ) = bedrocktools::sdk::offsets::DataItem::ByteType;
         *reinterpret_cast<std::uint16_t*>(
             reinterpret_cast<std::uintptr_t>(item) + bedrocktools::sdk::offsets::DataItem::mId
         ) = id;
@@ -188,7 +189,7 @@ bool writeAlwaysShowItem(void* actor, std::int8_t value) {
     const auto itemId = *reinterpret_cast<const std::uint16_t*>(
         address + bedrocktools::sdk::offsets::DataItem::mId
     );
-    if (type != 0 || itemId != id) return false;
+    if (type != bedrocktools::sdk::offsets::DataItem::ByteType || itemId != id) return false;
 
     *reinterpret_cast<std::int8_t*>(
         address + bedrocktools::sdk::offsets::DataItem::mValue
@@ -199,8 +200,10 @@ bool writeAlwaysShowItem(void* actor, std::int8_t value) {
     return true;
 }
 
-// Health is actor data id 1. The item is an int on vanilla-style servers and
-// a float on others, so both layouts are accepted.
+// Health is actor data id 1. Most builds expose it as an int, some servers /
+// protocol bridges send a float, and newer builds may keep it as a short.
+// Accept all numeric layouts so a full-health player is not misread as the
+// tiny fallback value that lives next to the metadata header.
 bool readHealth(void* actor, float& out) {
     void* component = getDataComponent(actor);
     if (!component) return false;
@@ -243,6 +246,12 @@ bool readHealth(void* actor, float& out) {
     );
     if (itemId != id) return false;
 
+    if (type == bedrocktools::sdk::offsets::DataItem::ShortType) {
+        out = static_cast<float>(*reinterpret_cast<const std::int16_t*>(
+            address + bedrocktools::sdk::offsets::DataItem::mValue
+        ));
+        return true;
+    }
     if (type == bedrocktools::sdk::offsets::DataItem::IntType) {
         out = static_cast<float>(*reinterpret_cast<const int*>(
             address + bedrocktools::sdk::offsets::DataItem::mValue
@@ -285,6 +294,7 @@ PlayerHealthModule::PlayerHealthModule()
 }
 
 PlayerHealthModule::~PlayerHealthModule() {
+    releaseSelfNametagPatch();
     if (s_instance == this) s_instance = nullptr;
 }
 
@@ -309,12 +319,17 @@ void PlayerHealthModule::onInit() {
             bedrocktools::memory::SignatureId::ActorSynchedDataUpdateAlwaysShowNameTag
         )
     );
+    bedrocktools::modules::visual::selfnametag_patch::init();
 
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [](auto& event) {
             if (PlayerHealthModule::s_instance) PlayerHealthModule::s_instance->onLocalPlayerTick(event.player);
         }
     );
+}
+
+void PlayerHealthModule::onDisable() {
+    releaseSelfNametagPatch();
 }
 
 void PlayerHealthModule::restoreOne(void* actor, TrackedPlayer& state) {
@@ -337,7 +352,25 @@ void PlayerHealthModule::restoreTracked(const std::vector<void*>& liveActors) {
     m_tracked.clear();
 }
 
+void PlayerHealthModule::updateSelfNametagPatch() {
+    const bool needed = enabled && m_showSelf;
+    if (needed == m_selfNametagPatchActive) return;
+
+    if (needed) {
+        m_selfNametagPatchActive = bedrocktools::modules::visual::selfnametag_patch::acquire();
+    } else {
+        releaseSelfNametagPatch();
+    }
+}
+
+void PlayerHealthModule::releaseSelfNametagPatch() {
+    if (!m_selfNametagPatchActive) return;
+    bedrocktools::modules::visual::selfnametag_patch::release();
+    m_selfNametagPatchActive = false;
+}
+
 void PlayerHealthModule::onLocalPlayerTick(void* localPlayer) {
+    updateSelfNametagPatch();
     if (!localPlayer) return;
     if (!s_getRuntimeActorList || !s_actorIsPlayer || !s_getNameTag || !s_setNameTag) return;
 
@@ -477,6 +510,7 @@ void PlayerHealthModule::loadConfig(const nlohmann::json& j) {
         const int range = j["m_range"].get<int>();
         m_range = std::clamp(range, 0, 180);
     }
+    updateSelfNametagPatch();
 }
 
 void PlayerHealthModule::saveConfig(nlohmann::json& j) {

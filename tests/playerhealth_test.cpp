@@ -10,7 +10,7 @@
 // exactly as include/bedrocktools/sdk/offsets/World.hpp documents it:
 //
 //   * the health line is appended under the name ("Alex\n<line>") and is
-//     refreshed from the synced Health data item (int and float layouts)
+//     refreshed from the synced Health data item (int, float, and short layouts)
 //   * unchanged health does not rewrite the nametag
 //   * a nametag renamed under us becomes the new base name
 //   * players without a synced health item are left untouched
@@ -208,6 +208,12 @@ struct FakeActor {
         healthItem.value = health;
     }
 
+    void useShortHealth(std::int16_t health) {
+        healthItem.type = static_cast<std::uint8_t>(off::DataItem::ShortType);
+        healthItem.value = 0;
+        std::memcpy(&healthItem.value, &health, sizeof(health));
+    }
+
     std::uint8_t itemByte(std::size_t id, std::size_t at) const {
         void* item = items[id];
         if (!item) return 0xFF;
@@ -269,15 +275,17 @@ void moduleTests() {
     g_setNameTagCalls = 0;
     g_alwaysShowUpdateCalls = 0;
 
-    FakeActor local, alex, blair, carl, dana, mob;
+    FakeActor local, alex, blair, evan, carl, dana, mob;
     local.wire("Steve", true, 0, 64, 0, true, false, 20);
     alex.wire("Alex", true, 3, 64, 0, true, false, 17);
     blair.wire("Blair", true, -2, 64, 4, true, true, 7 /* float 7.0 */);
+    evan.wire("Evan", true, 4, 64, 4, true, false, 20);
+    evan.useShortHealth(20);
     carl.wire("Carl", true, 5, 64, 5, false);           // no synced health item
     dana.wire("Dana", true, 6, 64, 6, true, false, 12, true, 1); // server-forced always-show
     mob.wire("Zombie", false, 1, 64, 1, true, false, 20);
 
-    g_actors = {local.ptr(), alex.ptr(), blair.ptr(), carl.ptr(), dana.ptr(), mob.ptr()};
+    g_actors = {local.ptr(), alex.ptr(), blair.ptr(), evan.ptr(), carl.ptr(), dana.ptr(), mob.ptr()};
 
     PlayerHealthModule mod;
     mod.onInit();
@@ -287,6 +295,7 @@ void moduleTests() {
     std::string expectedAlex = std::string("Alex\n") + ph::composeHearts(17.0f, 20.0f);
     check(g_names[alex.ptr()] == expectedAlex, "Alex gets the health line under the name");
     check(g_names[blair.ptr()] == "Blair\n" + ph::composeHearts(7.0f, 20.0f), "Blair reads the float health item");
+    check(g_names[evan.ptr()] == "Evan\n" + ph::composeHearts(20.0f, 20.0f), "Evan reads the short health item as full health");
     check(g_names[carl.ptr()] == "Carl", "Carl (no health item) is untouched");
     check(g_names[mob.ptr()] == "Zombie", "non-player actors are untouched");
     check(g_names[local.ptr()] == "Steve", "local player skipped by default (Show Self off)");
@@ -353,6 +362,7 @@ void moduleTests() {
     runTicks(mod, local, 1);
     check(g_names[alex.ptr()] == "Renamed", "Alex restored on disable");
     check(g_names[blair.ptr()] == "Blair", "Blair restored on disable");
+    check(g_names[evan.ptr()] == "Evan", "Evan restored on disable");
     check(g_names[carl.ptr()] == "Carl", "Carl was never touched");
     check(g_names[dana.ptr()] == "Dana", "Dana restored on disable");
     check(g_names[local.ptr()] == "Steve", "local player still clean");
