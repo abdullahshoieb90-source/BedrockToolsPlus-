@@ -30,6 +30,7 @@
 #include "visual/chunkborder.hpp"
 #include "visual/blockoutline.hpp"
 #include "visual/hitbox.hpp"
+#include "visual/entityesp.hpp"
 #include "visual/zoom.hpp"
 #include "visual/breadcrumbs.hpp"
 #include "visual/lightoverlay.hpp"
@@ -128,6 +129,7 @@ void registerAllModules() {
     registry.emplace<ChunkBorderModule>();
     registry.emplace<BlockOutlineModule>();
     registry.emplace<HitboxModule>();
+    registry.emplace<EntityESPModule>();
     registry.emplace<ZoomModule>();
     registry.emplace<BreadcrumbsModule>();
     registry.emplace<SkinStealerModule>();
