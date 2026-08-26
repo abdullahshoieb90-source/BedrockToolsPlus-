@@ -112,83 +112,92 @@ inline constexpr unsigned char kRedBatJointInner[3]    = {0, 0, 0};
 // z stays >= 2.5 (the torso back surface is z = +2) so nothing clips the body.
 // ---------------------------------------------------------------------------
 
-// Dragon: articulated membrane wing. The fingers fan open and curl back so
-// the membrane reads as a wing surface instead of a flat comb.
+// Dragon: articulated bat/dragon membrane wing. A two-bone forearm (upper +
+// tip) forms the leading edge; four wide, overlapping membrane panels fan
+// out from anchor points along that arm so the trailing edge reads as one
+// continuous sail instead of thin disconnected blades - a real wing shape.
 inline constexpr WingBone kDragonRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kDragonMembraneOuter, kDragonJointInner,    kDragonFrame, kDragonFrame,      0},
-    { 0, -2.0f,  0.0f, -6.0f, -1.5f, 6.0f, 3.0f, 3.0f, 4.0f,   0.0f, 0.5f, 1.0f, 0.30f, 1.00f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFrame,      1},
-    { 1, -6.0f,  0.0f, -5.0f, -1.0f, 5.0f, 2.0f, 3.0f, 4.0f,  -5.0f, 1.0f, 1.0f, 0.70f, 1.04f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFrame,      2},
-    { 1, -2.0f, -1.5f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,   5.0f, 0.5f, 1.0f, 0.50f, 1.00f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 3},
-    { 1, -4.5f, -1.5f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,  11.0f, 1.0f, 1.2f, 0.62f, 0.93f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 4},
-    { 2, -1.5f, -1.0f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,  16.0f, 1.5f, 1.2f, 0.85f, 1.00f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 5},
-    { 2, -4.0f, -1.0f, -1.0f, -5.0f, 2.0f, 5.0f, 3.0f, 4.0f,  22.0f, 2.0f, 1.4f, 1.00f, 0.93f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kDragonMembraneInner, kDragonJointInner, kDragonFrame, kDragonFrame, 0},
+    { 0,  -2.00f,   0.00f,  -7.50f,  -1.70f,  7.50f,  3.40f, 3.00f, 4.00f,    0.00f, 0.60f, 0.60f, 0.20f, 1.00f, kDragonFrame, kDragonFrame, kDragonFrame, kDragonFrame, 1},
+    { 1,  -7.50f,   0.00f,  -6.00f,  -1.40f,  6.00f,  2.80f, 3.00f, 4.00f,   -6.00f, 1.00f, 0.70f, 0.55f, 1.02f, kDragonFrame, kDragonFrame, kDragonFrame, kDragonFrame, 2},
+    { 1,  -2.40f,  -1.70f,  -2.30f,  -6.50f,  4.60f,  6.50f, 3.00f, 4.00f,    7.00f, 0.60f, 1.40f, 0.42f, 1.00f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 3},
+    { 1,  -6.45f,  -1.70f,  -2.30f,  -7.80f,  4.60f,  7.80f, 3.00f, 4.00f,   14.00f, 1.00f, 1.40f, 0.66f, 0.97f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 4},
+    { 2,  -1.80f,  -1.40f,  -2.30f,  -7.00f,  4.60f,  7.00f, 3.00f, 4.00f,   18.00f, 1.30f, 1.40f, 0.85f, 1.03f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 5},
+    { 2,  -5.04f,  -1.40f,  -2.30f,  -8.20f,  4.60f,  8.20f, 3.00f, 4.00f,   26.00f, 1.70f, 1.40f, 1.00f, 0.95f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 6},
 };
 
-// Angel: long white feathers fanned wide off a thin arm.
+// Angel: long white primary feathers fanned wide off a slim arm, like a
+// bird's covert + primary layout: a short wrist bone splits the arm in two
+// and four broad, overlapping quills fan out from it, longest in the middle
+// of the fan and tapering to soft points at the ends.
 inline constexpr WingBone kAngelRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kAngelFrame,         kAngelJointInner,    kAngelFrame, kAngelFrame,         0},
-    { 0, -2.0f,  0.0f, -7.0f, -0.5f, 7.0f, 1.0f, 3.0f, 4.0f,   0.0f, 0.5f, 0.4f, 0.25f, 1.00f, kAngelFrame,         kAngelFrame,         kAngelFrame, kAngelFrame,         1},
-    { 1, -7.0f,  0.0f, -1.0f, -5.0f, 2.0f, 6.0f, 3.0f, 4.0f,   3.0f, 0.8f, 1.4f, 0.75f, 1.00f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip,    2},
-    { 1, -6.0f, -1.0f, -1.0f, -6.0f, 2.0f, 7.0f, 3.0f, 4.0f,   5.0f, 1.0f, 1.4f, 0.80f, 0.95f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip,    3},
-    { 1, -5.0f, -2.0f, -1.0f, -7.0f, 2.0f, 8.0f, 3.0f, 4.0f,   9.0f, 1.3f, 1.5f, 0.90f, 1.00f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip,    4},
-    { 1, -4.0f, -2.5f, -1.0f, -7.5f, 2.0f, 8.5f, 3.0f, 4.0f,  13.0f, 1.6f, 1.5f, 0.95f, 0.95f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip,    5},
-    { 1, -2.5f, -2.5f, -1.0f, -7.0f, 2.0f, 8.0f, 3.0f, 4.0f,  17.0f, 1.9f, 1.5f, 1.00f, 1.00f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip,    6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kAngelMembraneInner, kAngelJointInner, kAngelFrame, kAngelFrame, 0},
+    { 0,  -2.00f,   0.00f,  -7.00f,  -0.80f,  7.00f,  1.60f, 3.00f, 4.00f,    0.00f, 0.50f, 0.50f, 0.18f, 1.00f, kAngelFrame, kAngelFrame, kAngelFrame, kAngelFrame, 1},
+    { 1,  -7.00f,   0.00f,  -4.34f,  -0.52f,  4.34f,  1.04f, 3.00f, 4.00f,    3.60f, 0.65f, 0.40f, 0.55f, 1.02f, kAngelFrame, kAngelFrame, kAngelFrame, kAngelFrame, 2},
+    { 1,  -2.10f,  -0.80f,  -1.70f,  -7.50f,  3.40f,  7.50f, 3.00f, 4.00f,    4.00f, 0.80f, 2.40f, 0.45f, 1.00f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 3},
+    { 1,  -5.60f,  -0.80f,  -1.70f,  -9.00f,  3.40f,  9.00f, 3.00f, 4.00f,    9.00f, 1.20f, 2.40f, 0.68f, 0.97f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 4},
+    { 2,  -1.30f,  -0.52f,  -1.70f,  -8.50f,  3.40f,  8.50f, 3.00f, 4.00f,   14.00f, 1.50f, 2.40f, 0.88f, 1.03f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 5},
+    { 2,  -3.56f,  -0.52f,  -1.70f,  -7.50f,  3.40f,  7.50f, 3.00f, 4.00f,   20.00f, 1.70f, 2.40f, 1.00f, 0.95f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 6},
 };
 
-// Demon: updated to match Demon Wings spec - membranous bat/dragon, black bones,
-// red glowing membrane, serrated lower edge, slight downward angle from back
+// Demon: bat/dragon membrane wing sharing Dragon's proportions but with the
+// Demon Wings palette - black frame, red glowing membrane.
 inline constexpr WingBone kDemonRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kDemonFrame,         kDemonJointInner,    kDemonFrame, kDemonFrame,         0},
-    { 0, -2.0f,  0.0f, -7.0f, -1.5f, 7.0f, 3.0f, 3.0f, 4.0f, -10.0f, 0.6f, 0.8f, 0.25f, 1.00f, kDemonFrame,         kDemonFrame,         kDemonFrame, kDemonFrame,         1},
-    { 1, -6.0f,  0.0f, -6.0f, -6.0f, 8.0f, 7.0f, 3.0f, 4.0f,  -6.0f, 1.2f, 1.5f, 0.52f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFrame,         2},
-    { 1, -2.0f, -1.5f, -1.0f, -7.0f, 2.0f, 8.0f, 3.0f, 4.0f,   7.0f, 1.3f, 1.4f, 0.70f, 0.94f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    3},
-    { 2, -2.0f, -6.0f, -1.0f, -6.0f, 2.0f, 7.0f, 3.0f, 4.0f,  16.0f, 1.7f, 1.4f, 0.90f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    4},
-    { 1, -3.0f,  1.5f, -1.0f, -1.0f, 2.0f, 4.0f, 3.0f, 4.0f, -10.0f, 0.9f, 1.0f, 0.42f, 1.05f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    5},
-    { 2, -7.0f,  0.0f, -3.0f, -0.5f, 3.0f, 1.5f, 3.0f, 4.0f,   6.0f, 2.2f, 0.9f, 1.00f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kDemonMembraneInner, kDemonJointInner, kDemonFrame, kDemonFrame, 0},
+    { 0,  -2.00f,   0.00f,  -7.50f,  -1.70f,  7.50f,  3.40f, 3.00f, 4.00f,   -8.00f, 0.60f, 0.60f, 0.20f, 1.00f, kDemonFrame, kDemonFrame, kDemonFrame, kDemonFrame, 1},
+    { 1,  -7.50f,   0.00f,  -6.00f,  -1.40f,  6.00f,  2.80f, 3.00f, 4.00f,   -6.00f, 1.00f, 0.70f, 0.55f, 1.02f, kDemonFrame, kDemonFrame, kDemonFrame, kDemonFrame, 2},
+    { 1,  -2.40f,  -1.70f,  -2.30f,  -6.50f,  4.60f,  6.50f, 3.00f, 4.00f,    7.00f, 0.60f, 1.40f, 0.42f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 3},
+    { 1,  -6.45f,  -1.70f,  -2.30f,  -7.80f,  4.60f,  7.80f, 3.00f, 4.00f,   14.00f, 1.00f, 1.40f, 0.66f, 0.97f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 4},
+    { 2,  -1.80f,  -1.40f,  -2.30f,  -7.00f,  4.60f,  7.00f, 3.00f, 4.00f,   18.00f, 1.30f, 1.40f, 0.85f, 1.03f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 5},
+    { 2,  -5.04f,  -1.40f,  -2.30f,  -8.20f,  4.60f,  8.20f, 3.00f, 4.00f,   26.00f, 1.70f, 1.40f, 1.00f, 0.95f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 6},
 };
 
-// Bat: small membrane, barely tapered, fingers only slightly fanned.
+// Bat: small membrane wing, same shape language as Dragon but scaled down.
 inline constexpr WingBone kBatRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kBatFrame,         kBatJointInner,    kBatFrame, kBatFrame,         0},
-    { 0, -2.0f,  0.0f, -5.0f, -1.0f, 5.0f, 2.0f, 3.0f, 4.0f,   0.0f, 0.4f, 0.6f, 0.25f, 1.00f, kBatFrame,         kBatFrame,         kBatFrame, kBatFrame,         1},
-    { 1, -4.0f, -1.0f, -3.0f, -4.0f, 7.0f, 5.0f, 3.0f, 4.0f,   2.0f, 0.8f, 1.2f, 0.55f, 1.00f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFrame,         2},
-    { 2, -3.0f, -4.0f, -1.0f, -2.0f, 2.0f, 3.0f, 3.0f, 4.0f,   6.0f, 1.0f, 0.8f, 0.72f, 0.94f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip,    3},
-    { 2, -5.0f, -3.0f, -1.0f, -2.0f, 2.0f, 3.0f, 3.0f, 4.0f,  12.0f, 1.2f, 0.8f, 0.88f, 1.00f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip,    4},
-    { 2, -4.0f,  1.0f, -1.0f, -1.0f, 2.0f, 3.0f, 3.0f, 4.0f,  -6.0f, 0.6f, 0.6f, 0.50f, 1.00f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip,    5},
-    { 2, -6.0f,  0.0f, -2.0f, -0.5f, 2.0f, 1.0f, 3.0f, 4.0f,   3.0f, 1.4f, 0.6f, 1.00f, 1.00f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFrame,         6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kBatMembraneInner, kBatJointInner, kBatFrame, kBatFrame, 0},
+    { 0,  -2.00f,   0.00f,  -5.20f,  -1.20f,  5.20f,  2.40f, 3.00f, 4.00f,   -6.00f, 0.40f, 0.50f, 0.20f, 1.00f, kBatFrame, kBatFrame, kBatFrame, kBatFrame, 1},
+    { 1,  -5.20f,   0.00f,  -4.20f,  -1.00f,  4.20f,  2.00f, 3.00f, 4.00f,   -5.00f, 0.70f, 0.60f, 0.55f, 1.02f, kBatFrame, kBatFrame, kBatFrame, kBatFrame, 2},
+    { 1,  -1.66f,  -1.20f,  -1.60f,  -4.50f,  3.20f,  4.50f, 3.00f, 4.00f,    6.00f, 0.40f, 1.10f, 0.42f, 1.00f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 3},
+    { 1,  -4.47f,  -1.20f,  -1.60f,  -5.40f,  3.20f,  5.40f, 3.00f, 4.00f,   12.00f, 0.70f, 1.10f, 0.66f, 0.97f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 4},
+    { 2,  -1.26f,  -1.00f,  -1.60f,  -4.80f,  3.20f,  4.80f, 3.00f, 4.00f,   16.00f, 0.90f, 1.10f, 0.85f, 1.03f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 5},
+    { 2,  -3.53f,  -1.00f,  -1.60f,  -5.60f,  3.20f,  5.60f, 3.00f, 4.00f,   22.00f, 1.20f, 1.10f, 1.00f, 0.95f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 6},
 };
 
-// Butterfly: two broad rounded panels, barely tapered, with accent spots.
+// Butterfly: two broad, overlapping rounded lobes (forewing above, hindwing
+// below) sharing the shoulder pivot like real lepidoptera wings, plus two
+// small accent tip lobes for the eye-spot highlight.
 inline constexpr WingBone kButterflyRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kButterflyFrame,         kButterflyJointInner,    kButterflyFrame, kButterflyFrame,         0},
-    { 0, -2.0f,  0.0f, -5.0f, -0.5f, 5.0f, 1.0f, 3.0f, 4.0f,   0.0f, 0.4f, 0.4f, 0.20f, 1.00f, kButterflyFrame,         kButterflyFrame,         kButterflyFrame, kButterflyFrame,         1},
-    { 1, -3.0f,  0.0f, -3.0f,  0.0f, 6.0f, 6.0f, 3.0f, 4.0f,   6.0f, 0.8f, 0.8f, 0.60f, 1.00f, kButterflyMembraneOuter, kButterflyMembraneInner, kButterflyFrame, kButterflyFrame,         2},
-    { 1, -3.0f,  0.0f, -2.0f, -6.0f, 5.0f, 6.0f, 3.0f, 4.0f,  -6.0f, 0.8f, 0.8f, 0.60f, 0.96f, kButterflyMembraneOuter, kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip,    3},
-    { 2, -3.0f,  5.0f, -2.0f, -1.0f, 5.0f, 2.0f, 3.0f, 4.0f,   4.0f, 1.0f, 0.6f, 0.90f, 1.00f, kButterflyFeatherTip,    kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip,    4},
-    { 3, -3.0f, -5.0f, -2.0f, -1.0f, 5.0f, 2.0f, 3.0f, 4.0f,  -4.0f, 1.0f, 0.6f, 0.90f, 1.00f, kButterflyFeatherTip,    kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip,    5},
-    { 1, -2.0f, -0.5f, -1.0f, -3.0f, 2.0f, 6.0f, 3.0f, 4.0f,   0.0f, 1.2f, 0.6f, 0.75f, 1.04f, kButterflyFrame,         kButterflyFrame,         kButterflyFrame, kButterflyFrame,         6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kButterflyMembraneInner, kButterflyJointInner, kButterflyFrame, kButterflyFrame, 0},
+    { 0,  -2.00f,   0.00f,  -5.00f,  -0.60f,  5.00f,  1.20f, 3.00f, 4.00f,    0.00f, 0.40f, 0.40f, 0.18f, 1.00f, kButterflyFrame, kButterflyFrame, kButterflyFrame, kButterflyFrame, 1},
+    { 1,  -5.00f,   0.00f,  -2.60f,  -0.40f,  2.60f,  0.80f, 3.00f, 4.00f,    8.00f, 0.60f, 0.40f, 0.55f, 1.02f, kButterflyFrame, kButterflyFrame, kButterflyFrame, kButterflyFrame, 2},
+    { 1,  -1.60f,  -0.60f,  -3.40f,  -8.00f,  6.80f,  8.00f, 3.00f, 4.00f,    8.00f, 0.90f, 2.60f, 0.45f, 1.00f, kButterflyMembraneOuter, kButterflyMembraneInner, kButterflyFrame, kButterflyFrame, 3},
+    { 1,  -4.20f,  -0.60f,  -3.00f,   0.00f,  6.00f,  7.00f, 3.00f, 4.00f,  -10.00f, 1.10f, 2.60f, 0.62f, 0.97f, kButterflyMembraneOuter, kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 4},
+    { 2,  -1.50f,  -0.40f,  -2.20f,  -3.40f,  4.40f,  3.40f, 3.00f, 4.00f,    4.00f, 1.20f, 1.60f, 0.90f, 1.00f, kButterflyFeatherTip,    kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 5},
+    { 4,  -3.00f,   3.50f,  -1.60f,  -2.60f,  3.20f,  2.60f, 3.00f, 4.00f,    6.00f, 1.30f, 1.20f, 0.95f, 1.04f, kButterflyFeatherTip,    kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 6},
 };
 
-// Phoenix: long flowing feathers, strongly fanned and swept back.
+// Phoenix: long flowing fiery feathers off a wrist-split arm, strongly
+// fanned and swept back like a bird's spread primaries.
 inline constexpr WingBone kPhoenixRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kPhoenixFrame,         kPhoenixJointInner,    kPhoenixFrame, kPhoenixFrame,         0},
-    { 0, -2.0f,  0.0f, -7.0f, -1.5f, 7.0f, 3.0f, 3.0f, 4.0f,   0.0f, 0.6f, 1.0f, 0.28f, 1.00f, kPhoenixFrame,         kPhoenixFrame,         kPhoenixFrame, kPhoenixFrame,         1},
-    { 1, -6.0f, -1.5f, -3.0f, -6.0f, 6.0f, 8.0f, 3.0f, 4.0f,   3.0f, 1.2f, 1.8f, 0.55f, 1.00f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFrame,         2},
-    { 1, -3.0f, -2.0f, -1.0f, -8.0f, 2.0f, 9.0f, 3.0f, 4.0f,   7.0f, 1.5f, 1.5f, 0.75f, 0.95f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip,    3},
-    { 1, -5.0f, -2.5f, -1.0f, -7.0f, 2.0f, 8.0f, 3.0f, 4.0f,  13.0f, 1.8f, 1.5f, 0.90f, 1.00f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip,    4},
-    { 1, -4.0f,  1.5f, -1.0f, -1.0f, 2.0f, 5.0f, 3.0f, 4.0f,  -9.0f, 1.0f, 1.2f, 0.50f, 1.04f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip,    5},
-    { 1, -7.0f,  0.0f, -3.0f, -0.5f, 3.0f, 1.5f, 3.0f, 4.0f,   5.0f, 2.2f, 1.0f, 1.00f, 1.00f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFrame,         6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kPhoenixMembraneInner, kPhoenixJointInner, kPhoenixFrame, kPhoenixFrame, 0},
+    { 0,  -2.00f,   0.00f,  -7.50f,  -1.50f,  7.50f,  3.00f, 3.00f, 4.00f,    0.00f, 1.00f, 0.50f, 0.18f, 1.00f, kPhoenixFrame, kPhoenixFrame, kPhoenixFrame, kPhoenixFrame, 1},
+    { 1,  -7.50f,   0.00f,  -4.65f,  -0.98f,  4.65f,  1.95f, 3.00f, 4.00f,    5.20f, 1.30f, 0.40f, 0.55f, 1.02f, kPhoenixFrame, kPhoenixFrame, kPhoenixFrame, kPhoenixFrame, 2},
+    { 1,  -2.25f,  -1.50f,  -1.90f,  -8.00f,  3.80f,  8.00f, 3.00f, 4.00f,    6.00f, 1.00f, 2.60f, 0.45f, 1.00f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 3},
+    { 1,  -6.00f,  -1.50f,  -1.90f,  -9.50f,  3.80f,  9.50f, 3.00f, 4.00f,   13.00f, 1.40f, 2.60f, 0.68f, 0.97f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 4},
+    { 2,  -1.40f,  -0.98f,  -1.90f,  -9.00f,  3.80f,  9.00f, 3.00f, 4.00f,   19.00f, 1.70f, 2.60f, 0.88f, 1.03f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 5},
+    { 2,  -3.81f,  -0.98f,  -1.90f,  -8.00f,  3.80f,  8.00f, 3.00f, 4.00f,   27.00f, 2.00f, 2.60f, 1.00f, 0.95f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 6},
 };
 
-// Fairy: small wings, softly tapered, almost no sweep.
+// Fairy: small, dainty feather wings - same fan language as Angel, scaled
+// down and with a lighter taper.
 inline constexpr WingBone kFairyRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kFairyFrame,         kFairyJointInner,    kFairyFrame, kFairyFrame,         0},
-    { 0, -2.0f,  0.0f, -4.0f, -0.5f, 4.0f, 1.0f, 3.0f, 4.0f,   0.0f, 0.3f, 0.4f, 0.20f, 1.00f, kFairyFrame,         kFairyFrame,         kFairyFrame, kFairyFrame,         1},
-    { 1, -3.0f,  0.0f, -2.0f,  0.0f, 5.0f, 4.0f, 3.0f, 4.0f,   7.0f, 0.6f, 0.8f, 0.60f, 1.00f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFrame,         2},
-    { 1, -2.5f,  0.0f, -2.0f, -5.0f, 4.0f, 5.0f, 3.0f, 4.0f,  -7.0f, 0.6f, 0.8f, 0.60f, 0.96f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFeatherTip,    3},
-    { 2, -3.0f,  3.0f, -1.0f, -1.0f, 2.0f, 2.0f, 3.0f, 4.0f,   5.0f, 0.8f, 0.5f, 0.88f, 1.00f, kFairyFeatherTip,    kFairyMembraneInner, kFairyFrame, kFairyFeatherTip,    4},
-    { 3, -3.0f, -4.0f, -1.0f, -1.0f, 2.0f, 2.0f, 3.0f, 4.0f,  -5.0f, 0.8f, 0.5f, 0.88f, 1.00f, kFairyFeatherTip,    kFairyMembraneInner, kFairyFrame, kFairyFeatherTip,    5},
-    { 1, -3.5f,  0.5f, -1.0f, -1.0f, 2.0f, 2.0f, 3.0f, 4.0f,   0.0f, 1.0f, 0.5f, 0.75f, 1.04f, kFairyFeatherTip,    kFairyMembraneInner, kFairyFrame, kFairyFeatherTip,    6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kFairyMembraneInner, kFairyJointInner, kFairyFrame, kFairyFrame, 0},
+    { 0,  -2.00f,   0.00f,  -4.20f,  -0.60f,  4.20f,  1.20f, 3.00f, 4.00f,    0.00f, 0.30f, 0.50f, 0.18f, 1.00f, kFairyFrame, kFairyFrame, kFairyFrame, kFairyFrame, 1},
+    { 1,  -4.20f,   0.00f,  -2.60f,  -0.39f,  2.60f,  0.78f, 3.00f, 4.00f,    4.00f, 0.39f, 0.40f, 0.55f, 1.02f, kFairyFrame, kFairyFrame, kFairyFrame, kFairyFrame, 2},
+    { 1,  -1.26f,  -0.60f,  -1.20f,  -4.50f,  2.40f,  4.50f, 3.00f, 4.00f,    5.00f, 0.50f, 1.60f, 0.45f, 1.00f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 3},
+    { 1,  -3.36f,  -0.60f,  -1.20f,  -5.40f,  2.40f,  5.40f, 3.00f, 4.00f,   10.00f, 0.70f, 1.60f, 0.68f, 0.97f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 4},
+    { 2,  -0.78f,  -0.39f,  -1.20f,  -5.00f,  2.40f,  5.00f, 3.00f, 4.00f,   15.00f, 0.90f, 1.60f, 0.88f, 1.03f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 5},
+    { 2,  -2.14f,  -0.39f,  -1.20f,  -4.40f,  2.40f,  4.40f, 3.00f, 4.00f,   20.00f, 1.00f, 1.60f, 1.00f, 0.95f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 6},
 };
 
 // ---------------------------------------------------------------------------
@@ -200,42 +209,36 @@ inline constexpr WingBone kFairyRightBones[7] = {
 // with crimson glow aura between black separators.
 // ---------------------------------------------------------------------------
 inline constexpr WingBone kDemonWingsRightBones[7] = {
-    // shoulder joint - anchor at back
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsJointInner, kDemonWingsFrame, kDemonWingsFrame, 0},
-    // upper arm - long, slight downward angle -12 deg, black frame
-    { 0, -2.0f,  0.0f, -7.5f, -1.5f, 7.5f, 3.0f, 3.0f, 4.0f, -12.0f, 0.6f, 0.8f, 0.25f, 1.00f, kDemonWingsFrame,         kDemonWingsFrame,      kDemonWingsFrame, kDemonWingsFrame, 1},
-    // main membrane panel - broad, webbed, serrated pattern base
-    { 1, -6.0f,  0.0f, -6.5f, -6.0f, 8.5f, 7.0f, 3.0f, 4.0f,  -6.0f, 1.2f, 1.5f, 0.52f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFrame, 2},
-    // finger 1 - long, creates first serrated wave, 7 deg fan
-    { 1, -2.0f, -1.5f, -1.0f, -7.5f, 2.0f, 8.5f, 3.0f, 4.0f,   7.0f, 1.3f, 1.4f, 0.70f, 0.94f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 3},
-    // finger 2 - longer, second wave, 16 deg, most serrated
-    { 2, -2.0f, -6.0f, -1.0f, -6.5f, 2.0f, 7.5f, 3.0f, 4.0f,  16.0f, 1.7f, 1.4f, 0.90f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 4},
-    // finger 3 - upper edge, shorter, -10 deg downward, creates top web
-    { 1, -3.0f,  1.5f, -1.0f, -1.0f, 2.0f, 4.0f, 3.0f, 4.0f, -10.0f, 0.9f, 1.0f, 0.42f, 1.05f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 5},
-    // finger 4 - tip, small, creates serrated tip edge
-    { 2, -7.0f,  0.0f, -3.0f, -0.5f, 3.0f, 1.5f, 3.0f, 4.0f,   6.0f, 2.2f, 0.9f, 1.00f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kDemonWingsMembraneInner, kDemonWingsJointInner, kDemonWingsFrame, kDemonWingsFrame, 0},
+    { 0,  -2.00f,   0.00f,  -8.00f,  -1.80f,  8.00f,  3.60f, 3.00f, 4.00f,  -10.00f, 0.60f, 0.60f, 0.20f, 1.00f, kDemonWingsFrame, kDemonWingsFrame, kDemonWingsFrame, kDemonWingsFrame, 1},
+    { 1,  -8.00f,   0.00f,  -6.40f,  -1.50f,  6.40f,  3.00f, 3.00f, 4.00f,   -6.00f, 1.00f, 0.70f, 0.55f, 1.02f, kDemonWingsFrame, kDemonWingsFrame, kDemonWingsFrame, kDemonWingsFrame, 2},
+    { 1,  -2.56f,  -1.80f,  -2.50f,  -7.00f,  5.00f,  7.00f, 3.00f, 4.00f,    7.00f, 0.60f, 1.40f, 0.42f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 3},
+    { 1,  -6.88f,  -1.80f,  -2.50f,  -8.40f,  5.00f,  8.40f, 3.00f, 4.00f,   14.00f, 1.00f, 1.40f, 0.66f, 0.97f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 4},
+    { 2,  -1.92f,  -1.50f,  -2.50f,  -7.60f,  5.00f,  7.60f, 3.00f, 4.00f,   18.00f, 1.30f, 1.40f, 0.85f, 1.03f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 5},
+    { 2,  -5.38f,  -1.50f,  -2.50f,  -8.80f,  5.00f,  8.80f, 3.00f, 4.00f,   26.00f, 1.70f, 1.40f, 1.00f, 0.95f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 6},
 };
 
-// Vampire Bat Wings - smaller, darker bat variant with same black/red glow
+// Vampire Bat Wings - smaller, darker bat variant with the same black/red
+// glow membrane silhouette.
 inline constexpr WingBone kVampireRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kVampireFrame,         kVampireJointInner,    kVampireFrame, kVampireFrame,         0},
-    { 0, -2.0f,  0.0f, -5.0f, -1.0f, 5.0f, 2.0f, 3.0f, 4.0f, -10.0f, 0.5f, 0.6f, 0.25f, 1.00f, kVampireFrame,         kVampireFrame,         kVampireFrame, kVampireFrame,         1},
-    { 1, -4.0f, -1.0f, -4.0f, -4.5f, 7.0f, 5.5f, 3.0f, 4.0f,  -5.0f, 1.0f, 1.2f, 0.55f, 1.00f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFrame,         2},
-    { 1, -2.0f, -1.0f, -1.0f, -5.5f, 2.0f, 6.5f, 3.0f, 4.0f,   8.0f, 1.2f, 1.2f, 0.70f, 0.94f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip,    3},
-    { 2, -2.0f, -4.5f, -1.0f, -4.5f, 2.0f, 5.5f, 3.0f, 4.0f,  15.0f, 1.5f, 1.2f, 0.88f, 1.00f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip,    4},
-    { 1, -2.5f,  1.0f, -1.0f, -1.0f, 2.0f, 3.0f, 3.0f, 4.0f,  -8.0f, 0.8f, 0.8f, 0.45f, 1.05f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip,    5},
-    { 2, -6.0f,  0.0f, -2.0f, -0.5f, 2.0f, 1.0f, 3.0f, 4.0f,   4.0f, 2.0f, 0.6f, 1.00f, 1.00f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFrame,         6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kVampireMembraneInner, kVampireJointInner, kVampireFrame, kVampireFrame, 0},
+    { 0,  -2.00f,   0.00f,  -5.60f,  -1.30f,  5.60f,  2.60f, 3.00f, 4.00f,   -9.00f, 0.50f, 0.50f, 0.20f, 1.00f, kVampireFrame, kVampireFrame, kVampireFrame, kVampireFrame, 1},
+    { 1,  -5.60f,   0.00f,  -4.60f,  -1.10f,  4.60f,  2.20f, 3.00f, 4.00f,   -5.50f, 0.80f, 0.60f, 0.55f, 1.02f, kVampireFrame, kVampireFrame, kVampireFrame, kVampireFrame, 2},
+    { 1,  -1.79f,  -1.30f,  -1.80f,  -5.00f,  3.60f,  5.00f, 3.00f, 4.00f,    6.00f, 0.50f, 1.20f, 0.42f, 1.00f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip, 3},
+    { 1,  -4.82f,  -1.30f,  -1.80f,  -5.90f,  3.60f,  5.90f, 3.00f, 4.00f,   12.50f, 0.80f, 1.20f, 0.66f, 0.97f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip, 4},
+    { 2,  -1.38f,  -1.10f,  -1.80f,  -5.30f,  3.60f,  5.30f, 3.00f, 4.00f,   16.50f, 1.00f, 1.20f, 0.85f, 1.03f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip, 5},
+    { 2,  -3.86f,  -1.10f,  -1.80f,  -6.10f,  3.60f,  6.10f, 3.00f, 4.00f,   23.00f, 1.30f, 1.20f, 1.00f, 0.95f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip, 6},
 };
 
-// Red Bat - intense glowing red bat wings, smallest and most serrated
+// Red Bat - intense glowing red bat wings, smallest and most serrated.
 inline constexpr WingBone kRedBatRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kRedBatFrame,         kRedBatJointInner,    kRedBatFrame, kRedBatFrame,         0},
-    { 0, -2.0f,  0.0f, -4.5f, -1.0f, 4.5f, 2.0f, 3.0f, 4.0f, -11.0f, 0.4f, 0.5f, 0.23f, 1.00f, kRedBatFrame,         kRedBatFrame,         kRedBatFrame, kRedBatFrame,         1},
-    { 1, -3.5f, -1.0f, -3.0f, -4.0f, 6.0f, 5.0f, 3.0f, 4.0f,  -6.0f, 0.8f, 1.1f, 0.52f, 1.00f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFrame,         2},
-    { 1, -1.5f, -1.0f, -1.0f, -4.5f, 2.0f, 5.5f, 3.0f, 4.0f,   9.0f, 1.0f, 1.1f, 0.68f, 0.94f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip,    3},
-    { 2, -1.5f, -4.0f, -1.0f, -3.5f, 2.0f, 4.5f, 3.0f, 4.0f,  17.0f, 1.3f, 1.0f, 0.86f, 1.00f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip,    4},
-    { 1, -2.5f,  1.0f, -1.0f, -1.0f, 2.0f, 3.0f, 3.0f, 4.0f,  -9.0f, 0.7f, 0.7f, 0.44f, 1.05f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip,    5},
-    { 2, -5.5f,  0.0f, -2.0f, -0.5f, 2.0f, 1.0f, 3.0f, 4.0f,   5.0f, 1.8f, 0.5f, 1.00f, 1.00f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFrame,         6},
+    {-1,   0.00f,   0.00f,  -1.50f,  -1.50f,  3.00f,  3.00f, 2.50f, 4.50f,    0.00f, 0.00f, 0.00f, 0.00f, 1.00f, kRedBatMembraneInner, kRedBatJointInner, kRedBatFrame, kRedBatFrame, 0},
+    { 0,  -2.00f,   0.00f,  -4.60f,  -1.10f,  4.60f,  2.20f, 3.00f, 4.00f,  -10.00f, 0.40f, 0.50f, 0.20f, 1.00f, kRedBatFrame, kRedBatFrame, kRedBatFrame, kRedBatFrame, 1},
+    { 1,  -4.60f,   0.00f,  -3.80f,  -0.90f,  3.80f,  1.80f, 3.00f, 4.00f,   -5.00f, 0.70f, 0.50f, 0.55f, 1.02f, kRedBatFrame, kRedBatFrame, kRedBatFrame, kRedBatFrame, 2},
+    { 1,  -1.47f,  -1.10f,  -1.50f,  -4.20f,  3.00f,  4.20f, 3.00f, 4.00f,    6.00f, 0.40f, 1.00f, 0.42f, 1.00f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip, 3},
+    { 1,  -3.96f,  -1.10f,  -1.50f,  -5.00f,  3.00f,  5.00f, 3.00f, 4.00f,   12.00f, 0.60f, 1.00f, 0.66f, 0.97f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip, 4},
+    { 2,  -1.14f,  -0.90f,  -1.50f,  -4.40f,  3.00f,  4.40f, 3.00f, 4.00f,   16.00f, 0.80f, 1.00f, 0.85f, 1.03f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip, 5},
+    { 2,  -3.19f,  -0.90f,  -1.50f,  -5.20f,  3.00f,  5.20f, 3.00f, 4.00f,   22.00f, 1.10f, 1.00f, 1.00f, 0.95f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip, 6},
 };
 
 struct WingStyle {
