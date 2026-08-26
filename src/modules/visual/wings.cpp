@@ -2,6 +2,8 @@
 #include <bedrocktools/modules/visual/wings_default.hpp>
 
 #include "modules/ModuleRegistry.hpp"
+#include "modules/visual/wings_shape.hpp"
+#include "modules/visual/wings_styles.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/Types.hpp>
 #include <bedrocktools/events/EventBus.hpp>
@@ -21,6 +23,9 @@
 #include <string>
 #include <system_error>
 #include <mutex>
+
+// Wing shape, styles and shading (pure, host-testable - see wings_shape.hpp).
+namespace wings = bedrocktools::modules::wings;
 
 namespace {
 
@@ -187,10 +192,13 @@ static std::string wingsDirectoryForConfig() {
 // ---------------------------------------------------------------------------
 // Articulated 3D wings.
 //
-// The tables below mirror the bone hierarchy embedded in
-// wings_default::GeometryJson (resources/wings/wings_geometry.json) one to
-// one - same pivots, anchors and cube sizes, in Bedrock pixels (16 px = 1
-// block). Bone chain (per side):
+// The bone tables, the rest-pose fan, the taper and the face shading live in
+// modules/visual/wings_styles.hpp and wings_shape.hpp, so the host tests and
+// tools/wings_preview.cpp build exactly the same wings the game draws. What
+// is left here is the tessellator plumbing: pose each bone, turn its prism
+// into camera-relative vertices and shade every face.
+//
+// Bone chain per side (mirrors wings_default::GeometryJson):
 //
 //   shoulder (root)
 //   +-- upper
@@ -200,15 +208,92 @@ static std::string wingsDirectoryForConfig() {
 //   |       +-- feather_3
 //   |       +-- feather_4
 //
-// Each bone rotates around the Z axis (the player's front-back axis) by the
-// per-bone angles the animation controller produces: positive "raise" lifts
-// the wing tip, right-side bones apply the negated angle (their span runs
-// along -X) and left-side bones apply it directly. Cube z ranges are fixed
-// by geometry and never rotated, so they are stored as absolute JSON z.
+// Every bone rotates inside the wing plane (the model z axis) by the angle
+// the animation controller produced plus its own rest-pose fan. Positive
+// "raise" lifts the wing tip; right-side bones apply the negated angle (their
+// span runs along -x) and left-side bones apply it directly.
 // ---------------------------------------------------------------------------
 
-constexpr float kPxToBlocks = 1.0f / 16.0f;
-constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+// Left-side (spans +x) mirrors of each style's right-side table, generated
+// once at runtime so the two sides can never drift apart.
+static wings::WingBone s_leftBones[wings::kWingStyleCount][wings::kMaxWingBones];
+static bool s_leftBonesReady = false;
+
+static void ensureWingStyleBones() {
+    if (s_leftBonesReady) return;
+    for (int s = 0; s < wings::kWingStyleCount; ++s) {
+        const int n = wings::kWingStyles[s].boneCount;
+        wings::mirrorWingBones(wings::kWingStyles[s].rightBones,
+                               (n > wings::kMaxWingBones) ? wings::kMaxWingBones : n,
+                               s_leftBones[s]);
+    }
+    s_leftBonesReady = true;
+}
+
+static const wings::WingBone* leftBonesFor(int styleIndex) {
+    if (styleIndex < 0 || styleIndex >= wings::kWingStyleCount) styleIndex = 0;
+    ensureWingStyleBones();
+    return s_leftBones[styleIndex];
+}
+
+// One face of one bone prism. Both windings are emitted so back-face culling
+// can never eat a face when the wing folds over itself.
+static void emitFace(void* tess, const float corners[wings::kCornerCount][3], const int ring[4],
+                     const wings::FaceColor& color) {
+    s_tessColor(tess, color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, 1.0f);
+    for (int i = 0; i < 4; ++i) {
+        const float* v = corners[ring[i]];
+        s_tessVertex(tess, v[0], v[1], v[2]);
+    }
+    for (int i = 3; i >= 0; --i) {
+        const float* v = corners[ring[i]];
+        s_tessVertex(tess, v[0], v[1], v[2]);
+    }
+}
+
+static void emitWingBox(void* tess, const wings::WingBone& bone, const wings::Pose2D& pose,
+                        const wings::Vec3& feet, const wings::Vec3& right, const wings::Vec3& forward,
+                        const wings::Vec3& cam) {
+    const wings::WingBox box = wings::buildWingBox(bone, pose);
+
+    // Camera-relative world corners. Bedrock model space faces -z (north), so
+    // the back/cape side is +z: model axes map as x -> -right, y -> up and
+    // z -> -forward. Wing boxes carry positive z (see the bone tables) and so
+    // always land behind the player, never inside the chest.
+    float corners[wings::kCornerCount][3];
+    for (int i = 0; i < wings::kCornerCount; ++i) {
+        const wings::Vec3 p = wings::modelPointToWorld(box.px[i], box.py[i], box.pz[i], feet, right, forward);
+        corners[i][0] = p.x - cam.x;
+        corners[i][1] = p.y - cam.y;
+        corners[i][2] = p.z - cam.z;
+    }
+
+    const unsigned char* faceColors[wings::kFaceCount] = {
+        bone.colInner, bone.colOuter, bone.colEdge, bone.colEdge, bone.colBottom, bone.colEdge,
+    };
+
+    // Flat per-face shading: a soft headlight plus a sky lift (wings_shape.hpp)
+    // times the shoulder-to-tip gradient and the per-bone tint. Without it the
+    // overlay is a flat cut-out - every face of every bone has the same value
+    // and the wings lose all volume.
+    const float tint = wings::spanTint(bone.spanT, bone.tint);
+    for (int f = 0; f < wings::kFaceCount; ++f) {
+        const int* ring = wings::kFaceRings[f];
+
+        wings::Vec3 faceCenter{0.0f, 0.0f, 0.0f};
+        for (int i = 0; i < 4; ++i) {
+            faceCenter = faceCenter + wings::Vec3{corners[ring[i]][0], corners[ring[i]][1], corners[ring[i]][2]};
+        }
+        faceCenter = faceCenter * 0.25f;
+
+        // The corners are already camera relative, so the vector from the face
+        // to the camera is simply the negated center.
+        const wings::Vec3 toCamera = faceCenter * -1.0f;
+        const wings::Vec3 normal = wings::modelDirToWorld(wings::faceNormalModel(f, pose), right, forward);
+        const float brightness = wings::faceBrightness(normal, toCamera, wings::kDefaultLight) * tint;
+        emitFace(tess, corners, ring, wings::shadeFace(faceColors[f], brightness));
+    }
+}
 
 // Camera-inside-AABB tolerance for WingsModule::isThirdPersonCamera. In
 // first-person the camera is inside the player's head (inside the collision
@@ -216,348 +301,21 @@ constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
 // camera is pulled back well outside the box.
 constexpr float kFirstPersonMargin = 0.05f;  // blocks
 
-struct WingCornerPose {
-    float c, s;    // 2D rotation
-    float tx, ty;  // translation to absolute JSON xy (px)
-};
-
-struct WingBoneDef {
-    int parent;                     // bone table index; -1 for the root (shoulder)
-    float anchorX, anchorY;         // pivot offset relative to the parent pivot (px)
-    float boxOX, boxOY;             // cube origin relative to the own pivot (px)
-    float boxSX, boxSY;             // cube size on the wing plane (px)
-    float zMin, zMax;               // cube z range, absolute JSON z (px); the
-                                    // back of the body is at +Z, so the wings
-                                    // live at z >= 2.5, behind the back
-    const unsigned char* colOuter;  // zMax face (faces away from the body)
-    const unsigned char* colInner;  // zMin face (faces the body)
-    const unsigned char* colEdge;   // x faces and the yMax face
-    const unsigned char* colBottom; // yMin face (feather tips get the highlight)
-    int angleIndex;                 // which of the 7 animation angles (0=shoulder,
-                                    // 1=upper, 2=tip, 3..6=feathers) drives this bone
-};
-
-// ---------------------------------------------------------------------------
-// Selectable wing styles.
-//
-// Each style is a right-side bone table (spanning -X from the shoulder root
-// pivot at [-3, 21]); the left-side table is generated at runtime by
-// mirroring it (negate anchorX, mirror boxOX around the pivot) so the two
-// sides always stay in sync. Colors are stored per-style so each shape can
-// carry its own palette.
-// ---------------------------------------------------------------------------
-
-// ---- Dragon (default) palette - reuses the WingsModule constants so the
-// world-space overlay keeps matching the embedded texture. ----
-// (see WingsModule::kColorFrame / kColorMembraneOuter / ... )
-
-// ---- Angel: white feathers with soft gold tips ----
-static constexpr unsigned char kAngelFrame[3]         = { 244, 240, 232 };
-static constexpr unsigned char kAngelMembraneOuter[3] = { 252, 250, 246 };
-static constexpr unsigned char kAngelMembraneInner[3] = { 226, 222, 210 };
-static constexpr unsigned char kAngelFeatherTip[3]    = { 255, 236, 190 };
-static constexpr unsigned char kAngelJointInner[3]    = { 214, 205, 188 };
-
-// ---- Demon: deep red membrane on a near-black frame ----
-static constexpr unsigned char kDemonFrame[3]         = { 42, 12, 12 };
-static constexpr unsigned char kDemonMembraneOuter[3] = { 96, 16, 22 };
-static constexpr unsigned char kDemonMembraneInner[3] = { 150, 26, 32 };
-static constexpr unsigned char kDemonFeatherTip[3]    = { 208, 44, 48 };
-static constexpr unsigned char kDemonJointInner[3]    = { 64, 14, 16 };
-
-// ---- Bat: small, very dark membrane ----
-static constexpr unsigned char kBatFrame[3]         = { 34, 34, 40 };
-static constexpr unsigned char kBatMembraneOuter[3] = { 14, 14, 18 };
-static constexpr unsigned char kBatMembraneInner[3] = { 26, 26, 32 };
-static constexpr unsigned char kBatFeatherTip[3]    = { 20, 20, 26 };
-static constexpr unsigned char kBatJointInner[3]    = { 24, 24, 30 };
-
-// ---- Butterfly: pink/orange panels with blue accents ----
-static constexpr unsigned char kButterflyFrame[3]         = { 96, 44, 148 };
-static constexpr unsigned char kButterflyMembraneOuter[3] = { 250, 118, 178 };
-static constexpr unsigned char kButterflyMembraneInner[3] = { 255, 196, 92 };
-static constexpr unsigned char kButterflyFeatherTip[3]    = { 118, 200, 255 };
-static constexpr unsigned char kButterflyJointInner[3]    = { 150, 82, 192 };
-
-// ---- Phoenix: fiery orange/red with gold highlights ----
-static constexpr unsigned char kPhoenixFrame[3]         = { 176, 92, 22 };
-static constexpr unsigned char kPhoenixMembraneOuter[3] = { 255, 62, 22 };
-static constexpr unsigned char kPhoenixMembraneInner[3] = { 255, 168, 30 };
-static constexpr unsigned char kPhoenixFeatherTip[3]    = { 255, 232, 120 };
-static constexpr unsigned char kPhoenixJointInner[3]    = { 140, 60, 16 };
-
-// ---- Fairy: small translucent cyan/pink wings ----
-static constexpr unsigned char kFairyFrame[3]         = { 120, 222, 210 };
-static constexpr unsigned char kFairyMembraneOuter[3] = { 186, 240, 255 };
-static constexpr unsigned char kFairyMembraneInner[3] = { 244, 202, 255 };
-static constexpr unsigned char kFairyFeatherTip[3]    = { 255, 255, 242 };
-static constexpr unsigned char kFairyJointInner[3]    = { 140, 232, 222 };
-
-// Z coordinates mirror resources/wings/wings_geometry.json: the body spans
-// z in [-2, +2] (Bedrock model space faces -Z, so the cape/back side is
-// +Z). Wing boxes sit at z = [2.5, 4.5] (shoulder joint) and [3.0, 4.0]
-// (membranes/feathers) - fixed directly behind the back with a 0.5 px
-// standoff from the back surface so nothing clips the torso or pokes
-// through the chest/shoulders when the player is seen from the front.
-static const WingBoneDef kDragonRightBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f,  4.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame, 0 },
-    {  0, -2.0f,  0.0f,  -6.0f, -1.5f, 6.0f, 3.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame, 1 },
-    {  1, -6.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame, 2 },
-    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip, 3 },
-    {  1, -4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip, 4 },
-    {  2, -1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip, 5 },
-    {  2, -4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip, 6 },
-};
-
-static const WingBoneDef kAngelRightBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kAngelFrame,         kAngelJointInner,    kAngelFrame, kAngelFrame, 0 },
-    {  0, -2.0f,  0.0f,  -7.0f, -0.5f, 7.0f, 1.0f,  3.0f, 4.0f, kAngelFrame,         kAngelFrame,         kAngelFrame, kAngelFrame, 1 },
-    {  1, -7.0f,  0.0f,  -1.0f, -5.0f, 2.0f, 6.0f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 2 },
-    {  1, -6.0f, -1.0f,  -1.0f, -6.0f, 2.0f, 7.0f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 3 },
-    {  1, -5.0f, -2.0f,  -1.0f, -7.0f, 2.0f, 8.0f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 4 },
-    {  1, -4.0f, -2.5f,  -1.0f, -7.5f, 2.0f, 8.5f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 5 },
-    {  1, -2.5f, -2.5f,  -1.0f, -7.0f, 2.0f, 8.0f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 6 },
-};
-
-static const WingBoneDef kDemonRightBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kDemonFrame,         kDemonJointInner,    kDemonFrame, kDemonFrame, 0 },
-    {  0, -2.0f,  0.0f,  -7.0f, -1.5f, 7.0f, 3.0f,  3.0f, 4.0f, kDemonFrame,         kDemonFrame,         kDemonFrame, kDemonFrame, 1 },
-    {  1, -5.0f, -1.5f,  -4.0f, -6.0f, 8.0f, 7.0f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFrame, 2 },
-    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 7.0f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 3 },
-    {  1, -5.0f, -2.0f,  -1.0f, -5.0f, 2.0f, 6.0f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 4 },
-    {  1, -3.0f,  1.5f,  -1.0f, -1.0f, 2.0f, 4.0f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 5 },
-    {  1, -7.0f,  0.0f,  -3.0f, -0.5f, 3.0f, 1.5f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 6 },
-};
-
-static const WingBoneDef kBatRightBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kBatFrame,         kBatJointInner,    kBatFrame, kBatFrame, 0 },
-    {  0, -2.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f,  3.0f, 4.0f, kBatFrame,         kBatFrame,         kBatFrame, kBatFrame, 1 },
-    {  1, -4.0f, -1.0f,  -3.0f, -4.0f, 7.0f, 5.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFrame, 2 },
-    {  2, -3.0f, -4.0f,  -1.0f, -2.0f, 2.0f, 3.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 3 },
-    {  2, -5.0f, -3.0f,  -1.0f, -2.0f, 2.0f, 3.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 4 },
-    {  2, -4.0f,  1.0f,  -1.0f, -1.0f, 2.0f, 3.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 5 },
-    {  2, -6.0f,  0.0f,  -2.0f, -0.5f, 2.0f, 1.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFrame, 6 },
-};
-
-static const WingBoneDef kButterflyRightBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kButterflyFrame,         kButterflyJointInner,    kButterflyFrame, kButterflyFrame, 0 },
-    {  0, -2.0f,  0.0f,  -5.0f, -0.5f, 5.0f, 1.0f,  3.0f, 4.0f, kButterflyFrame,         kButterflyFrame,         kButterflyFrame, kButterflyFrame, 1 },
-    {  1, -3.0f,  0.0f,  -3.0f,  0.0f, 6.0f, 6.0f,  3.0f, 4.0f, kButterflyMembraneOuter, kButterflyMembraneInner, kButterflyFrame, kButterflyFrame, 2 },
-    {  1, -3.0f,  0.0f,  -2.0f, -6.0f, 5.0f, 6.0f,  3.0f, 4.0f, kButterflyMembraneOuter, kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 3 },
-    {  2, -3.0f,  5.0f,  -2.0f, -1.0f, 5.0f, 2.0f,  3.0f, 4.0f, kButterflyFeatherTip,   kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 4 },
-    {  3, -3.0f, -5.0f,  -2.0f, -1.0f, 5.0f, 2.0f,  3.0f, 4.0f, kButterflyFeatherTip,   kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 5 },
-    {  1, -2.0f, -0.5f,  -1.0f, -3.0f, 2.0f, 6.0f,  3.0f, 4.0f, kButterflyFrame,         kButterflyFrame,         kButterflyFrame, kButterflyFrame, 6 },
-};
-
-static const WingBoneDef kPhoenixRightBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kPhoenixFrame,         kPhoenixJointInner,    kPhoenixFrame, kPhoenixFrame, 0 },
-    {  0, -2.0f,  0.0f,  -7.0f, -1.5f, 7.0f, 3.0f,  3.0f, 4.0f, kPhoenixFrame,         kPhoenixFrame,         kPhoenixFrame, kPhoenixFrame, 1 },
-    {  1, -6.0f, -1.5f,  -3.0f, -6.0f, 6.0f, 8.0f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFrame, 2 },
-    {  1, -3.0f, -2.0f,  -1.0f, -8.0f, 2.0f, 9.0f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 3 },
-    {  1, -5.0f, -2.5f,  -1.0f, -7.0f, 2.0f, 8.0f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 4 },
-    {  1, -4.0f,  1.5f,  -1.0f, -1.0f, 2.0f, 5.0f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 5 },
-    {  1, -7.0f,  0.0f,  -3.0f, -0.5f, 3.0f, 1.5f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFrame, 6 },
-};
-
-static const WingBoneDef kFairyRightBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kFairyFrame,         kFairyJointInner,    kFairyFrame, kFairyFrame, 0 },
-    {  0, -2.0f,  0.0f,  -4.0f, -0.5f, 4.0f, 1.0f,  3.0f, 4.0f, kFairyFrame,         kFairyFrame,         kFairyFrame, kFairyFrame, 1 },
-    {  1, -3.0f,  0.0f,  -2.0f,  0.0f, 5.0f, 4.0f,  3.0f, 4.0f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFrame, 2 },
-    {  1, -2.5f,  0.0f,  -2.0f, -5.0f, 4.0f, 5.0f,  3.0f, 4.0f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 3 },
-    {  2, -3.0f,  3.0f,  -1.0f, -1.0f, 2.0f, 2.0f,  3.0f, 4.0f, kFairyFeatherTip,   kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 4 },
-    {  3, -3.0f, -4.0f,  -1.0f, -1.0f, 2.0f, 2.0f,  3.0f, 4.0f, kFairyFeatherTip,   kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 5 },
-    {  1, -3.5f,  0.5f,  -1.0f, -1.0f, 2.0f, 2.0f,  3.0f, 4.0f, kFairyFeatherTip,   kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 6 },
-};
-
-struct WingStyle {
-    const char* id;          // config id (radio option)
-    const char* label;       // human-readable name (kept for future UI)
-    int boneCount;           // number of bones per side
-    const WingBoneDef* rightBones; // spans -X
-};
-
-static const WingStyle kWingStyleDefs[] = {
-    { "dragon",    "Dragon",    7, kDragonRightBones },
-    { "angel",     "Angel",     7, kAngelRightBones },
-    { "demon",     "Demon",     7, kDemonRightBones },
-    { "bat",       "Bat",       7, kBatRightBones },
-    { "butterfly", "Butterfly", 7, kButterflyRightBones },
-    { "phoenix",   "Phoenix",   7, kPhoenixRightBones },
-    { "fairy",     "Fairy",     7, kFairyRightBones },
-};
-
-static constexpr int kWingStyleCount = static_cast<int>(sizeof(kWingStyleDefs) / sizeof(kWingStyleDefs[0]));
-static constexpr int kMaxWingBones = 16;
-
-// Left-side (spans +X) mirrors of each style's right-side table, generated
-// once at runtime so the two sides can never drift apart.
-static WingBoneDef s_leftBones[kWingStyleCount][kMaxWingBones];
-static bool s_leftBonesReady = false;
-
-static void mirrorWingBones(const WingBoneDef* right, int n, WingBoneDef* out) {
-    for (int i = 0; i < n; ++i) {
-        out[i].parent = right[i].parent;
-        out[i].anchorX = -right[i].anchorX;
-        out[i].anchorY = right[i].anchorY;
-        out[i].boxOX = -(right[i].boxOX + right[i].boxSX);
-        out[i].boxOY = right[i].boxOY;
-        out[i].boxSX = right[i].boxSX;
-        out[i].boxSY = right[i].boxSY;
-        out[i].zMin = right[i].zMin;
-        out[i].zMax = right[i].zMax;
-        out[i].colOuter = right[i].colOuter;
-        out[i].colInner = right[i].colInner;
-        out[i].colEdge = right[i].colEdge;
-        out[i].colBottom = right[i].colBottom;
-        out[i].angleIndex = right[i].angleIndex;
-    }
-}
-
-static void ensureWingStyleBones() {
-    if (s_leftBonesReady) return;
-    for (int s = 0; s < kWingStyleCount; ++s)
-        mirrorWingBones(kWingStyleDefs[s].rightBones, kWingStyleDefs[s].boneCount, s_leftBones[s]);
-    s_leftBonesReady = true;
-}
-
-static const WingBoneDef* leftBonesFor(int styleIndex) {
-    if (styleIndex < 0 || styleIndex >= kWingStyleCount) styleIndex = 0;
-    ensureWingStyleBones();
-    return s_leftBones[styleIndex];
-}
-
-static int wingStyleIndexForId(const std::string& id) {
-    for (int i = 0; i < kWingStyleCount; ++i)
-        if (id == kWingStyleDefs[i].id) return i;
-    return 0; // dragon default
-}
-
-// Serializes the picker value in the launcher's radio format:
-// "<selectedIndex>,<id1>,<id2>,..." (same convention as Custom Capes).
-static std::string wingStyleRadioValue(int index) {
-    if (index < 0 || index >= kWingStyleCount) index = 0;
-    std::string value = std::to_string(index);
-    for (int i = 0; i < kWingStyleCount; ++i) {
-        value += ',';
-        value += kWingStyleDefs[i].id;
-    }
-    return value;
-}
-
-// Parses a value coming from the config file (full radio value) or from the
-// launcher (just the numeric index when the selection changes) or a bare
-// style id, and returns a valid style index.
-static int resolveWingStyleIndex(const std::string& value) {
-    if (value.empty()) return 0;
-
-    const std::size_t comma = value.find(',');
-    std::string head = value.substr(0, comma);
-
-    bool numeric = !head.empty();
-    for (char c : head) {
-        if (!std::isdigit(static_cast<unsigned char>(c))) { numeric = false; break; }
-    }
-    if (numeric) {
-        try {
-            const int idx = std::stoi(head);
-            if (idx >= 0 && idx < kWingStyleCount) return idx;
-        } catch (...) {}
-        return 0;
-    }
-    return wingStyleIndexForId(head);
-}
-
-static constexpr float kRightRootPivotX = -3.0f;
-static constexpr float kLeftRootPivotX = 3.0f;
-static constexpr float kRootPivotY = 21.0f;
-static constexpr int kWingBoxFaces = 6;
-
-static WingCornerPose composePose(const WingCornerPose& parent, float anchorX, float anchorY, float angleRad) {
-    const float rc = std::cos(angleRad);
-    const float rs = std::sin(angleRad);
-    WingCornerPose out;
-    out.c = parent.c * rc - parent.s * rs;
-    out.s = parent.s * rc + parent.c * rs;
-    out.tx = parent.c * anchorX - parent.s * anchorY + parent.tx;
-    out.ty = parent.s * anchorX + parent.c * anchorY + parent.ty;
-    return out;
-}
-
-static void emitFace(void* tess, const float corners[8][3], const int face[4], const unsigned char* color) {
-    s_tessColor(tess, color[0] / 255.0f, color[1] / 255.0f, color[2] / 255.0f, 1.0f);
-    for (int i = 0; i < 4; ++i) {
-        const float* v = corners[face[i]];
-        s_tessVertex(tess, v[0], v[1], v[2]);
-    }
-    // Double-sided: also emit the reversed winding.
-    for (int i = 3; i >= 0; --i) {
-        const float* v = corners[face[i]];
-        s_tessVertex(tess, v[0], v[1], v[2]);
-    }
-}
-
-static void emitWingBox(void* tess, const WingBoneDef& def, const WingCornerPose& pose,
-                        float feetX, float feetY, float feetZ,
-                        float rightX, float rightZ, float fwdX, float fwdZ,
-                        float camX, float camY, float camZ) {
-    // 2D cube corners on the wing plane (local -> absolute JSON xy). The 2D
-    // rotation couples x and y, so the four plane corners are transformed as
-    // points (bit 0 = x side, bit 1 = y side).
-    const float lx[2] = { def.boxOX, def.boxOX + def.boxSX };
-    const float ly[2] = { def.boxOY, def.boxOY + def.boxSY };
-    float planeX[4], planeY[4];
-    for (int i = 0; i < 4; ++i) {
-        const float x = lx[i & 1];
-        const float y = ly[(i >> 1) & 1];
-        planeX[i] = pose.c * x - pose.s * y + pose.tx;
-        planeY[i] = pose.s * x + pose.c * y + pose.ty;
-    }
-
-    // 8 world-space corners (camera relative). Bedrock model space faces
-    // -Z (north), so the back/cape side is +Z: JSON axes map as x -> -right
-    // (right side spans negative X), y -> up, z -> -forward (back is +Z).
-    // Wing boxes therefore carry POSITIVE z (2.5..4.5 px, see the bone
-    // tables) and land behind the player, never inside the chest.
-    float corners[8][3];
-    for (int i = 0; i < 8; ++i) {
-        const float px = planeX[i & 3];
-        const float py = planeY[i & 3];
-        const float pz = ((i >> 2) & 1) ? def.zMax : def.zMin;
-        corners[i][0] = feetX + rightX * (-px * kPxToBlocks) - fwdX * (pz * kPxToBlocks) - camX;
-        corners[i][1] = feetY + py * kPxToBlocks - camY;
-        corners[i][2] = feetZ + rightZ * (-px * kPxToBlocks) - fwdZ * (pz * kPxToBlocks) - camZ;
-    }
-
-    static const int kFaces[6][4] = {
-        {0, 1, 2, 3}, // zMin (inner, faces the body)
-        {4, 5, 6, 7}, // zMax (outer, faces away)
-        {0, 3, 7, 4}, // xMin
-        {1, 2, 6, 5}, // xMax
-        {0, 1, 5, 4}, // yMin (bottom)
-        {3, 2, 6, 7}, // yMax (top)
-    };
-    const unsigned char* faceColors[6] = {
-        def.colInner, def.colOuter, def.colEdge, def.colEdge, def.colBottom, def.colEdge,
-    };
-    for (int f = 0; f < 6; ++f) emitFace(tess, corners, kFaces[f], faceColors[f]);
-}
-
-static void emitWing(void* tess, const WingBoneDef* bones, int boneCount, float rootPivotX,
+static void emitWing(void* tess, const wings::WingBone* bones, int boneCount, float rootPivotX,
                      const float anglesDeg[7], float angleSign,
-                     float feetX, float feetY, float feetZ,
-                     float rightX, float rightZ, float fwdX, float fwdZ,
-                     float camX, float camY, float camZ) {
-    WingCornerPose poses[kMaxWingBones];
-    for (int i = 0; i < boneCount; ++i) {
-        const WingBoneDef& def = bones[i];
-        const int ai = (def.angleIndex >= 0 && def.angleIndex < 7) ? def.angleIndex : 0;
-        const float angleRad = angleSign * anglesDeg[ai] * kDegToRad;
-        if (def.parent < 0) {
-            poses[i] = { std::cos(angleRad), std::sin(angleRad), rootPivotX, kRootPivotY };
+                     const wings::Vec3& feet, const wings::Vec3& right, const wings::Vec3& forward,
+                     const wings::Vec3& cam) {
+    wings::Pose2D poses[wings::kMaxWingBones];
+    for (int i = 0; i < boneCount && i < wings::kMaxWingBones; ++i) {
+        const wings::WingBone& bone = bones[i];
+        const int ai = (bone.angleIndex >= 0 && bone.angleIndex < 7) ? bone.angleIndex : 0;
+        const float angleRad = angleSign * (anglesDeg[ai] + bone.restDeg) * wings::kDegToRad;
+        if (bone.parent < 0 || bone.parent >= i) {
+            poses[i] = wings::makePose(angleRad, rootPivotX, wings::kRootPivotY);
         } else {
-            poses[i] = composePose(poses[def.parent], def.anchorX, def.anchorY, angleRad);
+            poses[i] = wings::composePose(poses[bone.parent], bone.anchorX, bone.anchorY, angleRad);
         }
-        emitWingBox(tess, def, poses[i], feetX, feetY, feetZ, rightX, rightZ, fwdX, fwdZ, camX, camY, camZ);
+        emitWingBox(tess, bone, poses[i], feet, right, forward, cam);
     }
 }
 
@@ -715,8 +473,8 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     // thread).
     int styleIdx = 0;
     if (g_wings) styleIdx = g_wings->m_wingStyleIndex;
-    if (styleIdx < 0 || styleIdx >= kWingStyleCount) styleIdx = 0;
-    const WingStyle& style = kWingStyleDefs[styleIdx];
+    if (styleIdx < 0 || styleIdx >= wings::kWingStyleCount) styleIdx = 0;
+    const wings::WingStyle& style = wings::kWingStyles[styleIdx];
 
     // Per-bone, raise-positive angles in animation order:
     // [shoulder, upper, tip, feather_1, feather_2, feather_3, feather_4]
@@ -728,15 +486,20 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     char pad[0x58];
     std::memset(pad, 0, sizeof(pad));
 
-    const int vertexCount = 2 * style.boneCount * kWingBoxFaces * 4 * 2; // both windings
+    const int vertexCount = 2 * style.boneCount * wings::kFaceCount * 4 * 2; // both windings
     s_tessBegin(tess, nullptr, 1, vertexCount, 0); // 1 = quad
+
+    const wings::Vec3 feet{feetX, feetY, feetZ};
+    const wings::Vec3 rightVec{rightX, 0.0f, rightZ};
+    const wings::Vec3 forwardVec{fwdX, 0.0f, fwdZ};
+    const wings::Vec3 cam{camX, camY, camZ};
 
     // Right wing (span along -X, so a positive lift angle is a negative Z
     // rotation); left wing mirrors it.
-    emitWing(tess, style.rightBones, style.boneCount, kRightRootPivotX, wingAngles, -1.0f,
-             feetX, feetY, feetZ, rightX, rightZ, fwdX, fwdZ, camX, camY, camZ);
-    emitWing(tess, leftBonesFor(styleIdx), style.boneCount, kLeftRootPivotX, wingAngles, 1.0f,
-             feetX, feetY, feetZ, rightX, rightZ, fwdX, fwdZ, camX, camY, camZ);
+    emitWing(tess, style.rightBones, style.boneCount, wings::kRightRootPivotX, wingAngles, -1.0f,
+             feet, rightVec, forwardVec, cam);
+    emitWing(tess, leftBonesFor(styleIdx), style.boneCount, wings::kLeftRootPivotX, wingAngles, 1.0f,
+             feet, rightVec, forwardVec, cam);
 
     s_renderMesh(screenContext, tess, matFill, pad);
 
@@ -858,33 +621,37 @@ float WingsModule::currentFlapAngleDegrees() const {
 }
 
 float WingsModule::currentFlapAngleRadians() const {
-    return currentFlapAngleDegrees() * kDegToRad;
+    return currentFlapAngleDegrees() * wings::kDegToRad;
 }
 
-WingBoneAngles WingsModule::currentBoneAngles() const {
+// Shared idle/flap/glide pose solver. Both currentBoneAngles() (the pose
+// published on the tick) and currentBoneAnglesInterpolated() (the pose
+// extrapolated on the render thread) go through here, so the two can no
+// longer drift apart - they used to be two hand-copied blocks.
+static WingBoneAngles computeWingPose(float flapTime, float flapSpeed, float intensity, float glide) {
     WingBoneAngles out;
-    const float phase = m_flapTime * kFlapBaseRate * m_flapSpeed;
-    const float idlePh = m_flapTime * kIdleRate * m_flapSpeed;
-    const float glidePh = m_flapTime * kGlideRate * m_flapSpeed;
-    const float w = m_intensity;
-    const float g = m_glide;
+    const float phase = flapTime * WingsModule::kFlapBaseRate * flapSpeed;
+    const float idlePh = flapTime * WingsModule::kIdleRate * flapSpeed;
+    const float glidePh = flapTime * WingsModule::kGlideRate * flapSpeed;
+    const float w = intensity;
+    const float g = glide;
 
     // idle <-> flap blended pose (a wave travelling from the shoulder out to
     // the feathers, matching animation.wings.idle / animation.wings.flap).
-    const float shoulderFlap = lerpFloat(kIdleBaseDegrees, kFlightBaseDegrees, w)
-        + lerpFloat(kIdleAmplitudeDegrees * std::sin(idlePh),
-                    kFlapAmplitudeDegrees * std::sin(phase), w);
+    const float shoulderFlap = lerpFloat(WingsModule::kIdleBaseDegrees, WingsModule::kFlightBaseDegrees, w)
+        + lerpFloat(WingsModule::kIdleAmplitudeDegrees * std::sin(idlePh),
+                    WingsModule::kFlapAmplitudeDegrees * std::sin(phase), w);
     const float upperFlap = lerpFloat(6.0f, 0.0f, w)
-        + lerpFloat(4.0f * std::sin(idlePh - kIdleUpperLag),
-                    kFlightUpperAmplitudeDegrees * std::sin(phase - kUpperLag), w);
+        + lerpFloat(4.0f * std::sin(idlePh - WingsModule::kIdleUpperLag),
+                    WingsModule::kFlightUpperAmplitudeDegrees * std::sin(phase - WingsModule::kUpperLag), w);
     const float tipFlap = lerpFloat(8.0f, 0.0f, w)
-        + lerpFloat(3.0f * std::sin(idlePh - kIdleTipLag),
-                    kFlightTipAmplitudeDegrees * std::sin(phase - kTipLag), w);
+        + lerpFloat(3.0f * std::sin(idlePh - WingsModule::kIdleTipLag),
+                    WingsModule::kFlightTipAmplitudeDegrees * std::sin(phase - WingsModule::kTipLag), w);
 
     // glide pose (animation.wings.glide): wings spread high, segments
     // straightened outward. Signs match the "raise positive" value the JSON
     // animations produce for the right-side bones.
-    const float shoulderGlide = kGlideBaseDegrees + 3.0f * std::sin(glidePh);
+    const float shoulderGlide = WingsModule::kGlideBaseDegrees + 3.0f * std::sin(glidePh);
     const float upperGlide = -15.0f + 3.0f * std::sin(glidePh - 0.5235988f); // -30 deg
     const float tipGlide = -15.0f + 2.0f * std::sin(glidePh - 1.0471976f);   // -60 deg
 
@@ -894,15 +661,21 @@ WingBoneAngles WingsModule::currentBoneAngles() const {
     for (int i = 0; i < 4; ++i) {
         const float fi = static_cast<float>(i);
         const float featherFlap =
-            lerpFloat(2.5f * std::sin(idlePh - kIdleFeatherLagBase - fi * kIdleFeatherLagStep),
-                      kFlightFeatherAmplitudeDegrees * std::sin(phase - kFeatherLagBase - fi * kFeatherLagStep), w);
-        const float featherGlide = 4.0f + 2.0f * std::sin(glidePh - 1.5707963f - fi * kIdleFeatherLagStep);
+            lerpFloat(2.5f * std::sin(idlePh - WingsModule::kIdleFeatherLagBase - fi * WingsModule::kIdleFeatherLagStep),
+                      WingsModule::kFlightFeatherAmplitudeDegrees
+                          * std::sin(phase - WingsModule::kFeatherLagBase - fi * WingsModule::kFeatherLagStep), w);
+        const float featherGlide = 4.0f + 2.0f * std::sin(glidePh - 1.5707963f - fi * WingsModule::kIdleFeatherLagStep);
         out.featherDeg[i] = lerpFloat(featherFlap, featherGlide, g);
     }
     out.flapPhase = phase;
     out.intensity = w;
     out.glide = g;
     return out;
+}
+
+WingBoneAngles WingsModule::currentBoneAngles() const {
+    std::lock_guard<std::mutex> animationLock(m_animationMutex);
+    return computeWingPose(m_flapTime, m_flapSpeed, m_intensity, m_glide);
 }
 
 WingBoneAngles WingsModule::currentBoneAnglesInterpolated() const {
@@ -922,42 +695,7 @@ WingBoneAngles WingsModule::currentBoneAnglesInterpolated() const {
         effectiveFlapTime += extra;
     }
 
-    WingBoneAngles out;
-    const float phase = effectiveFlapTime * kFlapBaseRate * m_flapSpeed;
-    const float idlePh = effectiveFlapTime * kIdleRate * m_flapSpeed;
-    const float glidePh = effectiveFlapTime * kGlideRate * m_flapSpeed;
-    const float w = m_intensity;
-    const float g = m_glide;
-
-    const float shoulderFlap = lerpFloat(kIdleBaseDegrees, kFlightBaseDegrees, w)
-        + lerpFloat(kIdleAmplitudeDegrees * std::sin(idlePh),
-                    kFlapAmplitudeDegrees * std::sin(phase), w);
-    const float upperFlap = lerpFloat(6.0f, 0.0f, w)
-        + lerpFloat(4.0f * std::sin(idlePh - kIdleUpperLag),
-                    kFlightUpperAmplitudeDegrees * std::sin(phase - kUpperLag), w);
-    const float tipFlap = lerpFloat(8.0f, 0.0f, w)
-        + lerpFloat(3.0f * std::sin(idlePh - kIdleTipLag),
-                    kFlightTipAmplitudeDegrees * std::sin(phase - kTipLag), w);
-
-    const float shoulderGlide = kGlideBaseDegrees + 3.0f * std::sin(glidePh);
-    const float upperGlide = -15.0f + 3.0f * std::sin(glidePh - 0.5235988f);
-    const float tipGlide = -15.0f + 2.0f * std::sin(glidePh - 1.0471976f);
-
-    out.shoulderDeg = lerpFloat(shoulderFlap, shoulderGlide, g);
-    out.upperDeg = lerpFloat(upperFlap, upperGlide, g);
-    out.tipDeg = lerpFloat(tipFlap, tipGlide, g);
-    for (int i = 0; i < 4; ++i) {
-        const float fi = static_cast<float>(i);
-        const float featherFlap =
-            lerpFloat(2.5f * std::sin(idlePh - kIdleFeatherLagBase - fi * kIdleFeatherLagStep),
-                      kFlightFeatherAmplitudeDegrees * std::sin(phase - kFeatherLagBase - fi * kFeatherLagStep), w);
-        const float featherGlide = 4.0f + 2.0f * std::sin(glidePh - 1.5707963f - fi * kIdleFeatherLagStep);
-        out.featherDeg[i] = lerpFloat(featherFlap, featherGlide, g);
-    }
-    out.flapPhase = phase;
-    out.intensity = w;
-    out.glide = g;
-    return out;
+    return computeWingPose(effectiveFlapTime, m_flapSpeed, m_intensity, m_glide);
 }
 
 void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, float verticalSpeed) {
@@ -991,7 +729,9 @@ void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, f
     // Publish the pose for the render hook (only the live module instance,
     // so host-test instances cannot clobber the in-game render state).
     if (this == g_wings) {
-        WingBoneAngles angles = currentBoneAngles();
+        // computeWingPose() directly: m_animationMutex is already held here and
+        // currentBoneAngles() takes it again.
+        WingBoneAngles angles = computeWingPose(m_flapTime, m_flapSpeed, m_intensity, m_glide);
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_boneAngles = angles;
     }
@@ -1154,11 +894,11 @@ void WingsModule::loadConfig(const nlohmann::json& j) {
         m_flapSpeed = std::clamp(speed, 0.1f, 10.0f);
     }
     if (j.contains("m_wingStyle")) {
-        m_wingStyleIndex = resolveWingStyleIndex(j["m_wingStyle"].get<std::string>());
-        m_wingStyle = kWingStyleDefs[m_wingStyleIndex].id;
+        m_wingStyleIndex = wings::resolveWingStyleIndex(j["m_wingStyle"].get<std::string>());
+        m_wingStyle = wings::kWingStyles[m_wingStyleIndex].id;
     } else if (j.contains("wingStyle")) {
-        m_wingStyleIndex = resolveWingStyleIndex(j["wingStyle"].get<std::string>());
-        m_wingStyle = kWingStyleDefs[m_wingStyleIndex].id;
+        m_wingStyleIndex = wings::resolveWingStyleIndex(j["wingStyle"].get<std::string>());
+        m_wingStyle = wings::kWingStyles[m_wingStyleIndex].id;
     }
 }
 
@@ -1167,6 +907,6 @@ void WingsModule::saveConfig(nlohmann::json& j) {
     float flapSpeed = std::clamp(m_flapSpeed, 0.1f, 10.0f);
     j["m_flapSpeed"] = flapSpeed;
     j["flapSpeed"] = flapSpeed; // keep both keys for compatibility
-    m_wingStyleIndex = wingStyleIndexForId(m_wingStyle);
-    j["m_wingStyle"] = wingStyleRadioValue(m_wingStyleIndex);
+    m_wingStyleIndex = wings::wingStyleIndexForId(m_wingStyle);
+    j["m_wingStyle"] = wings::wingStyleRadioValue(m_wingStyleIndex);
 }
