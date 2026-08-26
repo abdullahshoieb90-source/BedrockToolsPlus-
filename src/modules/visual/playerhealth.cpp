@@ -309,10 +309,34 @@ bool readHealthFromMetadata(void* actor, float& out) {
 }
 
 bool readHealth(void* actor, float& out) {
-    if (readHealthFromAttribute(actor, out)) {
+    float attributeHealth = 0.0f;
+    const bool hasAttribute = readHealthFromAttribute(actor, attributeHealth);
+
+    float metadataHealth = 0.0f;
+    const bool hasMetadata = readHealthFromMetadata(actor, metadataHealth);
+
+    // The Mob/Health Attribute is authoritative while it carries a real
+    // value, but an uninitialized attribute reads as exactly 0.0f while the
+    // synced entity data still holds the live health (fresh spawns, respawn
+    // and some protocol bridges never seed the attribute). Trusting that
+    // zero made healthy players collapse to 0/20 hearts, so whenever the
+    // attribute is missing or zero, a non-zero metadata reading wins.
+    if (hasAttribute && attributeHealth > 0.0f) {
+        out = attributeHealth;
         return true;
     }
-    return readHealthFromMetadata(actor, out);
+    if (hasMetadata && metadataHealth > 0.0f) {
+        out = metadataHealth;
+        return true;
+    }
+    // Both missing-or-zero: a genuinely dead player (0 hp everywhere) keeps
+    // rendering an empty indicator instead of losing the line entirely.
+    if (hasAttribute) {
+        out = attributeHealth;
+        return true;
+    }
+    out = metadataHealth;
+    return hasMetadata;
 }
 
 bool readPosition(void* actor, bedrocktools::sdk::Vec3& out) {

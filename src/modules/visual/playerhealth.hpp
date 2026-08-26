@@ -12,7 +12,9 @@
 // gap between the two). The health value is read primarily from the actor's
 // live Mob/Health Attribute, falling back to synced entity data
 // (ActorDataIDs::Health), accepting the int/float/short forms seen across
-// Bedrock builds and protocol bridges.
+// Bedrock builds and protocol bridges. An uninitialized attribute (exactly
+// 0.0f) is not trusted while the synced metadata still reports a non-zero
+// health, so fresh actors no longer flash 0/20 hearts.
 class PlayerHealthModule : public Module {
 public:
     PlayerHealthModule();
