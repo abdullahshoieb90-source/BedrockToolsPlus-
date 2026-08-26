@@ -28,6 +28,7 @@ using ActorGetNameTagFn = std::string (*)(void*);
 using ActorSetNameTagFn = void (*)(void*, const std::string&);
 using SynchedActorDataEnsureIndexFn = void (*)(void*, std::uint16_t);
 using ActorSynchedDataUpdateAlwaysShowNameTagFn = void (*)(void*, const void*);
+using MobGetHealthFn = float (*)(void*);
 
 GetRuntimeActorListFn s_getRuntimeActorList = nullptr;
 ActorIsPlayerFn s_actorIsPlayer = nullptr;
@@ -35,6 +36,7 @@ ActorGetNameTagFn s_getNameTag = nullptr;
 ActorSetNameTagFn s_setNameTag = nullptr;
 SynchedActorDataEnsureIndexFn s_ensureIndex = nullptr;
 ActorSynchedDataUpdateAlwaysShowNameTagFn s_updateAlwaysShowNameTag = nullptr;
+MobGetHealthFn s_mobGetHealth = nullptr;
 
 // Health can change every tick (damage, regeneration, and respawn). Updating
 // each tick also makes the module independent from timing-sensitive nametag
@@ -201,11 +203,49 @@ bool writeAlwaysShowItem(void* actor, std::int8_t value) {
     return true;
 }
 
-// Health is actor data id 1. Most builds expose it as an int, some servers /
-// protocol bridges send a float, and newer builds may keep it as a short.
-// Accept all numeric layouts so a full-health player is not misread as the
-// tiny fallback value that lives next to the metadata header.
-bool readHealth(void* actor, float& out) {
+// Health is read primarily from the Mob/Health Attribute, with a fallback
+// to actor data id 1 (ActorDataIds::Health). Most metadata builds expose it
+// as an int, some servers / protocol bridges send a float, and newer builds
+// may keep it as a short.
+void* getHealthAttribute(void* actor) {
+    if (!actor) return nullptr;
+    return *reinterpret_cast<void**>(
+        reinterpret_cast<std::uintptr_t>(actor) + bedrocktools::sdk::offsets::Mob::mHealthAttribute
+    );
+}
+
+bool readAttributeInstanceHealth(void* attributeInstance, float& out) {
+    if (!attributeInstance) return false;
+    out = *reinterpret_cast<const float*>(
+        reinterpret_cast<std::uintptr_t>(attributeInstance) + bedrocktools::sdk::offsets::AttributeInstance::mCurrentValue
+    );
+    return true;
+}
+
+bool readHealthFromAttribute(void* actor, float& out) {
+    if (!actor) return false;
+
+    if (s_mobGetHealth) {
+        const float val = s_mobGetHealth(actor);
+        if (val >= 0.0f) {
+            out = val;
+            return true;
+        }
+    }
+
+    void* attr = getHealthAttribute(actor);
+    if (attr) {
+        float val = 0.0f;
+        if (readAttributeInstanceHealth(attr, val) && val >= 0.0f) {
+            out = val;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool readHealthFromMetadata(void* actor, float& out) {
     void* component = getDataComponent(actor);
     if (!component) return false;
 
@@ -268,6 +308,13 @@ bool readHealth(void* actor, float& out) {
     return false;
 }
 
+bool readHealth(void* actor, float& out) {
+    if (readHealthFromAttribute(actor, out)) {
+        return true;
+    }
+    return readHealthFromMetadata(actor, out);
+}
+
 bool readPosition(void* actor, bedrocktools::sdk::Vec3& out) {
     if (!actor) return false;
     const auto svc = *reinterpret_cast<void**>(
@@ -319,6 +366,9 @@ void PlayerHealthModule::onInit() {
         bedrocktools::memory::resolve(
             bedrocktools::memory::SignatureId::ActorSynchedDataUpdateAlwaysShowNameTag
         )
+    );
+    s_mobGetHealth = reinterpret_cast<MobGetHealthFn>(
+        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MobGetHealth)
     );
     bedrocktools::modules::visual::selfnametag_patch::init();
 

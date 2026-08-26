@@ -129,6 +129,7 @@ enum class SignatureId : std::uint16_t {
     ResourcePackStackPacketHandle,
     ItemInHandRendererRenderFirstPerson,
     MobGetModifiedSwingDuration,
+    MobGetHealth,
     BlockTessellatorTessellateDoubleThinFenceInWorld,
     BlockGraphicsGetTexture,
     BlockOccluderUpdateRenderFace,

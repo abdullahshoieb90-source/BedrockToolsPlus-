@@ -10,6 +10,14 @@ inline constexpr std::size_t mName = 2824;
 inline constexpr std::size_t mSkin = 2552;
 }
 
+namespace Mob {
+inline constexpr std::size_t mHealthAttribute = 0x1A0;
+}
+
+namespace AttributeInstance {
+inline constexpr std::size_t mCurrentValue = 0x8;
+}
+
 namespace Actor {
 inline constexpr std::size_t mEntityContext = 0x8;
 inline constexpr std::size_t mEntityData = 0x120;
