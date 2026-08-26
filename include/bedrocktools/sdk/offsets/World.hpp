@@ -55,6 +55,11 @@ inline constexpr std::uint32_t IsTNT                = 1u << 15;
 }
 
 namespace ActorDataIds {
+// Health is data id 1 in the synced actor data (the same numbering the wire
+// protocol uses since 1.16.100: HEALTH = 1, FUSE_LENGTH = 55,
+// ALWAYS_SHOW_NAMETAG = 81). It is an int on vanilla-style servers and a
+// float on others, so readers must accept both DataItem types.
+inline constexpr std::size_t Health = 1;
 inline constexpr std::size_t FuseTime = 55;
 inline constexpr std::size_t NametagAlwaysShow = 81;
 }

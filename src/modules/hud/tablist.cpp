@@ -32,6 +32,9 @@ static std::string cleanPlayerName(const std::string& input) {
 
     for (std::size_t i = 0; i < input.size();) {
         const auto c = static_cast<unsigned char>(input[i]);
+        // The Player Health module appends a health line under the name with
+        // '\n'; the tab list keeps only the name line itself.
+        if (c == '\n') break;
         if (c == 0xC2 && i + 1 < input.size() && static_cast<unsigned char>(input[i + 1]) == 0xA7) {
             i += 2;
             if (i < input.size()) ++i;
