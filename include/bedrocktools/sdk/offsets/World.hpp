@@ -72,7 +72,9 @@ inline constexpr int AlwaysShowName = 15;
 namespace DataItem {
 inline constexpr std::size_t mType = 0x8;
 inline constexpr std::size_t mId = 0xA;
-inline constexpr std::size_t mValue = 0xC;
+// +0xC is the dirty/header field; the payload starts at +0x10.
+inline constexpr std::size_t mValue = 0x10;
+inline constexpr std::size_t mMinimumSize = 0x18;
 inline constexpr std::uint8_t ByteType = 0;
 inline constexpr std::uint8_t ShortType = 1;
 inline constexpr std::uint8_t IntType = 2;

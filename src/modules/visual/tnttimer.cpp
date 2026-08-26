@@ -152,8 +152,9 @@ bool writeAlwaysShowItem(void* actor, std::int8_t value) {
         void* vtable = findSCharDataItemVtable(component);
         if (!vtable) return false;
 
-        item = ::operator new(16);
-        std::memset(item, 0, 16);
+        constexpr std::size_t itemSize = bedrocktools::sdk::offsets::DataItem::mMinimumSize;
+        item = ::operator new(itemSize);
+        std::memset(item, 0, itemSize);
         *reinterpret_cast<void**>(item) = vtable;
         *reinterpret_cast<std::uint8_t*>(
             reinterpret_cast<std::uintptr_t>(item) + bedrocktools::sdk::offsets::DataItem::mType

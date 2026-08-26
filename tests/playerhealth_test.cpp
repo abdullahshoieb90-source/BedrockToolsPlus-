@@ -123,8 +123,12 @@ struct FakeDataItem {
     std::uint8_t type = 0;             // +0x8
     std::uint8_t pad = 0;              // +0x9
     std::uint16_t id = 0;              // +0xA
-    std::int32_t value = 0;            // +0xC (int / float / byte views)
+    std::uint32_t header = 1;          // +0xC (dirty/header, not the payload)
+    std::int32_t value = 0;            // +0x10 (int / float / byte views)
 };
+
+static_assert(offsetof(FakeDataItem, value) == off::DataItem::mValue);
+static_assert(sizeof(FakeDataItem) >= off::DataItem::mMinimumSize);
 
 struct FakeComponent {
     void** begin = nullptr;            // +0x0
