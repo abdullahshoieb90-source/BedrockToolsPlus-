@@ -31,7 +31,7 @@ The **Custom Capes** module lets you wear any PNG as a classic cape.
 
 1. Put cape images (`.png`, ideally 64x32 — any other size is scaled automatically) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a sample cape).
 2. (Re)launch the game, open the BedrockTools mod menu and enable **Custom Capes**.
-3. Pick a file in the module's **Cape** selector — the cape updates in-game immediately. Choose `None` to bring your vanilla cape back.
+3. The **Cape picker** opens as an in-game grid of image previews (one thumbnail per cape PNG, plus a `None` card for your vanilla cape). Tap a card to wear that cape — it updates in-game immediately; the active cape is the one with the bright gold border. Tap the **X** to close the picker, and use the module's **Show Cape Picker** toggle to reopen it. Each thumbnail is the UV-cropped visible cape face (not the whole 64x32 texture map), so you see exactly what will be worn.
 
 Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
 

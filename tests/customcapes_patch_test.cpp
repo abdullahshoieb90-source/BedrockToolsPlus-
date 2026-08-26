@@ -68,6 +68,9 @@ std::string g_testConfigPath;
 namespace bedrocktools::config {
 ConfigManager::~ConfigManager() = default;
 std::string ConfigManager::getConfigPath() const { return g_testConfigPath; }
+// The module persists grid selections through ConfigManager::save(); the
+// host test has no config writer, so just satisfy the linker.
+void ConfigManager::save() {}
 } // namespace bedrocktools::config
 
 namespace bedrocktools::events {
