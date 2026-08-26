@@ -21,7 +21,9 @@ public:
     bool showPlayers = true;
     bool showItems = true;
     uint32_t showItemsColor = 0xFFFFAA00u;
-    bool showSelf = false;
+    // Draw the local player's own box when the camera is in third person.
+    // First-person is skipped so the box does not fill the screen.
+    bool show3rdPerson = false;
     bool showEyeLine = false;
     bool showLookLine = false;
     float lookLineLength = 2.0f;

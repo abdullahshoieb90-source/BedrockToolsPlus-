@@ -144,7 +144,6 @@ static uint32_t forceOpaqueColor(uint32_t color) {
 
 static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
 
-static bedrocktools::sdk::Vec3 g_playerPos = {0.f, 0.f, 0.f};
 static void* g_localPlayerPtr = nullptr;
 
 struct AABB {
@@ -157,10 +156,6 @@ static bool hasCategory(void* actor, uint32_t categoryBit);
 static void s_hitboxTickCallback(void* _this) {
     if (!g_hitboxMod || !g_hitboxMod->enabled) return;
     g_localPlayerPtr = _this;
-    uintptr_t svc = *(uintptr_t*)((uintptr_t)_this + bedrocktools::sdk::offsets::Actor::mStateVectorComponent);
-    if (svc != 0) {
-        g_playerPos = *(bedrocktools::sdk::Vec3*)svc;
-    }
 }
 
 static MaterialPtr getMaterial(const char* name) {
@@ -527,11 +522,21 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         drawLines(lines, color);
     };
 
-    bedrocktools::sdk::Vec3 localPos = g_playerPos;
-    float dx = camX - localPos.x;
-    float dy = camY - (localPos.y + 1.62f);
-    float dz = camZ - localPos.z;
-    bool isThirdPerson = (dx*dx + dy*dy + dz*dz) > 0.05f;
+    // First-person: the camera sits inside the player's collision box (the
+    // head). Third-person pulls the camera back outside that box. Using the
+    // AABB is more reliable than an eye-height distance check, which breaks
+    // while sneaking, swimming, crawling, or when the camera is pushed in
+    // by a wall.
+    AABB localAabb = getActorAABB(g_localPlayerPtr);
+    constexpr float kFirstPersonMargin = 0.05f;
+    const bool cameraInsideLocalBox =
+        camX >= localAabb.min.x - kFirstPersonMargin &&
+        camX <= localAabb.max.x + kFirstPersonMargin &&
+        camY >= localAabb.min.y - kFirstPersonMargin &&
+        camY <= localAabb.max.y + kFirstPersonMargin &&
+        camZ >= localAabb.min.z - kFirstPersonMargin &&
+        camZ <= localAabb.max.z + kFirstPersonMargin;
+    bool isThirdPerson = !cameraInsideLocalBox;
 
     ActorVec actors{};
     if (s_actorFetchNearby) {
@@ -569,15 +574,17 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         }
     }
 
-    auto renderActor = [&](void* ent, uint32_t groupColor) {
+    auto renderActor = [&](void* ent, uint32_t groupColor, bool skipOcclusion = false) {
         AABB aabb = getActorAABB(ent);
         if (aabb.min.x == 0.f && aabb.min.y == 0.f && aabb.min.z == 0.f &&
             aabb.max.x == 0.f && aabb.max.y == 0.f && aabb.max.z == 0.f) return;
 
         // Cull hitboxes that are fully hidden behind solid blocks instead of
         // drawing them through walls. Skips the eye/look lines too, since
-        // they belong to the same box.
-        if (region && isOccluded(region, camX, camY, camZ, aabb)) return;
+        // they belong to the same box. The local player's own box is never
+        // culled: a third-person camera often sits inside or against a wall,
+        // which would otherwise hide the player's hitbox from themselves.
+        if (!skipOcclusion && region && isOccluded(region, camX, camY, camZ, aabb)) return;
 
         uint32_t boxColor = groupColor;
         if (g_hitboxMod->hitboxIndicator) {
@@ -635,8 +642,8 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         }
     };
 
-    if (g_hitboxMod->showSelf && isThirdPerson) {
-        renderActor(g_localPlayerPtr, g_hitboxMod->hitboxColor);
+    if (g_hitboxMod->show3rdPerson && isThirdPerson) {
+        renderActor(g_localPlayerPtr, g_hitboxMod->hitboxColor, true);
     }
 
     if (actors.begin && actors.end) {
@@ -760,7 +767,13 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     showEntities = j.value("showEntities", showEntities);
     showPlayers = j.value("showPlayers", showPlayers);
     showItems = j.value("showItems", showItems);
-    showSelf = j.value("showSelf", showSelf);
+    // Prefer the current key; fall back to the old "showSelf" name so
+    // existing configs keep working after the rename.
+    if (j.contains("show3rdPerson")) {
+        show3rdPerson = j.value("show3rdPerson", show3rdPerson);
+    } else if (j.contains("showSelf")) {
+        show3rdPerson = j.value("showSelf", show3rdPerson);
+    }
     showEyeLine = j.value("showEyeLine", showEyeLine);
     showLookLine = j.value("showLookLine", showLookLine);
     lookLineLength = j.value("lookLineLength", lookLineLength);
@@ -805,7 +818,7 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["showEntities"] = showEntities;
     j["showPlayers"] = showPlayers;
     j["showItems"] = showItems;
-    j["showSelf"] = showSelf;
+    j["show3rdPerson"] = show3rdPerson;
     j["showEyeLine"] = showEyeLine;
     j["showLookLine"] = showLookLine;
     j["lookLineLength"] = lookLineLength;
