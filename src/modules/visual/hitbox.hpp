@@ -19,6 +19,8 @@ public:
     
     bool showEntities = true;
     bool showPlayers = true;
+    bool showItems = true;
+    uint32_t showItemsColor = 0xFFFFAA00u;
     bool showSelf = false;
     bool showEyeLine = false;
     bool showLookLine = false;
