@@ -577,6 +577,7 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float velX = 0.0f, velY = 0.0f, velZ = 0.0f;
     std::chrono::steady_clock::time_point lastTick{};
     bool lastTickValid = false;
+    bool hasVelocity = false;
     bool hasPlayer = false;
 
     {
@@ -590,46 +591,56 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
         velX = s_velX; velY = s_velY; velZ = s_velZ;
         lastTick = s_lastTickTime;
         lastTickValid = s_lastTickTimeValid;
+        hasVelocity = s_hasVelocity;
     }
 
     if (!hasPlayer) return;
 
-    // --- ULTRA-LOW LATENCY: fetch live AABB/rotation directly from actor memory ---
-    // This bypasses the 20Hz tick delay and gives us the position at render time (60+ FPS).
+    // --- ULTRA-LOW LATENCY: fetch the actor anchor directly at render time ---
+    // The AABB shape component is the same authoritative world-space anchor used
+    // by the tick callback.  Once this read succeeds it is already the freshest
+    // position available to the overlay.  Do not add velocity to it below: doing
+    // so extrapolates an already-live sample and makes the wings jump ahead of
+    // the body, most noticeably during a vertical jump.
+    bool liveAABBValid = false;
     if (playerPtr && (std::uintptr_t)playerPtr >= 0x1000) {
         AABB liveAABB = getActorAABB(playerPtr);
-        // Validate live AABB is not zero
-        bool liveValid = !(liveAABB.min.x == 0 && liveAABB.min.y == 0 && liveAABB.min.z == 0 &&
-                           liveAABB.max.x == 0 && liveAABB.max.y == 0 && liveAABB.max.z == 0);
-        // Also check for NaN/inf and huge values
-        if (liveValid) {
-            // Use live AABB as base - this is the freshest position
+        const float width = liveAABB.max.x - liveAABB.min.x;
+        const float height = liveAABB.max.y - liveAABB.min.y;
+        const float depth = liveAABB.max.z - liveAABB.min.z;
+        const bool finite =
+            std::isfinite(liveAABB.min.x) && std::isfinite(liveAABB.min.y) && std::isfinite(liveAABB.min.z) &&
+            std::isfinite(liveAABB.max.x) && std::isfinite(liveAABB.max.y) && std::isfinite(liveAABB.max.z);
+        liveAABBValid = finite && width > 0.0f && width < 16.0f &&
+                        height > 0.0f && height < 16.0f &&
+                        depth > 0.0f && depth < 16.0f;
+        if (liveAABBValid) {
             aabb = liveAABB;
             bedrocktools::sdk::Vec2 liveRot = getActorRotation(playerPtr);
-            // Only override if rotation looks sane
             if (std::isfinite(liveRot.x) && std::isfinite(liveRot.y)) {
                 rot = liveRot;
             }
         }
     }
 
-    // Validate AABB
-    if (aabb.min.x == 0 && aabb.min.y == 0 && aabb.min.z == 0 &&
-        aabb.max.x == 0 && aabb.max.y == 0 && aabb.max.z == 0) {
-        return;
-    }
+    // A live sample is preferred.  Velocity extrapolation is only a fallback
+    // for the short window in which the actor component is unavailable; this
+    // keeps the old last-tick fallback smooth without ever double-predicting a
+    // valid sample (which used to detach the wings while jumping).
+    const bool fallbackAABBValid =
+        std::isfinite(aabb.min.x) && std::isfinite(aabb.min.y) && std::isfinite(aabb.min.z) &&
+        std::isfinite(aabb.max.x) && std::isfinite(aabb.max.y) && std::isfinite(aabb.max.z) &&
+        aabb.max.x > aabb.min.x && aabb.max.y > aabb.min.y && aabb.max.z > aabb.min.z;
+    if (!liveAABBValid && !fallbackAABBValid) return;
 
-    // --- Prediction: extrapolate position using velocity * timeSinceLastTick ---
-    // This removes the remaining 0-50ms tick-to-render gap.
-    if (lastTickValid) {
+    if (!liveAABBValid && lastTickValid && hasVelocity) {
         auto now = std::chrono::steady_clock::now();
         float dtSince = std::chrono::duration<float>(now - lastTick).count();
-        // Clamp: don't predict too far, and ignore negative
         if (dtSince < 0.0f) dtSince = 0.0f;
-        if (dtSince > 0.12f) dtSince = 0.12f; // max 120ms prediction
-        if (dtSince > 0.001f && s_hasVelocity) {
-            // Only apply if velocity is reasonable (not teleport)
-            float velSq = velX*velX + velY*velY + velZ*velZ;
+        if (dtSince > 0.12f) dtSince = 0.12f;
+        if (dtSince > 0.001f) {
+            // Only apply if velocity is reasonable (not teleport).
+            const float velSq = velX * velX + velY * velY + velZ * velZ;
             if (velSq < 2500.0f) { // <50 blocks/s
                 aabb.min.x += velX * dtSince;
                 aabb.min.y += velY * dtSince;
