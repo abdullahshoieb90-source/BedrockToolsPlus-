@@ -9,9 +9,10 @@
 
 // Player Health — draws a live health indicator as a second nametag line,
 // directly below the player's name and above the player's head (exactly the
-// gap between the two). The health value is read from the actor's synced
-// entity data (ActorDataIDs::Health), accepting the int/float/short forms
-// seen across Bedrock builds and protocol bridges.
+// gap between the two). The health value is read primarily from the actor's
+// live Mob/Health Attribute, falling back to synced entity data
+// (ActorDataIDs::Health), accepting the int/float/short forms seen across
+// Bedrock builds and protocol bridges.
 class PlayerHealthModule : public Module {
 public:
     PlayerHealthModule();

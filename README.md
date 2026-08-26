@@ -61,7 +61,7 @@ The **Player Health** module shows every nearby player's live health as a second
 
 Notes:
 
-- Health is read from the actor's synced entity data (the same `SynchedActorData` items the TNT Timer module walks), so it works on any server that syncs player health.
+- Health is read from the actor's live health attribute (Mob/Health Attribute), falling back to synced entity data (`SynchedActorData`) when needed, so it works across all servers and game modes.
 - **Always Show** (on by default) keeps the indicator visible without aiming at the player, like the TNT Timer countdown; turn it off for vanilla nametag visibility rules.
 - **Range** (64 by default, 0 = unlimited) skips far players; **Show Self** (off by default) also tags your own nametag in third person.
 - Boosted health pools (absorption, health boost) are squeezed onto the same ten glyphs.

@@ -69,6 +69,7 @@ std::string bars(int n) { return std::string(static_cast<std::size_t>(n), '|'); 
 std::unordered_map<void*, std::string> g_names;
 std::unordered_set<void*> g_players;
 std::vector<void*> g_actors;
+std::unordered_map<void*, float> g_funcHealth;
 int g_setNameTagCalls = 0;
 int g_alwaysShowUpdateCalls = 0;
 
@@ -87,6 +88,11 @@ std::vector<void*> fakeGetRuntimeActorList(void*) { return g_actors; }
 void fakeEnsureIndex(void*, std::uint16_t) {}
 void fakeUpdateAlwaysShowNameTag(void*, const void*) { ++g_alwaysShowUpdateCalls; }
 
+float fakeMobGetHealth(void* actor) {
+    const auto it = g_funcHealth.find(actor);
+    return it == g_funcHealth.end() ? -1.0f : it->second;
+}
+
 }  // namespace
 
 namespace bedrocktools::memory {
@@ -98,6 +104,7 @@ std::uintptr_t resolve(SignatureId id) {
         case SignatureId::ActorSetNameTag: return reinterpret_cast<std::uintptr_t>(&fakeSetNameTag);
         case SignatureId::SynchedActorDataEnsureIndex: return reinterpret_cast<std::uintptr_t>(&fakeEnsureIndex);
         case SignatureId::ActorSynchedDataUpdateAlwaysShowNameTag: return reinterpret_cast<std::uintptr_t>(&fakeUpdateAlwaysShowNameTag);
+        case SignatureId::MobGetHealth: return reinterpret_cast<std::uintptr_t>(&fakeMobGetHealth);
         default: return 0;
     }
 }
@@ -143,6 +150,12 @@ struct FakeStateVector {
     bedrocktools::sdk::Vec3 prev{};
 };
 
+struct FakeAttributeInstance {
+    void* vtable = nullptr;
+    float currentValue = 0.0f;
+    float maxValue = 20.0f;
+};
+
 struct FakeActor {
     static constexpr std::size_t kActorSize = 1024;      // covers mLevel (464)
     static constexpr std::size_t kLevelSize = 0x470 + 16; // covers mActorManager
@@ -156,10 +169,14 @@ struct FakeActor {
     FakeDataItem colorItem;    // id 3, byte (vtable donor)
     FakeDataItem alwaysShowItem; // id 81, byte
     FakeStateVector stateVector{};
+    FakeAttributeInstance healthAttribute;
 
     void* ptr() { return actor.data(); }
 
-    void wire(const char* name, bool isPlayer, float x, float y, float z, bool withHealth, bool floatHealth = false, int health = 20, bool withAlwaysShow = false, std::int8_t alwaysShow = 0) {
+    void wire(const char* name, bool isPlayer, float x, float y, float z,
+              bool withHealth, bool floatHealth = false, int health = 20,
+              bool withAlwaysShow = false, std::int8_t alwaysShow = 0,
+              bool withAttr = false, float attrHealth = 20.0f) {
         std::memset(actor.data(), 0, actor.size());
         std::memset(level.data(), 0, level.size());
 
@@ -204,12 +221,24 @@ struct FakeActor {
         *reinterpret_cast<void**>(actor.data() + off::Actor::mLevel) = level.data();
         *reinterpret_cast<void**>(level.data() + off::Level::mActorManager) = reinterpret_cast<void*>(0x1234);
 
+        if (withAttr) {
+            healthAttribute.currentValue = attrHealth;
+            healthAttribute.maxValue = 20.0f;
+            *reinterpret_cast<void**>(actor.data() + off::Mob::mHealthAttribute) = &healthAttribute;
+        } else {
+            *reinterpret_cast<void**>(actor.data() + off::Mob::mHealthAttribute) = nullptr;
+        }
+
         g_names[ptr()] = name;
         if (isPlayer) g_players.insert(ptr());
     }
 
     void setHealth(int health) {
         healthItem.value = health;
+    }
+
+    void setAttributeHealth(float hp) {
+        healthAttribute.currentValue = hp;
     }
 
     void useShortHealth(std::int16_t health) {
@@ -379,6 +408,93 @@ void moduleTests() {
     check(g_names[alex.ptr()] == "Renamed\n" + ph::composeBar(3.0f, 20.0f), "re-enable re-tags from the clean base name");
 }
 
+void damageAndRegenTests() {
+    std::printf("damage and regeneration testing (Attribute and Metadata Fallback)\n");
+
+    g_names.clear();
+    g_players.clear();
+    g_actors.clear();
+    g_funcHealth.clear();
+    g_setNameTagCalls = 0;
+    g_alwaysShowUpdateCalls = 0;
+
+    FakeActor local, attrPlayer, metaPlayer, priorityPlayer;
+    local.wire("Local", true, 0, 64, 0, true, false, 20);
+
+    // Player 1: Uses Mob/Health Attribute directly
+    attrPlayer.wire("AttrPlayer", true, 2, 64, 0, false, false, 0, false, 0, true, 20.0f);
+
+    // Player 2: Uses metadata fallback (no Mob/Health Attribute)
+    metaPlayer.wire("MetaPlayer", true, 4, 64, 0, true, false, 20);
+
+    // Player 3: Has BOTH Mob/Health Attribute (15 HP) and metadata (20 HP) to verify priority
+    priorityPlayer.wire("PriorityPlayer", true, 6, 64, 0, true, false, 20, false, 0, true, 15.0f);
+
+    g_actors = {local.ptr(), attrPlayer.ptr(), metaPlayer.ptr(), priorityPlayer.ptr()};
+
+    PlayerHealthModule mod;
+    mod.onInit();
+    mod.setMasterEnabled(true);
+
+    // Initial tick
+    runTicks(mod, local);
+    check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(20.0f, 20.0f), "AttrPlayer initial full health (20/20)");
+    check(g_names[metaPlayer.ptr()] == "MetaPlayer\n" + ph::composeHearts(20.0f, 20.0f), "MetaPlayer initial full health via metadata fallback (20/20)");
+    check(g_names[priorityPlayer.ptr()] == "PriorityPlayer\n" + ph::composeHearts(15.0f, 20.0f), "PriorityPlayer reads Mob/Health Attribute (15) over metadata (20)");
+
+    std::printf("damage tracking\n");
+    // AttrPlayer takes damage: 20 -> 12 -> 4
+    attrPlayer.setAttributeHealth(12.0f);
+    metaPlayer.setHealth(12);
+    priorityPlayer.setAttributeHealth(7.0f); // attribute drops to 7, metadata stays 20
+    runTicks(mod, local);
+
+    check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(12.0f, 20.0f), "AttrPlayer health line updated after damage (12/20)");
+    check(g_names[metaPlayer.ptr()] == "MetaPlayer\n" + ph::composeHearts(12.0f, 20.0f), "MetaPlayer health line updated after damage via metadata (12/20)");
+    check(g_names[priorityPlayer.ptr()] == "PriorityPlayer\n" + ph::composeHearts(7.0f, 20.0f), "PriorityPlayer health line updated after attribute damage (7/20)");
+
+    attrPlayer.setAttributeHealth(3.0f);
+    metaPlayer.setHealth(3);
+    runTicks(mod, local);
+
+    check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(3.0f, 20.0f), "AttrPlayer low health after critical damage (3/20)");
+    check(g_names[metaPlayer.ptr()] == "MetaPlayer\n" + ph::composeHearts(3.0f, 20.0f), "MetaPlayer low health after critical damage via metadata (3/20)");
+
+    std::printf("regeneration tracking\n");
+    // Regeneration: 3 -> 11 -> 20
+    attrPlayer.setAttributeHealth(11.0f);
+    metaPlayer.setHealth(11);
+    priorityPlayer.setAttributeHealth(18.0f);
+    runTicks(mod, local);
+
+    check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(11.0f, 20.0f), "AttrPlayer health line updated after regeneration (11/20)");
+    check(g_names[metaPlayer.ptr()] == "MetaPlayer\n" + ph::composeHearts(11.0f, 20.0f), "MetaPlayer health line updated after regeneration via metadata (11/20)");
+    check(g_names[priorityPlayer.ptr()] == "PriorityPlayer\n" + ph::composeHearts(18.0f, 20.0f), "PriorityPlayer health line updated after attribute regeneration (18/20)");
+
+    attrPlayer.setAttributeHealth(20.0f);
+    metaPlayer.setHealth(20);
+    runTicks(mod, local);
+
+    check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(20.0f, 20.0f), "AttrPlayer fully regenerated (20/20)");
+    check(g_names[metaPlayer.ptr()] == "MetaPlayer\n" + ph::composeHearts(20.0f, 20.0f), "MetaPlayer fully regenerated via metadata (20/20)");
+
+    std::printf("signature function Mob/Health Attribute\n");
+    // Test MobGetHealth signature function return value overriding
+    g_funcHealth[attrPlayer.ptr()] = 8.5f;
+    runTicks(mod, local);
+    check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(8.5f, 20.0f), "MobGetHealth signature function returns live health (8.5/20)");
+
+    // Damage via function signature: 8.5 -> 2.0
+    g_funcHealth[attrPlayer.ptr()] = 2.0f;
+    runTicks(mod, local);
+    check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(2.0f, 20.0f), "MobGetHealth damage updated (2/20)");
+
+    // Regeneration via function signature: 2.0 -> 16.0
+    g_funcHealth[attrPlayer.ptr()] = 16.0f;
+    runTicks(mod, local);
+    check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(16.0f, 20.0f), "MobGetHealth regeneration updated (16/20)");
+}
+
 }  // namespace
 
 int main() {
@@ -387,6 +503,9 @@ int main() {
 
     std::printf("player health module\n");
     moduleTests();
+
+    std::printf("damage and regeneration\n");
+    damageAndRegenTests();
 
     std::printf("\n%s\n", g_failures == 0 ? "all player health tests passed" : "player health tests FAILED");
     return g_failures == 0 ? 0 : 1;
