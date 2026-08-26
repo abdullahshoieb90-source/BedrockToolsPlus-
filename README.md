@@ -49,7 +49,7 @@ The **Wings** module renders animated 3D wings on your back that flap, idle and 
 - **Phoenix** — fiery orange feathers
 - **Fairy** — small translucent cyan/pink wings
 
-The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view.
+The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. Each style is drawn as closed, tapered feather prisms with a rest-pose fan, a backwards sweep and per-face shading, so the wings read as real 3D volume. Developers can preview every style offline (and compare against the legacy renderer) with `./scripts/gen_wings_preview.sh`, which writes PNGs to `build/wings-preview/`.
 
 ## System Requirements
 

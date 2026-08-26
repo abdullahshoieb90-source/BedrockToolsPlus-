@@ -36,6 +36,17 @@
 // frame/bone edges, highlighted feather tips) so the overlay matches the
 // texture-mapped geometry.
 //
+// The bone tables and the rendering details live in src/modules/visual/
+// wings_shape.hpp (prism building, face rings, shading) and wings_styles.hpp
+// (the seven selectable styles). On top of the plain box layout each bone
+// carries three shape details: a rest-pose fan (feathers splay open and the
+// tip curls), a backwards sweep (the wing curves away from the back instead
+// of lying in one plane) and a tapered far edge (feathers narrow to a tip).
+// Every face is shaded per-frame with a soft headlight plus a sky lift and a
+// shoulder-to-tip gradient, so the wings read as 3D volume instead of flat
+// cut-outs. tools/wings_preview.cpp renders the exact same shapes into PNGs
+// for offline checks.
+//
 // Animation (mirrors resources/wings/wings_animation.json): a flap clock runs
 // at angle = amplitude * sin(flapTime * baseRate * flapSpeed), and the pose is
 // blended between idle (gentle breathing pulse), flap (strong motion while
