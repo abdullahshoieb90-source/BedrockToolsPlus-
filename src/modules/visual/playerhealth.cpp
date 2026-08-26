@@ -47,7 +47,7 @@ constexpr int kRefreshTicks = 1;
 //   *wrapper                    -> SynchedActorData component
 //   component + 0x0 / 0x8       -> begin / end of a DataItem* vector that is
 //                                  indexed by the actor data id
-//   DataItem + 0x8 / 0xA / 0xC  -> type / id / value
+//   DataItem + 0x8 / 0xA / 0x10 -> type / id / value (+0xC is header)
 // ---------------------------------------------------------------------------
 
 void* getEntityDataWrapper(void* actor) {
@@ -170,8 +170,9 @@ bool writeAlwaysShowItem(void* actor, std::int8_t value) {
         void* vtable = findByteDataItemVtable(component);
         if (!vtable) return false;
 
-        item = ::operator new(16);
-        std::memset(item, 0, 16);
+        constexpr std::size_t itemSize = bedrocktools::sdk::offsets::DataItem::mMinimumSize;
+        item = ::operator new(itemSize);
+        std::memset(item, 0, itemSize);
         *reinterpret_cast<void**>(item) = vtable;
         *reinterpret_cast<std::uint8_t*>(
             reinterpret_cast<std::uintptr_t>(item) + bedrocktools::sdk::offsets::DataItem::mType
