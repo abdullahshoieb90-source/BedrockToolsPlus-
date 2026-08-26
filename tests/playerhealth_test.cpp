@@ -11,6 +11,8 @@
 //
 //   * the health line is appended under the name ("Alex\n<line>") and is
 //     refreshed from the synced Health data item (int, float, and short layouts)
+//   * an uninitialized Health Attribute (exactly 0.0f) defers to the synced
+//     metadata health instead of flashing 0/20 hearts
 //   * unchanged health does not rewrite the nametag
 //   * a nametag renamed under us becomes the new base name
 //   * players without a synced health item are left untouched
@@ -477,6 +479,35 @@ void damageAndRegenTests() {
 
     check(g_names[attrPlayer.ptr()] == "AttrPlayer\n" + ph::composeHearts(20.0f, 20.0f), "AttrPlayer fully regenerated (20/20)");
     check(g_names[metaPlayer.ptr()] == "MetaPlayer\n" + ph::composeHearts(20.0f, 20.0f), "MetaPlayer fully regenerated via metadata (20/20)");
+
+    std::printf("uninitialized attribute fallback\n");
+    // UninitPlayer: Health Attribute present but uninitialized (0.0f) while
+    // the synced metadata holds the real health. This used to render 0/20.
+    FakeActor uninitPlayer, deadAttrPlayer;
+    uninitPlayer.wire("UninitPlayer", true, -4, 64, 0, true, false, 17, false, 0, true, 0.0f);
+    deadAttrPlayer.wire("DeadAttrPlayer", true, -6, 64, 0, false, false, 0, false, 0, true, 0.0f);
+    g_actors.push_back(uninitPlayer.ptr());
+    g_actors.push_back(deadAttrPlayer.ptr());
+
+    runTicks(mod, local);
+    check(g_names[uninitPlayer.ptr()] == "UninitPlayer\n" + ph::composeHearts(17.0f, 20.0f),
+          "uninitialized attribute (0.0f) falls back to metadata health (17/20), not 0/20");
+    check(g_names[uninitPlayer.ptr()].find(ph::composeNumbers(0.0f, 20.0f)) == std::string::npos,
+          "no 0/20 line is written for the uninitialized attribute player");
+    check(g_names[deadAttrPlayer.ptr()] == "DeadAttrPlayer\n" + ph::composeHearts(0.0f, 20.0f),
+          "zero attribute with no metadata still reads as dead (0/20)");
+
+    std::printf("uninitialized attribute recovery\n");
+    // While the attribute stays at 0.0f the line follows the metadata.
+    uninitPlayer.setHealth(9);
+    runTicks(mod, local);
+    check(g_names[uninitPlayer.ptr()] == "UninitPlayer\n" + ph::composeHearts(9.0f, 20.0f),
+          "line follows metadata damage while the attribute is uninitialized (9/20)");
+    // Once the attribute is finally seeded it becomes authoritative again.
+    uninitPlayer.setAttributeHealth(13.0f);
+    runTicks(mod, local);
+    check(g_names[uninitPlayer.ptr()] == "UninitPlayer\n" + ph::composeHearts(13.0f, 20.0f),
+          "a seeded attribute (13) takes priority over metadata (9) again");
 
     std::printf("signature function Mob/Health Attribute\n");
     // Test MobGetHealth signature function return value overriding
