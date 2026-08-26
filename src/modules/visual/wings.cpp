@@ -132,12 +132,31 @@ static WingBoneAngles s_boneAngles{};
 static void* s_localPlayerPtr = nullptr;
 static bool s_hasPlayer = false;
 
-// --- Zero-latency extension: velocity + prediction ---
-static float s_velX = 0.0f, s_velY = 0.0f, s_velZ = 0.0f;
-static float s_hSpeed = 0.0f, s_vSpeed = 0.0f;
+// --- Render-thread anchor interpolation (mirrors entity client-side lerp) ---
+// The collision AABB and the rotation are only refreshed once per server tick
+// (20 Hz), but the player model is rendered with client-side interpolation, so
+// anchoring the wings to the raw tick samples makes them stutter against the
+// smoothly moving body while walking.  We keep the previous and current tick
+// samples and lerp between them by the partial-tick fraction, exactly like the
+// game interpolates the player mesh.  That is what removes the walking jitter.
+static AABB s_prevAABB{};
+static AABB s_curAABB{};
+static bedrocktools::sdk::Vec2 s_prevRot{0, 0};
+static bedrocktools::sdk::Vec2 s_curRot{0, 0};
+static float s_tickInterval = 0.05f;  // seconds between ticks (measured)
+static bool s_hasPrevSample = false;
+
 static std::chrono::steady_clock::time_point s_lastTickTime{};
-static bool s_hasVelocity = false;
 static bool s_lastTickTimeValid = false;
+
+// Shortest-arc interpolation for angles in degrees, so yaw/pitch never wrap
+// the 360 degree boundary mid-lerp (which would snap the wings the wrong way).
+static float lerpAngleDeg(float a, float b, float t) {
+    float diff = b - a;
+    while (diff > 180.0f) diff -= 360.0f;
+    while (diff < -180.0f) diff += 360.0f;
+    return a + diff * t;
+}
 
 static AABB getActorAABB(void* actor) {
     AABB aabb{};
@@ -332,35 +351,40 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     bedrocktools::sdk::Vec2 rot{};
     WingBoneAngles angles{};
     void* playerPtr = nullptr;
-    float velX = 0.0f, velY = 0.0f, velZ = 0.0f;
-    std::chrono::steady_clock::time_point lastTick{};
-    bool lastTickValid = false;
-    bool hasVelocity = false;
+    AABB prevAABB{};
+    bedrocktools::sdk::Vec2 prevRot{0, 0};
+    float tickInterval = 0.05f;
+    bool hasPrevSample = false;
     bool hasPlayer = false;
+    bool lastTickValid = false;
+    std::chrono::steady_clock::time_point lastTick{};
 
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         if (!s_hasPlayer) return;
         hasPlayer = s_hasPlayer;
-        aabb = s_playerAABB;
-        rot = s_playerRot;
+        aabb = s_curAABB;
+        rot = s_curRot;
         angles = s_boneAngles;
         playerPtr = s_localPlayerPtr;
-        velX = s_velX; velY = s_velY; velZ = s_velZ;
+        prevAABB = s_prevAABB;
+        prevRot = s_prevRot;
+        tickInterval = s_tickInterval;
+        hasPrevSample = s_hasPrevSample;
         lastTick = s_lastTickTime;
         lastTickValid = s_lastTickTimeValid;
-        hasVelocity = s_hasVelocity;
     }
 
     if (!hasPlayer) return;
 
-    // --- ULTRA-LOW LATENCY: fetch the actor anchor directly at render time ---
-    // The AABB shape component is the same authoritative world-space anchor used
-    // by the tick callback.  Once this read succeeds it is already the freshest
-    // position available to the overlay.  Do not add velocity to it below: doing
-    // so extrapolates an already-live sample and makes the wings jump ahead of
-    // the body, most noticeably during a vertical jump.
-    bool liveAABBValid = false;
+    // --- Low-latency anchor: take the freshest AABB/rotation directly from the
+    // actor (the same authoritative component the tick uses), then interpolate
+    // it against the previous tick's sample by the partial-tick fraction.
+    // Reading the live AABB alone leaves the wings snapping at the 20 Hz tick
+    // rate while the body glides at the render rate - that mismatch is exactly
+    // the walking jitter.  Interpolating, like the game's own client-side lerp,
+    // makes the wings ride the smoothly rendered body instead of stuttering.
+    bool liveValid = false;
     if (playerPtr && (std::uintptr_t)playerPtr >= 0x1000) {
         AABB liveAABB = getActorAABB(playerPtr);
         const float width = liveAABB.max.x - liveAABB.min.x;
@@ -369,11 +393,11 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
         const bool finite =
             std::isfinite(liveAABB.min.x) && std::isfinite(liveAABB.min.y) && std::isfinite(liveAABB.min.z) &&
             std::isfinite(liveAABB.max.x) && std::isfinite(liveAABB.max.y) && std::isfinite(liveAABB.max.z);
-        liveAABBValid = finite && width > 0.0f && width < 16.0f &&
-                        height > 0.0f && height < 16.0f &&
-                        depth > 0.0f && depth < 16.0f;
-        if (liveAABBValid) {
-            aabb = liveAABB;
+        liveValid = finite && width > 0.0f && width < 16.0f &&
+                    height > 0.0f && height < 16.0f &&
+                    depth > 0.0f && depth < 16.0f;
+        if (liveValid) {
+            aabb = liveAABB;             // freshest "current" sample
             bedrocktools::sdk::Vec2 liveRot = getActorRotation(playerPtr);
             if (std::isfinite(liveRot.x) && std::isfinite(liveRot.y)) {
                 rot = liveRot;
@@ -381,33 +405,34 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
         }
     }
 
-    // A live sample is preferred.  Velocity extrapolation is only a fallback
-    // for the short window in which the actor component is unavailable; this
-    // keeps the old last-tick fallback smooth without ever double-predicting a
-    // valid sample (which used to detach the wings while jumping).
-    const bool fallbackAABBValid =
+    // The current sample (live if available, otherwise the last tick's) must be
+    // finite before we can anchor the wings to it.
+    const bool curValid =
         std::isfinite(aabb.min.x) && std::isfinite(aabb.min.y) && std::isfinite(aabb.min.z) &&
         std::isfinite(aabb.max.x) && std::isfinite(aabb.max.y) && std::isfinite(aabb.max.z) &&
-        aabb.max.x > aabb.min.x && aabb.max.y > aabb.min.y && aabb.max.z > aabb.min.z;
-    if (!liveAABBValid && !fallbackAABBValid) return;
+        aabb.max.x > aabb.min.x && aabb.max.y > aabb.min.y && aabb.max.z > aabb.min.z &&
+        std::isfinite(rot.x) && std::isfinite(rot.y);
+    if (!curValid) return;
 
-    if (!liveAABBValid && lastTickValid && hasVelocity) {
+    // Interpolate the anchor and the facing between the previous and current
+    // tick samples by the elapsed fraction of the current tick.  This is the
+    // exact counterpart of the entity client-side lerp, so the wings track the
+    // smoothly rendered body at any frame rate.  We only interpolate within a
+    // single tick (never extrapolate past the next one), so a hitch on the tick
+    // thread just freezes the wings for a frame instead of flinging them.
+    if (hasPrevSample && lastTickValid && tickInterval > 0.0f) {
         auto now = std::chrono::steady_clock::now();
-        float dtSince = std::chrono::duration<float>(now - lastTick).count();
-        if (dtSince < 0.0f) dtSince = 0.0f;
-        if (dtSince > 0.12f) dtSince = 0.12f;
-        if (dtSince > 0.001f) {
-            // Only apply if velocity is reasonable (not teleport).
-            const float velSq = velX * velX + velY * velY + velZ * velZ;
-            if (velSq < 2500.0f) { // <50 blocks/s
-                aabb.min.x += velX * dtSince;
-                aabb.min.y += velY * dtSince;
-                aabb.min.z += velZ * dtSince;
-                aabb.max.x += velX * dtSince;
-                aabb.max.y += velY * dtSince;
-                aabb.max.z += velZ * dtSince;
-            }
-        }
+        float f = std::chrono::duration<float>(now - lastTick).count() / tickInterval;
+        if (f < 0.0f) f = 0.0f;
+        if (f > 1.0f) f = 1.0f;
+        aabb.min.x = prevAABB.min.x + (aabb.min.x - prevAABB.min.x) * f;
+        aabb.min.y = prevAABB.min.y + (aabb.min.y - prevAABB.min.y) * f;
+        aabb.min.z = prevAABB.min.z + (aabb.min.z - prevAABB.min.z) * f;
+        aabb.max.x = prevAABB.max.x + (aabb.max.x - prevAABB.max.x) * f;
+        aabb.max.y = prevAABB.max.y + (aabb.max.y - prevAABB.max.y) * f;
+        aabb.max.z = prevAABB.max.z + (aabb.max.z - prevAABB.max.z) * f;
+        rot.x = lerpAngleDeg(prevRot.x, rot.x, f);
+        rot.y = lerpAngleDeg(prevRot.y, rot.y, f);
     }
 
     // --- Interpolated bone angles for smooth flap between ticks ---
@@ -591,9 +616,12 @@ void WingsModule::onEnable() {
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_boneAngles = WingBoneAngles{};
-        s_velX = s_velY = s_velZ = 0.0f;
-        s_hSpeed = s_vSpeed = 0.0f;
-        s_hasVelocity = false;
+        s_hasPrevSample = false;
+        s_prevAABB = {};
+        s_curAABB = {};
+        s_prevRot = {0, 0};
+        s_curRot = {0, 0};
+        s_tickInterval = 0.05f;
         s_lastTickTimeValid = false;
     }
 }
@@ -603,8 +631,7 @@ void WingsModule::onDisable() {
     std::lock_guard<std::mutex> lock(s_stateMutex);
     s_hasPlayer = false;
     s_localPlayerPtr = nullptr;
-    s_velX = s_velY = s_velZ = 0.0f;
-    s_hasVelocity = false;
+    s_hasPrevSample = false;
     s_lastTickTimeValid = false;
 }
 
@@ -746,8 +773,7 @@ void WingsModule::onLocalPlayerTick(void* player) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_hasPlayer = false;
         s_localPlayerPtr = nullptr;
-        s_velX = s_velY = s_velZ = 0.0f;
-        s_hasVelocity = false;
+        s_hasPrevSample = false;
         s_lastTickTimeValid = false;
         return;
     }
@@ -756,8 +782,7 @@ void WingsModule::onLocalPlayerTick(void* player) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_hasPlayer = false;
         s_localPlayerPtr = nullptr;
-        s_velX = s_velY = s_velZ = 0.0f;
-        s_hasVelocity = false;
+        s_hasPrevSample = false;
         s_lastTickTimeValid = false;
         return;
     }
@@ -816,22 +841,39 @@ void WingsModule::onLocalPlayerTick(void* player) {
 
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
+
+        // Shift the interpolation window: the sample we published last tick
+        // becomes the "previous" one and this tick's measured sample becomes
+        // the "current" one.  The render hook lerps between them by the
+        // partial-tick fraction, which is what removes the walking jitter.  On
+        // the very first sample, or after a teleport, keep prev == cur so the
+        // lerp is a no-op instead of dragging the wings across a huge gap.
+        const bool teleport = m_hasPrevCenter && dt > 0.0f &&
+            ((centerX - m_prevCenterX) * (centerX - m_prevCenterX) +
+             (centerY - m_prevCenterY) * (centerY - m_prevCenterY) +
+             (centerZ - m_prevCenterZ) * (centerZ - m_prevCenterZ) >= 25.0f);
+        if (!s_hasPrevSample || teleport) {
+            s_prevAABB = aabb;
+            s_prevRot = rot;
+            s_hasPrevSample = true;
+        } else {
+            s_prevAABB = s_curAABB;
+            s_prevRot = s_curRot;
+        }
+        s_curAABB = aabb;
+        s_curRot = rot;
+
+        // Measure the tick interval (clamped) so the partial-tick fraction
+        // stays correct even when the game is not running at exactly 20 Hz.
+        if (s_lastTickTimeValid) {
+            float meas = std::chrono::duration<float>(now - s_lastTickTime).count();
+            if (meas > 0.001f && meas < 0.5f) s_tickInterval = meas;
+        }
+
         s_playerAABB = aabb;
         s_playerRot = rot;
         s_localPlayerPtr = player;
         s_hasPlayer = true;
-        // Store velocity for prediction in render thread
-        if (hasVel) {
-            s_velX = velX; s_velY = velY; s_velZ = velZ;
-            s_hSpeed = horizontalSpeed; s_vSpeed = verticalSpeed;
-            s_hasVelocity = true;
-        } else if (dt > 0.0f) {
-            // If no velocity this tick, decay quickly to zero to avoid stale prediction
-            s_velX *= 0.5f; s_velY *= 0.5f; s_velZ *= 0.5f;
-            if (std::abs(s_velX) < 0.01f && std::abs(s_velY) < 0.01f && std::abs(s_velZ) < 0.01f) {
-                s_hasVelocity = false;
-            }
-        }
         s_lastTickTime = now;
         s_lastTickTimeValid = true;
     }
