@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../Module.hpp"
-#include "customcapes_ui.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -12,19 +11,6 @@
 // directory next to config.json (`<configDir>/capes`, created on first
 // launch together with a sample cape); every .png file in it shows up as an
 // option of the module's radio picker in the launcher mod menu.
-//
-// Instead of the launcher's text radio picker (which could only show file
-// names like "cape13.png"), the module renders its own in-game picker:
-// CustomCapesUi draws the "None" option plus every cape as a thumbnail card
-// in a centered grid, with a bright gold border around the selected card.
-// Each thumbnail is the UV-cropped outer cape face (x=1..11, y=1..17 of the
-// 64x32 canvas), bilinearly upscaled and registered with the overlay's
-// texture loader (pl::modmenu::registerImage) — the overlay's Image draw
-// command stretches the whole bitmap, so cropping at texture-load time is
-// what keeps the preview from showing the complete atlas. The radio config
-// value ("m_cape") is still (de)serialized for persistence; the launcher
-// menu simply does not register it as a Radio entry anymore (see
-// src/launcher/ModuleMenu.cpp).
 //
 // The selected file is decoded with stb_image and resampled onto the
 // classic-cape layout of the 64x32 canvas Minecraft uses: the image is
@@ -70,8 +56,6 @@ public:
     void onInit() override;
     void onEnable() override;
     void onDisable() override;
-    void onFrame() override;
-    bool onTouchEvent(float x, float y, bool isDown) override;
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j) override;
 
@@ -98,9 +82,6 @@ private:
     void writeSamplePng(const std::string& path) const;
     void loadSelectedCape();
     void releaseLoadedCape();
-    void selectCapeIndex(int index);
-    void rebuildPreviewGrid();
-    void refreshGridIfNeeded();
 
     bool applyCustomCape(void* skin);
     void restoreOriginalCape(void* skin);
@@ -109,11 +90,6 @@ private:
     std::string m_capesDir;
     std::vector<std::string> m_files; // refreshed by saveConfig (menu build / save)
     int m_selectedIndex = 0;          // 0 = None, i>=1 -> m_files[i-1]
-
-    // In-game preview grid ("Cape" picker) — replaces the text radio list.
-    CustomCapesUi m_ui;
-    std::vector<std::string> m_gridFiles; // file list the grid was built from
-    bool m_showPicker = true;             // menu toggle; opens the grid
 
     // Decoded, already resampled cape pixels (module-owned), w*h = 64*32.
     std::vector<std::uint8_t> m_pixels;
