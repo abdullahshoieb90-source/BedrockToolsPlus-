@@ -35,9 +35,10 @@ ActorSetNameTagFn s_setNameTag = nullptr;
 SynchedActorDataEnsureIndexFn s_ensureIndex = nullptr;
 ActorSynchedDataUpdateAlwaysShowNameTagFn s_updateAlwaysShowNameTag = nullptr;
 
-// Refresh (and rewrite) the health lines every other tick; health rarely
-// changes faster and the local tick still feels instant.
-constexpr int kRefreshTicks = 2;
+// Health can change every tick (damage, regeneration, and respawn). Updating
+// each tick also makes the module independent from timing-sensitive nametag
+// patches such as Third Person Nametag.
+constexpr int kRefreshTicks = 1;
 
 // ---------------------------------------------------------------------------
 // SynchedActorData access, laid out exactly as the TNT Timer module walks it:
@@ -211,6 +212,26 @@ bool readHealth(void* actor, float& out) {
     if (!begin) return false;
 
     void* item = begin[id];
+    const auto isHealthItem = [id](void* candidate) {
+        if (!candidate) return false;
+        const auto candidateAddress = reinterpret_cast<std::uintptr_t>(candidate);
+        return *reinterpret_cast<const std::uint16_t*>(
+            candidateAddress + bedrocktools::sdk::offsets::DataItem::mId
+        ) == id;
+    };
+    // A few Bedrock builds leave holes in the indexed vector after respawn.
+    // In that case slot 1 may contain another integer (often value 2), which
+    // made a player at 20 HP appear to have one heart. Find HEALTH by its id.
+    if (!isHealthItem(item)) {
+        item = nullptr;
+        const std::size_t size = getItemsSize(component);
+        for (std::size_t i = 0; i < size; ++i) {
+            if (isHealthItem(begin[i])) {
+                item = begin[i];
+                break;
+            }
+        }
+    }
     if (!item) return false;
 
     const auto address = reinterpret_cast<std::uintptr_t>(item);
