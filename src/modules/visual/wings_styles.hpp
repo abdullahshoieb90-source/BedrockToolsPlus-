@@ -29,9 +29,13 @@ namespace bedrocktools::modules::wings {
 // Palettes
 // ---------------------------------------------------------------------------
 
-// ---- Dragon (default) reuses the generated texture palette so the overlay
-// keeps matching wings.png / wings_geometry.json. ----
-// (wings_default::kColorFrame / kColorMembraneOuter / ... )
+// ---- Dragon (default) - original brown/dark palette, independent from
+// wings_default so changing the default texture does not affect dragon ----
+inline constexpr unsigned char kDragonFrame[3]         = {94, 62, 36};
+inline constexpr unsigned char kDragonMembraneOuter[3] = {18, 18, 24};
+inline constexpr unsigned char kDragonMembraneInner[3] = {28, 28, 36};
+inline constexpr unsigned char kDragonFeatherTip[3]    = {46, 46, 60};
+inline constexpr unsigned char kDragonJointInner[3]    = {76, 52, 32};
 
 // ---- Angel: white feathers with soft gold tips ----
 inline constexpr unsigned char kAngelFrame[3]         = {244, 240, 232};
@@ -40,12 +44,13 @@ inline constexpr unsigned char kAngelMembraneInner[3] = {226, 222, 210};
 inline constexpr unsigned char kAngelFeatherTip[3]    = {255, 236, 190};
 inline constexpr unsigned char kAngelJointInner[3]    = {214, 205, 188};
 
-// ---- Demon: deep red membrane on a near-black frame ----
-inline constexpr unsigned char kDemonFrame[3]         = {42, 12, 12};
-inline constexpr unsigned char kDemonMembraneOuter[3] = {96, 16, 22};
-inline constexpr unsigned char kDemonMembraneInner[3] = {150, 26, 32};
-inline constexpr unsigned char kDemonFeatherTip[3]    = {208, 44, 48};
-inline constexpr unsigned char kDemonJointInner[3]    = {64, 14, 16};
+// ---- Demon: glowing red membrane on pure black frame (Demon Wings spec)
+// Frame #000000 black, membrane gradient #FF0000/#E60000 -> #800000 dark bloody
+inline constexpr unsigned char kDemonFrame[3]         = {0, 0, 0};
+inline constexpr unsigned char kDemonMembraneOuter[3] = {230, 0, 0};   // #E60000 glowing red
+inline constexpr unsigned char kDemonMembraneInner[3] = {128, 0, 0};   // #800000 dark bloody
+inline constexpr unsigned char kDemonFeatherTip[3]    = {255, 0, 0};   // #FF0000 bright tip
+inline constexpr unsigned char kDemonJointInner[3]    = {0, 0, 0};
 
 // ---- Bat: small, very dark membrane ----
 inline constexpr unsigned char kBatFrame[3]         = {34, 34, 40};
@@ -75,6 +80,27 @@ inline constexpr unsigned char kFairyMembraneInner[3] = {244, 202, 255};
 inline constexpr unsigned char kFairyFeatherTip[3]    = {255, 255, 242};
 inline constexpr unsigned char kFairyJointInner[3]    = {140, 232, 222};
 
+// ---- Demon Wings / Vampire Bat Wings - requested style ----
+// Pure black bones #000000, membrane gradient dramatic #FF0000/#E60000 -> #800000
+// Crimson glow / aura effect saturated between black separators
+inline constexpr unsigned char kDemonWingsFrame[3]         = {0, 0, 0};       // #000000
+inline constexpr unsigned char kDemonWingsMembraneOuter[3] = {255, 0, 0};     // #FF0000 bright glowing red
+inline constexpr unsigned char kDemonWingsMembraneInner[3] = {128, 0, 0};     // #800000 dark bloody
+inline constexpr unsigned char kDemonWingsFeatherTip[3]    = {230, 0, 0};     // #E60000
+inline constexpr unsigned char kDemonWingsJointInner[3]    = {0, 0, 0};
+
+inline constexpr unsigned char kVampireFrame[3]         = {0, 0, 0};
+inline constexpr unsigned char kVampireMembraneOuter[3] = {230, 0, 0};   // #E60000
+inline constexpr unsigned char kVampireMembraneInner[3] = {128, 0, 0};   // #800000
+inline constexpr unsigned char kVampireFeatherTip[3]    = {255, 0, 0};   // #FF0000
+inline constexpr unsigned char kVampireJointInner[3]    = {0, 0, 0};
+
+inline constexpr unsigned char kRedBatFrame[3]         = {0, 0, 0};
+inline constexpr unsigned char kRedBatMembraneOuter[3] = {255, 0, 0};    // #FF0000
+inline constexpr unsigned char kRedBatMembraneInner[3] = {160, 0, 0};    // slightly brighter dark
+inline constexpr unsigned char kRedBatFeatherTip[3]    = {255, 51, 51};  // glowing edge
+inline constexpr unsigned char kRedBatJointInner[3]    = {0, 0, 0};
+
 // ---------------------------------------------------------------------------
 // Bone tables. Column order matches WingBone:
 //
@@ -89,13 +115,13 @@ inline constexpr unsigned char kFairyJointInner[3]    = {140, 232, 222};
 // Dragon: articulated membrane wing. The fingers fan open and curl back so
 // the membrane reads as a wing surface instead of a flat comb.
 inline constexpr WingBone kDragonRightBones[7] = {
-    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, wings_default::kColorMembraneOuter, wings_default::kColorJointInner,    wings_default::kColorFrame, wings_default::kColorFrame,      0},
-    { 0, -2.0f,  0.0f, -6.0f, -1.5f, 6.0f, 3.0f, 3.0f, 4.0f,   0.0f, 0.5f, 1.0f, 0.30f, 1.00f, wings_default::kColorMembraneOuter, wings_default::kColorMembraneInner, wings_default::kColorFrame, wings_default::kColorFrame,      1},
-    { 1, -6.0f,  0.0f, -5.0f, -1.0f, 5.0f, 2.0f, 3.0f, 4.0f,  -5.0f, 1.0f, 1.0f, 0.70f, 1.04f, wings_default::kColorMembraneOuter, wings_default::kColorMembraneInner, wings_default::kColorFrame, wings_default::kColorFrame,      2},
-    { 1, -2.0f, -1.5f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,   5.0f, 0.5f, 1.0f, 0.50f, 1.00f, wings_default::kColorMembraneOuter, wings_default::kColorMembraneInner, wings_default::kColorFrame, wings_default::kColorFeatherTip, 3},
-    { 1, -4.5f, -1.5f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,  11.0f, 1.0f, 1.2f, 0.62f, 0.93f, wings_default::kColorMembraneOuter, wings_default::kColorMembraneInner, wings_default::kColorFrame, wings_default::kColorFeatherTip, 4},
-    { 2, -1.5f, -1.0f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,  16.0f, 1.5f, 1.2f, 0.85f, 1.00f, wings_default::kColorMembraneOuter, wings_default::kColorMembraneInner, wings_default::kColorFrame, wings_default::kColorFeatherTip, 5},
-    { 2, -4.0f, -1.0f, -1.0f, -5.0f, 2.0f, 5.0f, 3.0f, 4.0f,  22.0f, 2.0f, 1.4f, 1.00f, 0.93f, wings_default::kColorMembraneOuter, wings_default::kColorMembraneInner, wings_default::kColorFrame, wings_default::kColorFeatherTip, 6},
+    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kDragonMembraneOuter, kDragonJointInner,    kDragonFrame, kDragonFrame,      0},
+    { 0, -2.0f,  0.0f, -6.0f, -1.5f, 6.0f, 3.0f, 3.0f, 4.0f,   0.0f, 0.5f, 1.0f, 0.30f, 1.00f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFrame,      1},
+    { 1, -6.0f,  0.0f, -5.0f, -1.0f, 5.0f, 2.0f, 3.0f, 4.0f,  -5.0f, 1.0f, 1.0f, 0.70f, 1.04f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFrame,      2},
+    { 1, -2.0f, -1.5f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,   5.0f, 0.5f, 1.0f, 0.50f, 1.00f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 3},
+    { 1, -4.5f, -1.5f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,  11.0f, 1.0f, 1.2f, 0.62f, 0.93f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 4},
+    { 2, -1.5f, -1.0f, -1.0f, -6.0f, 2.0f, 6.0f, 3.0f, 4.0f,  16.0f, 1.5f, 1.2f, 0.85f, 1.00f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 5},
+    { 2, -4.0f, -1.0f, -1.0f, -5.0f, 2.0f, 5.0f, 3.0f, 4.0f,  22.0f, 2.0f, 1.4f, 1.00f, 0.93f, kDragonMembraneOuter, kDragonMembraneInner, kDragonFrame, kDragonFeatherTip, 6},
 };
 
 // Angel: long white feathers fanned wide off a thin arm.
@@ -109,15 +135,16 @@ inline constexpr WingBone kAngelRightBones[7] = {
     { 1, -2.5f, -2.5f, -1.0f, -7.0f, 2.0f, 8.0f, 3.0f, 4.0f,  17.0f, 1.9f, 1.5f, 1.00f, 1.00f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip,    6},
 };
 
-// Demon: broad membrane with spiky, sharply tapered finger claws.
+// Demon: updated to match Demon Wings spec - membranous bat/dragon, black bones,
+// red glowing membrane, serrated lower edge, slight downward angle from back
 inline constexpr WingBone kDemonRightBones[7] = {
     {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kDemonFrame,         kDemonJointInner,    kDemonFrame, kDemonFrame,         0},
-    { 0, -2.0f,  0.0f, -7.0f, -1.5f, 7.0f, 3.0f, 3.0f, 4.0f,   0.0f, 0.5f, 1.0f, 0.28f, 1.00f, kDemonFrame,         kDemonFrame,         kDemonFrame, kDemonFrame,         1},
-    { 1, -5.0f, -1.5f, -4.0f, -6.0f, 8.0f, 7.0f, 3.0f, 4.0f,   2.0f, 1.0f, 1.6f, 0.55f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFrame,         2},
-    { 1, -2.0f, -1.5f, -1.0f, -6.0f, 2.0f, 7.0f, 3.0f, 4.0f,   8.0f, 1.3f, 1.3f, 0.70f, 0.94f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    3},
-    { 1, -5.0f, -2.0f, -1.0f, -5.0f, 2.0f, 6.0f, 3.0f, 4.0f,  15.0f, 1.6f, 1.3f, 0.88f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    4},
-    { 1, -3.0f,  1.5f, -1.0f, -1.0f, 2.0f, 4.0f, 3.0f, 4.0f,  -8.0f, 0.8f, 1.0f, 0.45f, 1.05f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    5},
-    { 1, -7.0f,  0.0f, -3.0f, -0.5f, 3.0f, 1.5f, 3.0f, 4.0f,   4.0f, 2.0f, 0.9f, 1.00f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    6},
+    { 0, -2.0f,  0.0f, -7.0f, -1.5f, 7.0f, 3.0f, 3.0f, 4.0f, -10.0f, 0.6f, 0.8f, 0.25f, 1.00f, kDemonFrame,         kDemonFrame,         kDemonFrame, kDemonFrame,         1},
+    { 1, -6.0f,  0.0f, -6.0f, -6.0f, 8.0f, 7.0f, 3.0f, 4.0f,  -6.0f, 1.2f, 1.5f, 0.52f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFrame,         2},
+    { 1, -2.0f, -1.5f, -1.0f, -7.0f, 2.0f, 8.0f, 3.0f, 4.0f,   7.0f, 1.3f, 1.4f, 0.70f, 0.94f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    3},
+    { 2, -2.0f, -6.0f, -1.0f, -6.0f, 2.0f, 7.0f, 3.0f, 4.0f,  16.0f, 1.7f, 1.4f, 0.90f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    4},
+    { 1, -3.0f,  1.5f, -1.0f, -1.0f, 2.0f, 4.0f, 3.0f, 4.0f, -10.0f, 0.9f, 1.0f, 0.42f, 1.05f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    5},
+    { 2, -7.0f,  0.0f, -3.0f, -0.5f, 3.0f, 1.5f, 3.0f, 4.0f,   6.0f, 2.2f, 0.9f, 1.00f, 1.00f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip,    6},
 };
 
 // Bat: small membrane, barely tapered, fingers only slightly fanned.
@@ -164,6 +191,53 @@ inline constexpr WingBone kFairyRightBones[7] = {
     { 1, -3.5f,  0.5f, -1.0f, -1.0f, 2.0f, 2.0f, 3.0f, 4.0f,   0.0f, 1.0f, 0.5f, 0.75f, 1.04f, kFairyFeatherTip,    kFairyMembraneInner, kFairyFrame, kFairyFeatherTip,    6},
 };
 
+// ---------------------------------------------------------------------------
+// NEW: Demon Wings - requested style (Demon Wings / Vampire Bat Wings)
+// Membranous Bat/Dragon Wings, not feathery. Black bones prominent extended
+// forming outer frame and dividers. Lower edges serrated/wavy (Webbed Bat Wing
+// pattern), with slight downward angle from back attachment.
+// Colors: frame #000000 black, membrane gradient #FF0000/#E60000 -> #800000
+// with crimson glow aura between black separators.
+// ---------------------------------------------------------------------------
+inline constexpr WingBone kDemonWingsRightBones[7] = {
+    // shoulder joint - anchor at back
+    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsJointInner, kDemonWingsFrame, kDemonWingsFrame, 0},
+    // upper arm - long, slight downward angle -12 deg, black frame
+    { 0, -2.0f,  0.0f, -7.5f, -1.5f, 7.5f, 3.0f, 3.0f, 4.0f, -12.0f, 0.6f, 0.8f, 0.25f, 1.00f, kDemonWingsFrame,         kDemonWingsFrame,      kDemonWingsFrame, kDemonWingsFrame, 1},
+    // main membrane panel - broad, webbed, serrated pattern base
+    { 1, -6.0f,  0.0f, -6.5f, -6.0f, 8.5f, 7.0f, 3.0f, 4.0f,  -6.0f, 1.2f, 1.5f, 0.52f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFrame, 2},
+    // finger 1 - long, creates first serrated wave, 7 deg fan
+    { 1, -2.0f, -1.5f, -1.0f, -7.5f, 2.0f, 8.5f, 3.0f, 4.0f,   7.0f, 1.3f, 1.4f, 0.70f, 0.94f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 3},
+    // finger 2 - longer, second wave, 16 deg, most serrated
+    { 2, -2.0f, -6.0f, -1.0f, -6.5f, 2.0f, 7.5f, 3.0f, 4.0f,  16.0f, 1.7f, 1.4f, 0.90f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 4},
+    // finger 3 - upper edge, shorter, -10 deg downward, creates top web
+    { 1, -3.0f,  1.5f, -1.0f, -1.0f, 2.0f, 4.0f, 3.0f, 4.0f, -10.0f, 0.9f, 1.0f, 0.42f, 1.05f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 5},
+    // finger 4 - tip, small, creates serrated tip edge
+    { 2, -7.0f,  0.0f, -3.0f, -0.5f, 3.0f, 1.5f, 3.0f, 4.0f,   6.0f, 2.2f, 0.9f, 1.00f, 1.00f, kDemonWingsMembraneOuter, kDemonWingsMembraneInner, kDemonWingsFrame, kDemonWingsFeatherTip, 6},
+};
+
+// Vampire Bat Wings - smaller, darker bat variant with same black/red glow
+inline constexpr WingBone kVampireRightBones[7] = {
+    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kVampireFrame,         kVampireJointInner,    kVampireFrame, kVampireFrame,         0},
+    { 0, -2.0f,  0.0f, -5.0f, -1.0f, 5.0f, 2.0f, 3.0f, 4.0f, -10.0f, 0.5f, 0.6f, 0.25f, 1.00f, kVampireFrame,         kVampireFrame,         kVampireFrame, kVampireFrame,         1},
+    { 1, -4.0f, -1.0f, -4.0f, -4.5f, 7.0f, 5.5f, 3.0f, 4.0f,  -5.0f, 1.0f, 1.2f, 0.55f, 1.00f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFrame,         2},
+    { 1, -2.0f, -1.0f, -1.0f, -5.5f, 2.0f, 6.5f, 3.0f, 4.0f,   8.0f, 1.2f, 1.2f, 0.70f, 0.94f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip,    3},
+    { 2, -2.0f, -4.5f, -1.0f, -4.5f, 2.0f, 5.5f, 3.0f, 4.0f,  15.0f, 1.5f, 1.2f, 0.88f, 1.00f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip,    4},
+    { 1, -2.5f,  1.0f, -1.0f, -1.0f, 2.0f, 3.0f, 3.0f, 4.0f,  -8.0f, 0.8f, 0.8f, 0.45f, 1.05f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFeatherTip,    5},
+    { 2, -6.0f,  0.0f, -2.0f, -0.5f, 2.0f, 1.0f, 3.0f, 4.0f,   4.0f, 2.0f, 0.6f, 1.00f, 1.00f, kVampireMembraneOuter, kVampireMembraneInner, kVampireFrame, kVampireFrame,         6},
+};
+
+// Red Bat - intense glowing red bat wings, smallest and most serrated
+inline constexpr WingBone kRedBatRightBones[7] = {
+    {-1,  0.0f,  0.0f, -1.5f, -1.5f, 3.0f, 3.0f, 2.5f, 4.5f,   0.0f, 0.0f, 0.0f, 0.00f, 1.00f, kRedBatFrame,         kRedBatJointInner,    kRedBatFrame, kRedBatFrame,         0},
+    { 0, -2.0f,  0.0f, -4.5f, -1.0f, 4.5f, 2.0f, 3.0f, 4.0f, -11.0f, 0.4f, 0.5f, 0.23f, 1.00f, kRedBatFrame,         kRedBatFrame,         kRedBatFrame, kRedBatFrame,         1},
+    { 1, -3.5f, -1.0f, -3.0f, -4.0f, 6.0f, 5.0f, 3.0f, 4.0f,  -6.0f, 0.8f, 1.1f, 0.52f, 1.00f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFrame,         2},
+    { 1, -1.5f, -1.0f, -1.0f, -4.5f, 2.0f, 5.5f, 3.0f, 4.0f,   9.0f, 1.0f, 1.1f, 0.68f, 0.94f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip,    3},
+    { 2, -1.5f, -4.0f, -1.0f, -3.5f, 2.0f, 4.5f, 3.0f, 4.0f,  17.0f, 1.3f, 1.0f, 0.86f, 1.00f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip,    4},
+    { 1, -2.5f,  1.0f, -1.0f, -1.0f, 2.0f, 3.0f, 3.0f, 4.0f,  -9.0f, 0.7f, 0.7f, 0.44f, 1.05f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFeatherTip,    5},
+    { 2, -5.5f,  0.0f, -2.0f, -0.5f, 2.0f, 1.0f, 3.0f, 4.0f,   5.0f, 1.8f, 0.5f, 1.00f, 1.00f, kRedBatMembraneOuter, kRedBatMembraneInner, kRedBatFrame, kRedBatFrame,         6},
+};
+
 struct WingStyle {
     const char* id;                  // config id (radio option)
     const char* label;               // human-readable name
@@ -172,13 +246,17 @@ struct WingStyle {
 };
 
 inline constexpr WingStyle kWingStyles[] = {
-    {"dragon",    "Dragon",    7, kDragonRightBones},
-    {"angel",     "Angel",     7, kAngelRightBones},
-    {"demon",     "Demon",     7, kDemonRightBones},
-    {"bat",       "Bat",       7, kBatRightBones},
-    {"butterfly", "Butterfly", 7, kButterflyRightBones},
-    {"phoenix",   "Phoenix",   7, kPhoenixRightBones},
-    {"fairy",     "Fairy",     7, kFairyRightBones},
+    {"dragon",     "Dragon",     7, kDragonRightBones},
+    {"angel",      "Angel",      7, kAngelRightBones},
+    {"demon",      "Demon",      7, kDemonRightBones},
+    {"bat",        "Bat",        7, kBatRightBones},
+    {"butterfly",  "Butterfly",  7, kButterflyRightBones},
+    {"phoenix",    "Phoenix",    7, kPhoenixRightBones},
+    {"fairy",      "Fairy",      7, kFairyRightBones},
+    // New glowing styles - Demon Wings / Vampire Bat Wings spec
+    {"demon_wings","Demon Wings",7, kDemonWingsRightBones},
+    {"vampire",    "Vampire Bat",7, kVampireRightBones},
+    {"red_bat",    "Red Bat",    7, kRedBatRightBones},
 };
 
 constexpr int kWingStyleCount = static_cast<int>(sizeof(kWingStyles) / sizeof(kWingStyles[0]));

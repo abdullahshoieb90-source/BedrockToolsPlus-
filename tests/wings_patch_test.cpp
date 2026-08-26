@@ -253,11 +253,19 @@ int main() {
 
         nlohmann::json saved;
         styleMod.saveConfig(saved);
+        // Now includes new demon wings styles
         check(saved["m_wingStyle"].get<std::string>().find("dragon,angel,demon,bat,butterfly,phoenix,fairy") != std::string::npos,
               "saved wing style is a radio value listing all styles");
+        check(saved["m_wingStyle"].get<std::string>().find("demon_wings") != std::string::npos,
+              "saved radio includes demon_wings");
+        check(saved["m_wingStyle"].get<std::string>().find("vampire") != std::string::npos,
+              "saved radio includes vampire");
+        check(saved["m_wingStyle"].get<std::string>().find("red_bat") != std::string::npos,
+              "saved radio includes red_bat");
 
         // The launcher reports just the numeric index when the selection changes.
-        for (int idx = 0; idx < 7; ++idx) {
+        // Now 10 styles (0..9)
+        for (int idx = 0; idx < 10; ++idx) {
             nlohmann::json j;
             j["m_wingStyle"] = std::to_string(idx);
             WingsModule t;
@@ -267,10 +275,29 @@ int main() {
 
         // A full radio value from the config file round-trips.
         nlohmann::json full;
-        full["m_wingStyle"] = "4,dragon,angel,demon,bat,butterfly,phoenix,fairy";
+        full["m_wingStyle"] = "4,dragon,angel,demon,bat,butterfly,phoenix,fairy,demon_wings,vampire,red_bat";
         WingsModule t;
         t.loadConfig(full);
         check(t.m_wingStyle == "butterfly" && t.m_wingStyleIndex == 4, "full radio value resolves to butterfly");
+
+        // Check new styles
+        nlohmann::json demonWingsJson;
+        demonWingsJson["m_wingStyle"] = "demon_wings";
+        WingsModule dw;
+        dw.loadConfig(demonWingsJson);
+        check(dw.m_wingStyle == "demon_wings" && dw.m_wingStyleIndex == 7, "demon_wings resolves correctly");
+
+        nlohmann::json vampJson;
+        vampJson["m_wingStyle"] = "vampire";
+        WingsModule vm;
+        vm.loadConfig(vampJson);
+        check(vm.m_wingStyle == "vampire" && vm.m_wingStyleIndex == 8, "vampire resolves correctly");
+
+        nlohmann::json redBatJson;
+        redBatJson["m_wingStyle"] = "red_bat";
+        WingsModule rb;
+        rb.loadConfig(redBatJson);
+        check(rb.m_wingStyle == "red_bat" && rb.m_wingStyleIndex == 9, "red_bat resolves correctly");
 
         // A bare style id is accepted too.
         nlohmann::json bare;
@@ -550,17 +577,26 @@ int main() {
     auto texelIs = [&](int x, int y, unsigned char r, unsigned char g, unsigned char b) {
         return texel(x, y, 0) == r && texel(x, y, 1) == g && texel(x, y, 2) == b && texel(x, y, 3) == 255;
     };
+    auto texelIsRed = [&](int x, int y) {
+        return texel(x, y, 1) == 0 && texel(x, y, 2) == 0 && texel(x, y, 0) > 80 && texel(x, y, 3) == 255;
+    };
+    auto texelIsBlack = [&](int x, int y) {
+        return texel(x, y, 0) == 0 && texel(x, y, 1) == 0 && texel(x, y, 2) == 0 && texel(x, y, 3) == 255;
+    };
+    auto texelIsBrightRed = [&](int x, int y) {
+        return texel(x, y, 1) == 0 && texel(x, y, 2) == 0 && texel(x, y, 0) >= 200 && texel(x, y, 3) == 255;
+    };
     check(wings_default::TextureWidth == 64 && wings_default::TextureHeight == 64, "texture is 64x64");
-    check(texelIs(19, 34, 18, 18, 24), "upper outer membrane painted dark");
-    check(texelIs(20, 34, 94, 62, 36), "upper finger stripe painted with frame color");
-    check(texelIs(11, 34, 28, 28, 36), "upper inner membrane painted lighter");
-    check(texelIs(11, 33, 94, 62, 36), "upper top edge row painted with frame color");
-    check(texelIs(8, 34, 94, 62, 36), "shoulder outer face painted with frame color");
-    check(texelIs(4, 40, 18, 18, 24), "feather outer membrane painted dark");
-    check(texelIs(4, 43, 46, 46, 60) && texelIs(3, 38, 46, 46, 60) && texelIs(1, 43, 46, 46, 60),
-          "feather tip highlight on outer face, bottom edge and inner face");
-    check(texelIs(1, 40, 28, 28, 36), "feather inner membrane painted lighter");
-    check(texelIs(32, 34, 18, 18, 24) && texelIs(34, 34, 94, 62, 36), "tip segment membrane + finger stripe");
+    // Demon Wings spec: black frame #000000, red glowing membrane #FF0000/#E60000 -> #800000 with gradient
+    check(texelIsRed(19, 34), "upper outer membrane painted red glowing (demon wings)");
+    check(texelIsBlack(20, 34), "upper finger stripe painted with black frame color");
+    check(texelIsRed(11, 34), "upper inner membrane painted dark red");
+    check(texelIsBlack(11, 33), "upper top edge row painted with black frame color");
+    check(texelIsBlack(8, 34), "shoulder outer face painted with black frame color");
+    check(texelIsRed(4, 40), "feather outer membrane painted red (bat finger)");
+    check(texelIsBrightRed(4, 43) && texelIsBrightRed(3, 38), "feather tip highlight bright red glowing");
+    check(texelIsRed(1, 40), "feather inner membrane painted dark red");
+    check(texelIsRed(32, 34) && texelIsBlack(34, 34), "tip segment membrane red + black finger stripe");
 
     // ==================================================================
     // ensureWingsAssetFiles writes geo + animation + texture next to config
