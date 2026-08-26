@@ -121,6 +121,15 @@ public:
     // 10 = very fast, 1.0 = default).
     float m_flapSpeed = 1.0f;
 
+    // Wing style shown in the launcher menu as a radio selector. One of the
+    // ids in the fixed style table (dragon, angel, demon, bat, butterfly,
+    // phoenix, fairy); "dragon" is the default articulated membrane wing.
+    // m_wingStyle is the serialized/display id; m_wingStyleIndex is the
+    // resolved table index kept in sync so the render hook can read an int
+    // without touching the std::string from the render thread.
+    std::string m_wingStyle = "dragon";
+    int m_wingStyleIndex = 0;
+
     // Test / rendering helpers
     float flapTime() const { return m_flapTime; }
     float flightIntensity() const { return m_intensity; }
