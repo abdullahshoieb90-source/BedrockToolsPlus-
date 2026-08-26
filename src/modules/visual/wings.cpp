@@ -12,6 +12,7 @@
 #include <stb/stb_image_write.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -232,7 +233,65 @@ struct WingBoneDef {
     const unsigned char* colInner;  // zMin face (faces the body)
     const unsigned char* colEdge;   // x faces and the yMax face
     const unsigned char* colBottom; // yMin face (feather tips get the highlight)
+    int angleIndex;                 // which of the 7 animation angles (0=shoulder,
+                                    // 1=upper, 2=tip, 3..6=feathers) drives this bone
 };
+
+// ---------------------------------------------------------------------------
+// Selectable wing styles.
+//
+// Each style is a right-side bone table (spanning -X from the shoulder root
+// pivot at [-3, 21]); the left-side table is generated at runtime by
+// mirroring it (negate anchorX, mirror boxOX around the pivot) so the two
+// sides always stay in sync. Colors are stored per-style so each shape can
+// carry its own palette.
+// ---------------------------------------------------------------------------
+
+// ---- Dragon (default) palette - reuses the WingsModule constants so the
+// world-space overlay keeps matching the embedded texture. ----
+// (see WingsModule::kColorFrame / kColorMembraneOuter / ... )
+
+// ---- Angel: white feathers with soft gold tips ----
+static constexpr unsigned char kAngelFrame[3]         = { 244, 240, 232 };
+static constexpr unsigned char kAngelMembraneOuter[3] = { 252, 250, 246 };
+static constexpr unsigned char kAngelMembraneInner[3] = { 226, 222, 210 };
+static constexpr unsigned char kAngelFeatherTip[3]    = { 255, 236, 190 };
+static constexpr unsigned char kAngelJointInner[3]    = { 214, 205, 188 };
+
+// ---- Demon: deep red membrane on a near-black frame ----
+static constexpr unsigned char kDemonFrame[3]         = { 42, 12, 12 };
+static constexpr unsigned char kDemonMembraneOuter[3] = { 96, 16, 22 };
+static constexpr unsigned char kDemonMembraneInner[3] = { 150, 26, 32 };
+static constexpr unsigned char kDemonFeatherTip[3]    = { 208, 44, 48 };
+static constexpr unsigned char kDemonJointInner[3]    = { 64, 14, 16 };
+
+// ---- Bat: small, very dark membrane ----
+static constexpr unsigned char kBatFrame[3]         = { 34, 34, 40 };
+static constexpr unsigned char kBatMembraneOuter[3] = { 14, 14, 18 };
+static constexpr unsigned char kBatMembraneInner[3] = { 26, 26, 32 };
+static constexpr unsigned char kBatFeatherTip[3]    = { 20, 20, 26 };
+static constexpr unsigned char kBatJointInner[3]    = { 24, 24, 30 };
+
+// ---- Butterfly: pink/orange panels with blue accents ----
+static constexpr unsigned char kButterflyFrame[3]         = { 96, 44, 148 };
+static constexpr unsigned char kButterflyMembraneOuter[3] = { 250, 118, 178 };
+static constexpr unsigned char kButterflyMembraneInner[3] = { 255, 196, 92 };
+static constexpr unsigned char kButterflyFeatherTip[3]    = { 118, 200, 255 };
+static constexpr unsigned char kButterflyJointInner[3]    = { 150, 82, 192 };
+
+// ---- Phoenix: fiery orange/red with gold highlights ----
+static constexpr unsigned char kPhoenixFrame[3]         = { 176, 92, 22 };
+static constexpr unsigned char kPhoenixMembraneOuter[3] = { 255, 62, 22 };
+static constexpr unsigned char kPhoenixMembraneInner[3] = { 255, 168, 30 };
+static constexpr unsigned char kPhoenixFeatherTip[3]    = { 255, 232, 120 };
+static constexpr unsigned char kPhoenixJointInner[3]    = { 140, 60, 16 };
+
+// ---- Fairy: small translucent cyan/pink wings ----
+static constexpr unsigned char kFairyFrame[3]         = { 120, 222, 210 };
+static constexpr unsigned char kFairyMembraneOuter[3] = { 186, 240, 255 };
+static constexpr unsigned char kFairyMembraneInner[3] = { 244, 202, 255 };
+static constexpr unsigned char kFairyFeatherTip[3]    = { 255, 255, 242 };
+static constexpr unsigned char kFairyJointInner[3]    = { 140, 232, 222 };
 
 // Z coordinates mirror resources/wings/wings_geometry.json: the body spans
 // z in [-2, +2] (Bedrock model space faces -Z, so the cape/back side is
@@ -240,33 +299,178 @@ struct WingBoneDef {
 // (membranes/feathers) - fixed directly behind the back with a 0.5 px
 // standoff from the back surface so nothing clips the torso or pokes
 // through the chest/shoulders when the player is seen from the front.
-static const WingBoneDef kRightWingBones[7] = {
-    // parent  anchorX  anchorY   boxOX  boxOY  boxSX boxSY  zMin   zMax   outer                      inner                          edges+bottom
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f,  4.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  0, -2.0f,  0.0f,  -6.0f, -1.5f, 6.0f, 3.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1, -6.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  1, -4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2, -1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2, -4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+static const WingBoneDef kDragonRightBones[7] = {
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f,  4.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame, 0 },
+    {  0, -2.0f,  0.0f,  -6.0f, -1.5f, 6.0f, 3.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame, 1 },
+    {  1, -6.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame, 2 },
+    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip, 3 },
+    {  1, -4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip, 4 },
+    {  2, -1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip, 5 },
+    {  2, -4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip, 6 },
 };
 
-static const WingBoneDef kLeftWingBones[7] = {
-    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f,  4.5f, WingsModule::kColorFrame,         WingsModule::kColorJointInner,    WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  0,  2.0f,  0.0f,   0.0f, -1.5f, 6.0f, 3.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1,  6.0f,  0.0f,   0.0f, -1.0f, 5.0f, 2.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFrame },
-    {  1,  2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  1,  4.5f, -1.5f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2,  1.5f, -1.0f,  -1.0f, -6.0f, 2.0f, 6.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
-    {  2,  4.0f, -1.0f,  -1.0f, -5.0f, 2.0f, 5.0f,  3.0f,  4.0f, WingsModule::kColorMembraneOuter, WingsModule::kColorMembraneInner, WingsModule::kColorFrame, WingsModule::kColorFeatherTip },
+static const WingBoneDef kAngelRightBones[7] = {
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kAngelFrame,         kAngelJointInner,    kAngelFrame, kAngelFrame, 0 },
+    {  0, -2.0f,  0.0f,  -7.0f, -0.5f, 7.0f, 1.0f,  3.0f, 4.0f, kAngelFrame,         kAngelFrame,         kAngelFrame, kAngelFrame, 1 },
+    {  1, -7.0f,  0.0f,  -1.0f, -5.0f, 2.0f, 6.0f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 2 },
+    {  1, -6.0f, -1.0f,  -1.0f, -6.0f, 2.0f, 7.0f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 3 },
+    {  1, -5.0f, -2.0f,  -1.0f, -7.0f, 2.0f, 8.0f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 4 },
+    {  1, -4.0f, -2.5f,  -1.0f, -7.5f, 2.0f, 8.5f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 5 },
+    {  1, -2.5f, -2.5f,  -1.0f, -7.0f, 2.0f, 8.0f,  3.0f, 4.0f, kAngelMembraneOuter, kAngelMembraneInner, kAngelFrame, kAngelFeatherTip, 6 },
 };
+
+static const WingBoneDef kDemonRightBones[7] = {
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kDemonFrame,         kDemonJointInner,    kDemonFrame, kDemonFrame, 0 },
+    {  0, -2.0f,  0.0f,  -7.0f, -1.5f, 7.0f, 3.0f,  3.0f, 4.0f, kDemonFrame,         kDemonFrame,         kDemonFrame, kDemonFrame, 1 },
+    {  1, -5.0f, -1.5f,  -4.0f, -6.0f, 8.0f, 7.0f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFrame, 2 },
+    {  1, -2.0f, -1.5f,  -1.0f, -6.0f, 2.0f, 7.0f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 3 },
+    {  1, -5.0f, -2.0f,  -1.0f, -5.0f, 2.0f, 6.0f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 4 },
+    {  1, -3.0f,  1.5f,  -1.0f, -1.0f, 2.0f, 4.0f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 5 },
+    {  1, -7.0f,  0.0f,  -3.0f, -0.5f, 3.0f, 1.5f,  3.0f, 4.0f, kDemonMembraneOuter, kDemonMembraneInner, kDemonFrame, kDemonFeatherTip, 6 },
+};
+
+static const WingBoneDef kBatRightBones[7] = {
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kBatFrame,         kBatJointInner,    kBatFrame, kBatFrame, 0 },
+    {  0, -2.0f,  0.0f,  -5.0f, -1.0f, 5.0f, 2.0f,  3.0f, 4.0f, kBatFrame,         kBatFrame,         kBatFrame, kBatFrame, 1 },
+    {  1, -4.0f, -1.0f,  -3.0f, -4.0f, 7.0f, 5.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFrame, 2 },
+    {  2, -3.0f, -4.0f,  -1.0f, -2.0f, 2.0f, 3.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 3 },
+    {  2, -5.0f, -3.0f,  -1.0f, -2.0f, 2.0f, 3.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 4 },
+    {  2, -4.0f,  1.0f,  -1.0f, -1.0f, 2.0f, 3.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFeatherTip, 5 },
+    {  2, -6.0f,  0.0f,  -2.0f, -0.5f, 2.0f, 1.0f,  3.0f, 4.0f, kBatMembraneOuter, kBatMembraneInner, kBatFrame, kBatFrame, 6 },
+};
+
+static const WingBoneDef kButterflyRightBones[7] = {
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kButterflyFrame,         kButterflyJointInner,    kButterflyFrame, kButterflyFrame, 0 },
+    {  0, -2.0f,  0.0f,  -5.0f, -0.5f, 5.0f, 1.0f,  3.0f, 4.0f, kButterflyFrame,         kButterflyFrame,         kButterflyFrame, kButterflyFrame, 1 },
+    {  1, -3.0f,  0.0f,  -3.0f,  0.0f, 6.0f, 6.0f,  3.0f, 4.0f, kButterflyMembraneOuter, kButterflyMembraneInner, kButterflyFrame, kButterflyFrame, 2 },
+    {  1, -3.0f,  0.0f,  -2.0f, -6.0f, 5.0f, 6.0f,  3.0f, 4.0f, kButterflyMembraneOuter, kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 3 },
+    {  2, -3.0f,  5.0f,  -2.0f, -1.0f, 5.0f, 2.0f,  3.0f, 4.0f, kButterflyFeatherTip,   kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 4 },
+    {  3, -3.0f, -5.0f,  -2.0f, -1.0f, 5.0f, 2.0f,  3.0f, 4.0f, kButterflyFeatherTip,   kButterflyMembraneInner, kButterflyFrame, kButterflyFeatherTip, 5 },
+    {  1, -2.0f, -0.5f,  -1.0f, -3.0f, 2.0f, 6.0f,  3.0f, 4.0f, kButterflyFrame,         kButterflyFrame,         kButterflyFrame, kButterflyFrame, 6 },
+};
+
+static const WingBoneDef kPhoenixRightBones[7] = {
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kPhoenixFrame,         kPhoenixJointInner,    kPhoenixFrame, kPhoenixFrame, 0 },
+    {  0, -2.0f,  0.0f,  -7.0f, -1.5f, 7.0f, 3.0f,  3.0f, 4.0f, kPhoenixFrame,         kPhoenixFrame,         kPhoenixFrame, kPhoenixFrame, 1 },
+    {  1, -6.0f, -1.5f,  -3.0f, -6.0f, 6.0f, 8.0f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFrame, 2 },
+    {  1, -3.0f, -2.0f,  -1.0f, -8.0f, 2.0f, 9.0f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 3 },
+    {  1, -5.0f, -2.5f,  -1.0f, -7.0f, 2.0f, 8.0f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 4 },
+    {  1, -4.0f,  1.5f,  -1.0f, -1.0f, 2.0f, 5.0f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFeatherTip, 5 },
+    {  1, -7.0f,  0.0f,  -3.0f, -0.5f, 3.0f, 1.5f,  3.0f, 4.0f, kPhoenixMembraneOuter, kPhoenixMembraneInner, kPhoenixFrame, kPhoenixFrame, 6 },
+};
+
+static const WingBoneDef kFairyRightBones[7] = {
+    { -1,  0.0f,  0.0f,  -1.5f, -1.5f, 3.0f, 3.0f,  2.5f, 4.5f, kFairyFrame,         kFairyJointInner,    kFairyFrame, kFairyFrame, 0 },
+    {  0, -2.0f,  0.0f,  -4.0f, -0.5f, 4.0f, 1.0f,  3.0f, 4.0f, kFairyFrame,         kFairyFrame,         kFairyFrame, kFairyFrame, 1 },
+    {  1, -3.0f,  0.0f,  -2.0f,  0.0f, 5.0f, 4.0f,  3.0f, 4.0f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFrame, 2 },
+    {  1, -2.5f,  0.0f,  -2.0f, -5.0f, 4.0f, 5.0f,  3.0f, 4.0f, kFairyMembraneOuter, kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 3 },
+    {  2, -3.0f,  3.0f,  -1.0f, -1.0f, 2.0f, 2.0f,  3.0f, 4.0f, kFairyFeatherTip,   kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 4 },
+    {  3, -3.0f, -4.0f,  -1.0f, -1.0f, 2.0f, 2.0f,  3.0f, 4.0f, kFairyFeatherTip,   kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 5 },
+    {  1, -3.5f,  0.5f,  -1.0f, -1.0f, 2.0f, 2.0f,  3.0f, 4.0f, kFairyFeatherTip,   kFairyMembraneInner, kFairyFrame, kFairyFeatherTip, 6 },
+};
+
+struct WingStyle {
+    const char* id;          // config id (radio option)
+    const char* label;       // human-readable name (kept for future UI)
+    int boneCount;           // number of bones per side
+    const WingBoneDef* rightBones; // spans -X
+};
+
+static const WingStyle kWingStyleDefs[] = {
+    { "dragon",    "Dragon",    7, kDragonRightBones },
+    { "angel",     "Angel",     7, kAngelRightBones },
+    { "demon",     "Demon",     7, kDemonRightBones },
+    { "bat",       "Bat",       7, kBatRightBones },
+    { "butterfly", "Butterfly", 7, kButterflyRightBones },
+    { "phoenix",   "Phoenix",   7, kPhoenixRightBones },
+    { "fairy",     "Fairy",     7, kFairyRightBones },
+};
+
+static constexpr int kWingStyleCount = static_cast<int>(sizeof(kWingStyleDefs) / sizeof(kWingStyleDefs[0]));
+static constexpr int kMaxWingBones = 16;
+
+// Left-side (spans +X) mirrors of each style's right-side table, generated
+// once at runtime so the two sides can never drift apart.
+static WingBoneDef s_leftBones[kWingStyleCount][kMaxWingBones];
+static bool s_leftBonesReady = false;
+
+static void mirrorWingBones(const WingBoneDef* right, int n, WingBoneDef* out) {
+    for (int i = 0; i < n; ++i) {
+        out[i].parent = right[i].parent;
+        out[i].anchorX = -right[i].anchorX;
+        out[i].anchorY = right[i].anchorY;
+        out[i].boxOX = -(right[i].boxOX + right[i].boxSX);
+        out[i].boxOY = right[i].boxOY;
+        out[i].boxSX = right[i].boxSX;
+        out[i].boxSY = right[i].boxSY;
+        out[i].zMin = right[i].zMin;
+        out[i].zMax = right[i].zMax;
+        out[i].colOuter = right[i].colOuter;
+        out[i].colInner = right[i].colInner;
+        out[i].colEdge = right[i].colEdge;
+        out[i].colBottom = right[i].colBottom;
+        out[i].angleIndex = right[i].angleIndex;
+    }
+}
+
+static void ensureWingStyleBones() {
+    if (s_leftBonesReady) return;
+    for (int s = 0; s < kWingStyleCount; ++s)
+        mirrorWingBones(kWingStyleDefs[s].rightBones, kWingStyleDefs[s].boneCount, s_leftBones[s]);
+    s_leftBonesReady = true;
+}
+
+static const WingBoneDef* leftBonesFor(int styleIndex) {
+    if (styleIndex < 0 || styleIndex >= kWingStyleCount) styleIndex = 0;
+    ensureWingStyleBones();
+    return s_leftBones[styleIndex];
+}
+
+static int wingStyleIndexForId(const std::string& id) {
+    for (int i = 0; i < kWingStyleCount; ++i)
+        if (id == kWingStyleDefs[i].id) return i;
+    return 0; // dragon default
+}
+
+// Serializes the picker value in the launcher's radio format:
+// "<selectedIndex>,<id1>,<id2>,..." (same convention as Custom Capes).
+static std::string wingStyleRadioValue(int index) {
+    if (index < 0 || index >= kWingStyleCount) index = 0;
+    std::string value = std::to_string(index);
+    for (int i = 0; i < kWingStyleCount; ++i) {
+        value += ',';
+        value += kWingStyleDefs[i].id;
+    }
+    return value;
+}
+
+// Parses a value coming from the config file (full radio value) or from the
+// launcher (just the numeric index when the selection changes) or a bare
+// style id, and returns a valid style index.
+static int resolveWingStyleIndex(const std::string& value) {
+    if (value.empty()) return 0;
+
+    const std::size_t comma = value.find(',');
+    std::string head = value.substr(0, comma);
+
+    bool numeric = !head.empty();
+    for (char c : head) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) { numeric = false; break; }
+    }
+    if (numeric) {
+        try {
+            const int idx = std::stoi(head);
+            if (idx >= 0 && idx < kWingStyleCount) return idx;
+        } catch (...) {}
+        return 0;
+    }
+    return wingStyleIndexForId(head);
+}
 
 static constexpr float kRightRootPivotX = -3.0f;
 static constexpr float kLeftRootPivotX = 3.0f;
 static constexpr float kRootPivotY = 21.0f;
-static constexpr int kWingBoneCount = 7;
 static constexpr int kWingBoxFaces = 6;
-static constexpr int kWingVertexCount = 2 * kWingBoneCount * kWingBoxFaces * 4 * 2; // both windings
 
 static WingCornerPose composePose(const WingCornerPose& parent, float anchorX, float anchorY, float angleRad) {
     const float rc = std::cos(angleRad);
@@ -338,15 +542,16 @@ static void emitWingBox(void* tess, const WingBoneDef& def, const WingCornerPose
     for (int f = 0; f < 6; ++f) emitFace(tess, corners, kFaces[f], faceColors[f]);
 }
 
-static void emitWing(void* tess, const WingBoneDef (&bones)[7], float rootPivotX,
-                     const float (&anglesDeg)[7], float angleSign,
+static void emitWing(void* tess, const WingBoneDef* bones, int boneCount, float rootPivotX,
+                     const float anglesDeg[7], float angleSign,
                      float feetX, float feetY, float feetZ,
                      float rightX, float rightZ, float fwdX, float fwdZ,
                      float camX, float camY, float camZ) {
-    WingCornerPose poses[kWingBoneCount];
-    for (int i = 0; i < kWingBoneCount; ++i) {
+    WingCornerPose poses[kMaxWingBones];
+    for (int i = 0; i < boneCount; ++i) {
         const WingBoneDef& def = bones[i];
-        const float angleRad = angleSign * anglesDeg[i] * kDegToRad;
+        const int ai = (def.angleIndex >= 0 && def.angleIndex < 7) ? def.angleIndex : 0;
+        const float angleRad = angleSign * anglesDeg[ai] * kDegToRad;
         if (def.parent < 0) {
             poses[i] = { std::cos(angleRad), std::sin(angleRad), rootPivotX, kRootPivotY };
         } else {
@@ -494,6 +699,14 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float fwdX = -sinYaw;
     float fwdZ = cosYaw;
 
+    // Resolve the selected wing style (index is kept in sync with m_wingStyle
+    // on the tick/config thread; reading an int here is safe for the render
+    // thread).
+    int styleIdx = 0;
+    if (g_wings) styleIdx = g_wings->m_wingStyleIndex;
+    if (styleIdx < 0 || styleIdx >= kWingStyleCount) styleIdx = 0;
+    const WingStyle& style = kWingStyleDefs[styleIdx];
+
     // Per-bone, raise-positive angles in animation order:
     // [shoulder, upper, tip, feather_1, feather_2, feather_3, feather_4]
     const float wingAngles[7] = {
@@ -504,13 +717,14 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     char pad[0x58];
     std::memset(pad, 0, sizeof(pad));
 
-    s_tessBegin(tess, nullptr, 1, kWingVertexCount, 0); // 1 = quad
+    const int vertexCount = 2 * style.boneCount * kWingBoxFaces * 4 * 2; // both windings
+    s_tessBegin(tess, nullptr, 1, vertexCount, 0); // 1 = quad
 
     // Right wing (span along -X, so a positive lift angle is a negative Z
     // rotation); left wing mirrors it.
-    emitWing(tess, kRightWingBones, kRightRootPivotX, wingAngles, -1.0f,
+    emitWing(tess, style.rightBones, style.boneCount, kRightRootPivotX, wingAngles, -1.0f,
              feetX, feetY, feetZ, rightX, rightZ, fwdX, fwdZ, camX, camY, camZ);
-    emitWing(tess, kLeftWingBones, kLeftRootPivotX, wingAngles, 1.0f,
+    emitWing(tess, leftBonesFor(styleIdx), style.boneCount, kLeftRootPivotX, wingAngles, 1.0f,
              feetX, feetY, feetZ, rightX, rightZ, fwdX, fwdZ, camX, camY, camZ);
 
     s_renderMesh(screenContext, tess, matFill, pad);
@@ -531,7 +745,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 } // namespace
 
 WingsModule::WingsModule()
-    : Module("Wings", "Renders 3D articulated wings attached to your back (bone hierarchy: shoulder / upper / tip + feathers). Flap, idle and glide animations are driven by your movement speed. Geo and animation JSON + texture are written to the wings folder next to config.json. Does not modify your skin.") {
+    : Module("Wings", "Renders 3D articulated wings attached to your back, animated by your movement speed. Pick a shape in the Wing Style selector: Dragon, Angel, Demon, Bat, Butterfly, Phoenix or Fairy. Does not modify your skin.") {
     g_wings = this;
     showInMenu = true;
     hideInHudEditor = true; // world overlay, not HUD
@@ -544,6 +758,7 @@ WingsModule::~WingsModule() {
 void WingsModule::onInit() {
     m_wingsDir = wingsDirectoryForConfig();
     ensureWingsAssetFiles();
+    ensureWingStyleBones();
 
     std::uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderLevel);
     if (addr != 0) m_patchTarget = (void*)addr;
@@ -909,6 +1124,13 @@ void WingsModule::loadConfig(const nlohmann::json& j) {
         float speed = j["flapSpeed"].get<float>();
         m_flapSpeed = std::clamp(speed, 0.1f, 10.0f);
     }
+    if (j.contains("m_wingStyle")) {
+        m_wingStyleIndex = resolveWingStyleIndex(j["m_wingStyle"].get<std::string>());
+        m_wingStyle = kWingStyleDefs[m_wingStyleIndex].id;
+    } else if (j.contains("wingStyle")) {
+        m_wingStyleIndex = resolveWingStyleIndex(j["wingStyle"].get<std::string>());
+        m_wingStyle = kWingStyleDefs[m_wingStyleIndex].id;
+    }
 }
 
 void WingsModule::saveConfig(nlohmann::json& j) {
@@ -916,4 +1138,6 @@ void WingsModule::saveConfig(nlohmann::json& j) {
     float flapSpeed = std::clamp(m_flapSpeed, 0.1f, 10.0f);
     j["m_flapSpeed"] = flapSpeed;
     j["flapSpeed"] = flapSpeed; // keep both keys for compatibility
+    m_wingStyleIndex = wingStyleIndexForId(m_wingStyle);
+    j["m_wingStyle"] = wingStyleRadioValue(m_wingStyleIndex);
 }

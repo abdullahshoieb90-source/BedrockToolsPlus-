@@ -37,6 +37,20 @@ Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x
 
 The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
 
+## Wings
+
+The **Wings** module renders animated 3D wings on your back that flap, idle and glide with your movement. Open the module's **Wing Style** selector to choose a shape:
+
+- **Dragon** — the default articulated membrane wing
+- **Angel** — white feathered blades with gold tips
+- **Demon** — deep-red spiky membrane
+- **Bat** — small dark membrane
+- **Butterfly** — pink/orange panels with blue accents
+- **Phoenix** — fiery orange feathers
+- **Fairy** — small translucent cyan/pink wings
+
+The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view.
+
 ## System Requirements
 
 - Android 9 or newer

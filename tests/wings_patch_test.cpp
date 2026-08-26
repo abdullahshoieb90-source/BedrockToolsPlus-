@@ -243,6 +243,51 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    // Wing style selection (radio)
+    // ------------------------------------------------------------------
+    std::printf("wing style selection\n");
+    {
+        WingsModule styleMod;
+        check(styleMod.m_wingStyle == "dragon", "default wing style is dragon");
+        check(styleMod.m_wingStyleIndex == 0, "default wing style index is 0");
+
+        nlohmann::json saved;
+        styleMod.saveConfig(saved);
+        check(saved["m_wingStyle"].get<std::string>().find("dragon,angel,demon,bat,butterfly,phoenix,fairy") != std::string::npos,
+              "saved wing style is a radio value listing all styles");
+
+        // The launcher reports just the numeric index when the selection changes.
+        for (int idx = 0; idx < 7; ++idx) {
+            nlohmann::json j;
+            j["m_wingStyle"] = std::to_string(idx);
+            WingsModule t;
+            t.loadConfig(j);
+            check(t.m_wingStyleIndex == idx, "bare index resolves to the matching style");
+        }
+
+        // A full radio value from the config file round-trips.
+        nlohmann::json full;
+        full["m_wingStyle"] = "4,dragon,angel,demon,bat,butterfly,phoenix,fairy";
+        WingsModule t;
+        t.loadConfig(full);
+        check(t.m_wingStyle == "butterfly" && t.m_wingStyleIndex == 4, "full radio value resolves to butterfly");
+
+        // A bare style id is accepted too.
+        nlohmann::json bare;
+        bare["m_wingStyle"] = "phoenix";
+        WingsModule p;
+        p.loadConfig(bare);
+        check(p.m_wingStyle == "phoenix" && p.m_wingStyleIndex == 5, "bare id resolves to phoenix");
+
+        // An unknown id falls back to the default (dragon).
+        nlohmann::json bad;
+        bad["m_wingStyle"] = "unicorn";
+        WingsModule u;
+        u.loadConfig(bad);
+        check(u.m_wingStyle == "dragon" && u.m_wingStyleIndex == 0, "unknown id falls back to dragon");
+    }
+
+    // ------------------------------------------------------------------
     // onLocalPlayerTick must not touch skin and must not crash
     // ------------------------------------------------------------------
     std::printf("onLocalPlayerTick does not patch skin\n");
