@@ -23,6 +23,37 @@ inline constexpr std::size_t mNameTagHash = 384;
 inline constexpr std::size_t mFilteredNameTag = 712;
 }
 
+// The component pointed to by Actor::mStateVectorComponent. Its first member
+// is the actor's current world position and its second member is the
+// position from the previous tick; together they drive partial-tick
+// interpolation (pos = prev + (cur - prev) * partialTicks).
+namespace StateVectorComponent {
+inline constexpr std::size_t mPosition = 0x0;
+inline constexpr std::size_t mPreviousPosition = 0xC;
+}
+
+// Bitmask values for the actor category flags stored in Actor::mCategories,
+// in the order of the ActorCategory enum of the 1.21+ decompile. The Hitbox
+// module relies on IsMob (1 << 1) being the "mob" bit.
+namespace ActorCategories {
+inline constexpr std::uint32_t IsPlayer             = 1u << 0;
+inline constexpr std::uint32_t IsMob                = 1u << 1;
+inline constexpr std::uint32_t IsItem               = 1u << 2;
+inline constexpr std::uint32_t IsProjectile         = 1u << 3;
+inline constexpr std::uint32_t IsFireball           = 1u << 4;
+inline constexpr std::uint32_t IsHangingObject      = 1u << 5;
+inline constexpr std::uint32_t IsWaterCreature      = 1u << 6;
+inline constexpr std::uint32_t IsMonster            = 1u << 7;
+inline constexpr std::uint32_t IsCreature           = 1u << 8;
+inline constexpr std::uint32_t IsWaterMob           = 1u << 9;
+inline constexpr std::uint32_t IsAmbient            = 1u << 10;
+inline constexpr std::uint32_t IsFlying             = 1u << 11;
+inline constexpr std::uint32_t IsPowderSnowCreature = 1u << 12;
+inline constexpr std::uint32_t IsMinecart           = 1u << 13;
+inline constexpr std::uint32_t IsVehicle            = 1u << 14;
+inline constexpr std::uint32_t IsTNT                = 1u << 15;
+}
+
 namespace ActorDataIds {
 inline constexpr std::size_t FuseTime = 55;
 inline constexpr std::size_t NametagAlwaysShow = 81;
