@@ -73,6 +73,8 @@ namespace DataItem {
 inline constexpr std::size_t mType = 0x8;
 inline constexpr std::size_t mId = 0xA;
 inline constexpr std::size_t mValue = 0xC;
+inline constexpr std::uint8_t ByteType = 0;
+inline constexpr std::uint8_t ShortType = 1;
 inline constexpr std::uint8_t IntType = 2;
 inline constexpr std::uint8_t FloatType = 3;
 }
