@@ -816,11 +816,14 @@ void WingsModule::applyPatch() {
 
 void WingsModule::onEnable() {
     applyPatch();
-    m_flapTime = 0.0f;
-    m_intensity = 0.0f;
-    m_glide = 0.0f;
-    m_airTime = 0.0f;
-    m_flapClockStarted = false;
+    {
+        std::lock_guard<std::mutex> animationLock(m_animationMutex);
+        m_flapTime = 0.0f;
+        m_intensity = 0.0f;
+        m_glide = 0.0f;
+        m_airTime = 0.0f;
+        m_flapClockStarted = false;
+    }
     m_hasPrevCenter = false;
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
@@ -903,6 +906,12 @@ WingBoneAngles WingsModule::currentBoneAngles() const {
 }
 
 WingBoneAngles WingsModule::currentBoneAnglesInterpolated() const {
+    // The render hook is called concurrently with the tick callback. Take one
+    // coherent animation snapshot before extrapolating it; reading m_flapTime
+    // and m_lastFlapTick without this lock occasionally produced a one-frame
+    // phase reset, perceived as wing stutter while moving.
+    std::lock_guard<std::mutex> animationLock(m_animationMutex);
+
     // Ultra-low latency: add time since last tick to flapTime for smooth 60+ FPS animation
     float effectiveFlapTime = m_flapTime;
     if (m_flapClockStarted) {
@@ -953,6 +962,9 @@ WingBoneAngles WingsModule::currentBoneAnglesInterpolated() const {
 
 void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, float verticalSpeed) {
     if (dtSeconds <= 0.0f) return;
+    // Keep the tick update atomic with the render-thread interpolation above.
+    // In particular, the phase and its timestamp must belong to the same tick.
+    std::lock_guard<std::mutex> animationLock(m_animationMutex);
     m_flapTime += dtSeconds;
 
     horizontalSpeed = std::clamp(horizontalSpeed, 0.0f, 40.0f);
@@ -1017,8 +1029,14 @@ void WingsModule::onLocalPlayerTick(void* player) {
         dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
         if (dt > 0.25f) dt = 0.25f;
     }
-    m_lastFlapTick = now;
-    m_flapClockStarted = true;
+    // Publish the tick timestamp before advancing the phase. This keeps the
+    // render interpolation origin aligned with the phase produced by this
+    // tick, instead of briefly exposing a new phase with the previous origin.
+    {
+        std::lock_guard<std::mutex> animationLock(m_animationMutex);
+        m_lastFlapTick = now;
+        m_flapClockStarted = true;
+    }
 
     // Track player AABB and rotation for rendering, and derive the player's
     // speed from consecutive AABB centers (teleports are ignored).

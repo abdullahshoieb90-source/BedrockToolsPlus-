@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <mutex>
 
 // Wings - world-space overlay version
 //
@@ -192,7 +193,10 @@ private:
 
     std::string m_wingsDir;
 
-    // Animation state (clock driven per tick).
+    // Animation state (clock driven per tick). The render hook runs on a
+    // different thread from LocalPlayerTick, so all clock reads/writes must be
+    // synchronized; otherwise a torn sample can make the flap phase jump.
+    mutable std::mutex m_animationMutex;
     float m_flapTime = 0.0f;
     float m_intensity = 0.0f;   // smoothed idle->flight blend
     float m_glide = 0.0f;       // smoothed glide blend
