@@ -16,6 +16,18 @@
 // the session; the scan re-runs once per m_rescanIntervalMs only while the
 // cache is empty, so a freshly joined world is picked up without a
 // relaunch.
+//
+// Crash fix (SIGSEGV/SIGBUS): the scan's candidate pointers are read out
+// of the Player object, so a candidate can look like a perfectly good
+// address — non-null, above the mmap-min page, pointer-aligned — while
+// pointing at address space the process never mapped (freed heap holes,
+// the guard pages around thread stacks, gaps between the .so mappings).
+// The first dereference of such a candidate raised SIGSEGV and killed the
+// process, which is what happened the first time this module was enabled.
+// Every probe below therefore goes through bedrocktools::mem::tryRead,
+// which wraps the copy in a thread-local SIGSEGV/SIGBUS window and
+// returns the caller's fallback when the read faults instead of taking
+// the game down.
 
 #include "inventoryhud.hpp"
 #include "modules/ModuleRegistry.hpp"
@@ -25,6 +37,7 @@
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Memory.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
+#include <bedrocktools/sdk/SafeMem.hpp>
 #include <bedrocktools/sdk/client/ClientInstance.hpp>
 #include <bedrocktools/sdk/world/Actor.hpp>
 
@@ -112,9 +125,12 @@ inline T safeRead(const void* addr, T fallback = T{}) {
     // require word-aligned accesses for the pointer walks used by the
     // scan to avoid unaligned faults on strict ARMv8 CPUs.
     if ((reinterpret_cast<std::uintptr_t>(addr) & (sizeof(T) - 1)) != 0) return fallback;
-    T value;
-    std::memcpy(&value, addr, sizeof(T));
-    return value;
+    // Numerically plausible is not the same as mapped: the scan feeds us
+    // candidate words that can point at unmapped address space. SafeMem
+    // arms a thread-local SIGSEGV/SIGBUS window around the copy and hands
+    // back `fallback` when the read faults, so a bad candidate costs a
+    // disqualification instead of a crash.
+    return bedrocktools::mem::tryRead<T>(addr, fallback);
 }
 
 inline void* readPtr(const void* addr) {
@@ -144,7 +160,17 @@ bool itemStackHasItem(const void* itemStack) {
 bool slotLooksLikeItemStack(const void* slot) {
     if (!isValidPointer(slot)) return false;
     const auto* bytes = static_cast<const std::byte*>(slot);
-    const auto counter = safeRead<std::uintptr_t>(bytes + sp::ItemStackBaseItem, 0);
+    // A read that *faults* is not the same as a read that returns 0. A
+    // genuinely empty slot has a null counter we can actually read; an
+    // unmapped candidate has no counter at all. Treating SafeMem's
+    // fallback 0 as "empty slot" would let a whole region of unmapped
+    // memory score as 36 well-formed slots and get cached as the
+    // inventory for the rest of the session, so ask for the read status
+    // explicitly and disqualify on fault.
+    std::uintptr_t counter = 0;
+    if (!bedrocktools::mem::tryReadBytes(bytes + sp::ItemStackBaseItem, &counter, sizeof(counter))) {
+        return false;
+    }
     if (counter == 0) return true;
     if (!isValidPointer(reinterpret_cast<const void*>(counter))) return false;
     return readPtr(reinterpret_cast<const void*>(counter)) != nullptr;
@@ -262,7 +288,12 @@ int scoreCandidate(std::uintptr_t base, std::size_t stride,
 InventoryHUDModule::InventoryCache scanForInventory(
     bedrocktools::sdk::Player* player, const void* selectedItem) {
     InventoryHUDModule::InventoryCache best;
-    int bestScore = -2;
+    // "Nothing usable yet" must sit strictly below scoreCandidate's
+    // disqualification score (-1), otherwise a candidate we rejected —
+    // including one rejected because its slots faulted — would still beat
+    // the sentinel and be cached as the inventory. Phase 2 below keys off
+    // `bestScore < 0`, so -1 keeps that gate behaving exactly as before.
+    int bestScore = -1;
 
     if (!player || !isValidPointer(player)) return best;
     const auto playerBase = reinterpret_cast<std::uintptr_t>(player);

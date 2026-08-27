@@ -21,7 +21,7 @@
 //         -o /tmp/inventoryhud_test
 //     /tmp/inventoryhud_test
 
-#include "visual/inventoryhud.hpp"
+#include "modules/visual/inventoryhud.hpp"
 
 #include <cstdio>
 #include <cstdlib>
