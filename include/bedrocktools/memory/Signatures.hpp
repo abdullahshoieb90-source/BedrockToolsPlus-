@@ -133,6 +133,14 @@ enum class SignatureId : std::uint16_t {
     BlockTessellatorTessellateDoubleThinFenceInWorld,
     BlockGraphicsGetTexture,
     BlockOccluderUpdateRenderFace,
+    ActorRenderDispatcherGetRenderer,
+    ActorRenderDispatcherRender,
+    LevelRendererPlayerRenderEntities,
+    BaseActorRendererRenderText,
+    PlayerGetSelectedItem,
+    ItemStackCtor,
+    ItemStackReinitBlock,
+    ItemRendererRenderItemGroup,
     Count
 };
 
