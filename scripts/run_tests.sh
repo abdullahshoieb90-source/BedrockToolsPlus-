@@ -61,16 +61,6 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
-        inventoryhud_test)
-            # Builds the real module as a second translation unit; on the
-            # host it needs the fake preloader/JSON headers and stb from
-            # third_party, exactly as in the build command documented at
-            # the top of the test.
-            extra+=(-I "${root}/third_party"
-                    -I "${root}/tests/fakejson"
-                    -I "${root}/tests/fakepl")
-            extra_src="${root}/src/modules/visual/inventoryhud.cpp"
-            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
