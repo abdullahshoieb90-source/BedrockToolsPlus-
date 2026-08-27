@@ -126,7 +126,10 @@ struct AABB {
 };
 
 static std::mutex s_stateMutex;
+static AABB s_playerAABB{};
+static bedrocktools::sdk::Vec2 s_playerRot{0,0};
 static WingBoneAngles s_boneAngles{};
+static void* s_localPlayerPtr = nullptr;
 static bool s_hasPlayer = false;
 
 // --- Render-thread anchor interpolation (mirrors entity client-side lerp) ---
@@ -146,11 +149,6 @@ static bool s_hasPrevSample = false;
 static std::chrono::steady_clock::time_point s_lastTickTime{};
 static bool s_lastTickTimeValid = false;
 
-static bool hasTrackedPlayer() {
-    std::lock_guard<std::mutex> lock(s_stateMutex);
-    return s_hasPlayer;
-}
-
 // Shortest-arc interpolation for angles in degrees, so yaw/pitch never wrap
 // the 360 degree boundary mid-lerp (which would snap the wings the wrong way).
 static float lerpAngleDeg(float a, float b, float t) {
@@ -162,62 +160,14 @@ static float lerpAngleDeg(float a, float b, float t) {
 
 static AABB getActorAABB(void* actor) {
     AABB aabb{};
-    const std::uintptr_t actorAddr = reinterpret_cast<std::uintptr_t>(actor);
+    std::uintptr_t actorAddr = (std::uintptr_t)actor;
     if (actorAddr < 0x1000) return aabb;
-    const std::uintptr_t builtInPtr = *reinterpret_cast<std::uintptr_t*>(actorAddr + Actor::mStateVectorComponent);
+    std::uintptr_t builtInPtr = *(std::uintptr_t*)(actorAddr + Actor::mStateVectorComponent);
     if (builtInPtr < 0x1000) return aabb;
-    const std::uintptr_t aabbComp = *reinterpret_cast<std::uintptr_t*>(
-        actorAddr + Actor::mStateVectorComponent + BuiltInActorComponents::mAABBShapeComponent);
+    std::uintptr_t aabbComp = *(std::uintptr_t*)(actorAddr + Actor::mStateVectorComponent + BuiltInActorComponents::mAABBShapeComponent);
     if (aabbComp < 0x1000) return aabb;
-    aabb = *reinterpret_cast<AABB*>(aabbComp + AABBShapeComponent::mAABB);
+    aabb = *(AABB*)(aabbComp + AABBShapeComponent::mAABB);
     return aabb;
-}
-
-static bool finiteAABB(const AABB& aabb) {
-    return std::isfinite(aabb.min.x) && std::isfinite(aabb.min.y) && std::isfinite(aabb.min.z) &&
-           std::isfinite(aabb.max.x) && std::isfinite(aabb.max.y) && std::isfinite(aabb.max.z) &&
-           aabb.max.x > aabb.min.x && aabb.max.y > aabb.min.y && aabb.max.z > aabb.min.z &&
-           (aabb.max.x - aabb.min.x) < 16.0f &&
-           (aabb.max.y - aabb.min.y) < 16.0f &&
-           (aabb.max.z - aabb.min.z) < 16.0f;
-}
-
-static AABB translateAABB(const AABB& aabb, const bedrocktools::sdk::Vec3& delta) {
-    AABB translated = aabb;
-    translated.min.x += delta.x;
-    translated.min.y += delta.y;
-    translated.min.z += delta.z;
-    translated.max.x += delta.x;
-    translated.max.y += delta.y;
-    translated.max.z += delta.z;
-    return translated;
-}
-
-struct ActorMotionSample {
-    bedrocktools::sdk::Vec3 current{};
-    bedrocktools::sdk::Vec3 previous{};
-    bool valid = false;
-};
-
-// StateVectorComponent already contains the exact pair used by Bedrock's
-// player renderer for partial-tick interpolation. Reading that pair is more
-// stable than differentiating AABB samples: the AABB can change size while
-// sneaking, jumping or landing, which otherwise looks like a tiny vertical
-// vibration in the attached wings.
-static ActorMotionSample getActorMotion(void* actor) {
-    ActorMotionSample motion{};
-    const std::uintptr_t actorAddr = reinterpret_cast<std::uintptr_t>(actor);
-    if (actorAddr < 0x1000) return motion;
-    const std::uintptr_t state = *reinterpret_cast<std::uintptr_t*>(actorAddr + Actor::mStateVectorComponent);
-    if (state < 0x1000) return motion;
-
-    motion.current = *reinterpret_cast<bedrocktools::sdk::Vec3*>(state + StateVectorComponent::mPosition);
-    motion.previous = *reinterpret_cast<bedrocktools::sdk::Vec3*>(state + StateVectorComponent::mPreviousPosition);
-    const auto finiteVec = [](const bedrocktools::sdk::Vec3& v) {
-        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
-    };
-    motion.valid = finiteVec(motion.current) && finiteVec(motion.previous);
-    return motion;
 }
 
 // ActorRotationComponent is the body transform used by the player model.
@@ -232,6 +182,10 @@ static bedrocktools::sdk::Vec2 getActorBodyRotation(void* actor) {
     if (rotComp < 0x1000) return bodyRotation;
     bodyRotation = *(bedrocktools::sdk::Vec2*)rotComp;
     return bodyRotation;
+}
+
+static float getActorBodyYaw(void* actor) {
+    return getActorBodyRotation(actor).y;
 }
 
 static MaterialPtr getMaterial(const char* name) {
@@ -404,6 +358,7 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     AABB aabb{};
     bedrocktools::sdk::Vec2 rot{};
     WingBoneAngles angles{};
+    void* playerPtr = nullptr;
     AABB prevAABB{};
     bedrocktools::sdk::Vec2 prevRot{0, 0};
     float tickInterval = 0.05f;
@@ -419,6 +374,7 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
         aabb = s_curAABB;
         rot = s_curRot;
         angles = s_boneAngles;
+        playerPtr = s_localPlayerPtr;
         prevAABB = s_prevAABB;
         prevRot = s_prevRot;
         tickInterval = s_tickInterval;
@@ -429,13 +385,41 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
 
     if (!hasPlayer) return;
 
-    // The tick callback publishes a complete, immutable render snapshot. Do
-    // not read the actor again here: physics can update its AABB halfway through
-    // a frame, while the player model is using the previous/current state pair.
-    // Mixing that live value with the tick snapshot was the source of the small
-    // positional jumps visible as wing vibration during walking and jumping.
-    // The current sample must be finite before we can anchor the wings to it.
-    const bool curValid = finiteAABB(aabb) && std::isfinite(rot.x) && std::isfinite(rot.y);
+    // --- Low-latency anchor: take the freshest AABB/rotation directly from the
+    // actor (the same authoritative component the tick uses), then interpolate
+    // it against the previous tick's sample by the partial-tick fraction.
+    // Reading the live AABB alone leaves the wings snapping at the 20 Hz tick
+    // rate while the body glides at the render rate - that mismatch is exactly
+    // the walking jitter.  Interpolating, like the game's own client-side lerp,
+    // makes the wings ride the smoothly rendered body instead of stuttering.
+    bool liveValid = false;
+    if (playerPtr && (std::uintptr_t)playerPtr >= 0x1000) {
+        AABB liveAABB = getActorAABB(playerPtr);
+        const float width = liveAABB.max.x - liveAABB.min.x;
+        const float height = liveAABB.max.y - liveAABB.min.y;
+        const float depth = liveAABB.max.z - liveAABB.min.z;
+        const bool finite =
+            std::isfinite(liveAABB.min.x) && std::isfinite(liveAABB.min.y) && std::isfinite(liveAABB.min.z) &&
+            std::isfinite(liveAABB.max.x) && std::isfinite(liveAABB.max.y) && std::isfinite(liveAABB.max.z);
+        liveValid = finite && width > 0.0f && width < 16.0f &&
+                    height > 0.0f && height < 16.0f &&
+                    depth > 0.0f && depth < 16.0f;
+        if (liveValid) {
+            aabb = liveAABB;             // freshest "current" sample
+            bedrocktools::sdk::Vec2 liveRot = getActorBodyRotation(playerPtr);
+            if (std::isfinite(liveRot.x) && std::isfinite(liveRot.y)) {
+                rot = liveRot;
+            }
+        }
+    }
+
+    // The current sample (live if available, otherwise the last tick's) must be
+    // finite before we can anchor the wings to it.
+    const bool curValid =
+        std::isfinite(aabb.min.x) && std::isfinite(aabb.min.y) && std::isfinite(aabb.min.z) &&
+        std::isfinite(aabb.max.x) && std::isfinite(aabb.max.y) && std::isfinite(aabb.max.z) &&
+        aabb.max.x > aabb.min.x && aabb.max.y > aabb.min.y && aabb.max.z > aabb.min.z &&
+        std::isfinite(rot.x) && std::isfinite(rot.y);
     if (!curValid) return;
 
     // Interpolate the anchor and the facing between the previous and current
@@ -565,7 +549,7 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
 static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (_renderLevel_orig) _renderLevel_orig(_this, screenContext, a3);
     if (!g_wings || !g_wings->enabled) return;
-    if (!hasTrackedPlayer()) return;
+    if (!s_localPlayerPtr) return;
     renderWingsOverlay(_this, screenContext);
 }
 
@@ -635,13 +619,9 @@ void WingsModule::onEnable() {
     {
         std::lock_guard<std::mutex> animationLock(m_animationMutex);
         m_flapTime = 0.0f;
-        m_previousFlapTime = 0.0f;
         m_intensity = 0.0f;
-        m_previousIntensity = 0.0f;
         m_glide = 0.0f;
-        m_previousGlide = 0.0f;
         m_airTime = 0.0f;
-        m_lastAnimationInterval = 0.05f;
         m_flapClockStarted = false;
     }
     m_hasPrevCenter = false;
@@ -662,6 +642,7 @@ void WingsModule::onDisable() {
     // No skin to restore; just clear tracked player so overlay disappears immediately
     std::lock_guard<std::mutex> lock(s_stateMutex);
     s_hasPlayer = false;
+    s_localPlayerPtr = nullptr;
     s_hasPrevSample = false;
     s_lastTickTimeValid = false;
 }
@@ -675,7 +656,6 @@ static float lerpFloat(float a, float b, float t) {
 }
 
 float WingsModule::currentFlapAngleDegrees() const {
-    std::lock_guard<std::mutex> animationLock(m_animationMutex);
     return kFlapAmplitudeDegrees * std::sin(m_flapTime * kFlapBaseRate * m_flapSpeed);
 }
 
@@ -685,7 +665,7 @@ float WingsModule::currentFlapAngleRadians() const {
 
 // Shared idle/flap/glide pose solver. Both currentBoneAngles() (the pose
 // published on the tick) and currentBoneAnglesInterpolated() (the pose
-// interpolated on the render thread) go through here, so the two can no
+// extrapolated on the render thread) go through here, so the two can no
 // longer drift apart - they used to be two hand-copied blocks.
 static WingBoneAngles computeWingPose(float flapTime, float flapSpeed, float intensity, float glide) {
     WingBoneAngles out;
@@ -739,31 +719,22 @@ WingBoneAngles WingsModule::currentBoneAngles() const {
 
 WingBoneAngles WingsModule::currentBoneAnglesInterpolated() const {
     // The render hook is called concurrently with the tick callback. Take one
-    // coherent animation snapshot before interpolating it; reading m_flapTime
+    // coherent animation snapshot before extrapolating it; reading m_flapTime
     // and m_lastFlapTick without this lock occasionally produced a one-frame
     // phase reset, perceived as wing stutter while moving.
     std::lock_guard<std::mutex> animationLock(m_animationMutex);
 
-    // Render the same previous->current interval that the player model uses.
-    // The old code evaluated the newest pose immediately after every tick and
-    // then added wall-clock time to it. That made the wing angle jump at 20 Hz,
-    // especially when walking or when the vertical velocity changed on a jump.
-    // Interpolate the phase and both blend weights together instead; all three
-    // parts of the pose now move continuously between render frames.
+    // Ultra-low latency: add time since last tick to flapTime for smooth 60+ FPS animation
     float effectiveFlapTime = m_flapTime;
-    float effectiveIntensity = m_intensity;
-    float effectiveGlide = m_glide;
-    if (m_flapClockStarted && m_lastAnimationInterval > 0.0f) {
-        const auto now = std::chrono::steady_clock::now();
-        float partial = std::chrono::duration<float>(now - m_lastFlapTick).count()
-                      / m_lastAnimationInterval;
-        partial = std::clamp(partial, 0.0f, 1.0f);
-        effectiveFlapTime = lerpFloat(m_previousFlapTime, m_flapTime, partial);
-        effectiveIntensity = lerpFloat(m_previousIntensity, m_intensity, partial);
-        effectiveGlide = lerpFloat(m_previousGlide, m_glide, partial);
+    if (m_flapClockStarted) {
+        auto now = std::chrono::steady_clock::now();
+        float extra = std::chrono::duration<float>(now - m_lastFlapTick).count();
+        if (extra < 0.0f) extra = 0.0f;
+        if (extra > 0.1f) extra = 0.1f; // clamp to 100ms to avoid large jumps after hitch
+        effectiveFlapTime += extra;
     }
 
-    return computeWingPose(effectiveFlapTime, m_flapSpeed, effectiveIntensity, effectiveGlide);
+    return computeWingPose(effectiveFlapTime, m_flapSpeed, m_intensity, m_glide);
 }
 
 void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, float verticalSpeed) {
@@ -771,12 +742,6 @@ void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, f
     // Keep the tick update atomic with the render-thread interpolation above.
     // In particular, the phase and its timestamp must belong to the same tick.
     std::lock_guard<std::mutex> animationLock(m_animationMutex);
-    // Save the complete previous sample before changing any animation value.
-    // The render hook uses this sample to remove the 20 Hz discontinuity.
-    m_previousFlapTime = m_flapTime;
-    m_previousIntensity = m_intensity;
-    m_previousGlide = m_glide;
-    m_lastAnimationInterval = std::clamp(dtSeconds, 0.001f, 0.25f);
     m_flapTime += dtSeconds;
 
     horizontalSpeed = std::clamp(horizontalSpeed, 0.0f, 40.0f);
@@ -816,93 +781,67 @@ void WingsModule::advanceFlapAnimation(float dtSeconds) {
 }
 
 void WingsModule::onLocalPlayerTick(void* player) {
-    const auto clearRenderPlayer = [this]() {
-        {
-            std::lock_guard<std::mutex> animationLock(m_animationMutex);
-            // A missing player can last for several frames while changing
-            // worlds. Do not let that pause turn into a large animation step on
-            // the next join.
-            m_flapClockStarted = false;
-            m_previousFlapTime = m_flapTime;
-            m_previousIntensity = m_intensity;
-            m_previousGlide = m_glide;
-        }
+    if (!player) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_hasPlayer = false;
+        s_localPlayerPtr = nullptr;
         s_hasPrevSample = false;
         s_lastTickTimeValid = false;
-        m_hasPrevCenter = false;
-    };
-
-    if (!player || !enabled) {
-        clearRenderPlayer();
         return;
     }
 
-    // Tick dt from the real clock (clamped after hitches). The timestamp and
-    // the phase are committed as one animation snapshot so the render thread
-    // can never extrapolate from a new phase using an old timestamp.
+    if (!enabled) {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        s_hasPlayer = false;
+        s_localPlayerPtr = nullptr;
+        s_hasPrevSample = false;
+        s_lastTickTimeValid = false;
+        return;
+    }
+
+    // Tick dt from the real clock (clamped after hitches).
     const auto now = std::chrono::steady_clock::now();
     float dt = 0.0f;
+    if (m_flapClockStarted) {
+        dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
+        if (dt > 0.25f) dt = 0.25f;
+    }
+    // Publish the tick timestamp before advancing the phase. This keeps the
+    // render interpolation origin aligned with the phase produced by this
+    // tick, instead of briefly exposing a new phase with the previous origin.
     {
         std::lock_guard<std::mutex> animationLock(m_animationMutex);
-        if (!m_flapClockStarted) {
-            m_lastFlapTick = now;
-            m_flapClockStarted = true;
-        } else {
-            dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
-            // A duplicate callback in the same frame must not restart the
-            // previous/current interpolation interval. Leave the timestamp
-            // untouched until a real tick has elapsed.
-            if (dt <= 0.001f) return;
-            if (dt > 0.25f) dt = 0.25f;
-            m_lastFlapTick = now;
-        }
+        m_lastFlapTick = now;
+        m_flapClockStarted = true;
     }
 
-    // Track the current bounds and the state-vector position pair. The latter
-    // is the same previous/current pair Bedrock uses to render the player, so
-    // it gives us both a stable velocity for animation and the exact previous
-    // anchor for partial-tick interpolation.
-    const AABB aabb = getActorAABB(player);
-    const bedrocktools::sdk::Vec2 rot = getActorBodyRotation(player);
-    if (!finiteAABB(aabb) || !std::isfinite(rot.x) || !std::isfinite(rot.y)) {
-        clearRenderPlayer();
-        return;
-    }
+    // Track player AABB and rotation for rendering, and derive the player's
+    // speed from consecutive AABB centers (teleports are ignored).
+    AABB aabb = getActorAABB(player);
+    bedrocktools::sdk::Vec2 rot = getActorBodyRotation(player);
 
-    const ActorMotionSample motion = getActorMotion(player);
     const float centerX = (aabb.min.x + aabb.max.x) * 0.5f;
     const float centerY = (aabb.min.y + aabb.max.y) * 0.5f;
     const float centerZ = (aabb.min.z + aabb.max.z) * 0.5f;
 
-    // Preserve these before overwriting the previous center. The old code
-    // calculated the teleport test after updating m_prevCenter, making every
-    // displacement look like zero and allowing a teleport-sized interpolation
-    // jump to shake the wings.
-    const bool hadPreviousCenter = m_hasPrevCenter;
-    const float centerDX = hadPreviousCenter ? centerX - m_prevCenterX : 0.0f;
-    const float centerDY = hadPreviousCenter ? centerY - m_prevCenterY : 0.0f;
-    const float centerDZ = hadPreviousCenter ? centerZ - m_prevCenterZ : 0.0f;
-    const float centerDeltaSq = centerDX * centerDX + centerDY * centerDY + centerDZ * centerDZ;
-    const bool teleport = hadPreviousCenter && dt > 0.001f && centerDeltaSq >= 25.0f;
-
     float horizontalSpeed = 0.0f;
     float verticalSpeed = 0.0f;
-    if (dt > 0.001f && !teleport) {
-        const float motionDX = motion.current.x - motion.previous.x;
-        const float motionDY = motion.current.y - motion.previous.y;
-        const float motionDZ = motion.current.z - motion.previous.z;
-        const float motionDeltaSq = motionDX * motionDX + motionDY * motionDY + motionDZ * motionDZ;
-        if (motion.valid && std::isfinite(motionDeltaSq) && motionDeltaSq < 25.0f) {
-            horizontalSpeed = std::sqrt(motionDX * motionDX + motionDZ * motionDZ) / dt;
-            verticalSpeed = motionDY / dt;
-        } else if (hadPreviousCenter && std::isfinite(centerDeltaSq) && centerDeltaSq < 25.0f) {
-            // Older builds may not expose a usable previous position. Keep a
-            // conservative fallback, but only use it when the bounds are
-            // genuinely close to the last sample.
-            horizontalSpeed = std::sqrt(centerDX * centerDX + centerDZ * centerDZ) / dt;
-            verticalSpeed = centerDY / dt;
+    float velX = 0.0f, velY = 0.0f, velZ = 0.0f;
+    bool hasVel = false;
+
+    if (dt > 0.0f) {
+        if (m_hasPrevCenter) {
+            const float dx = centerX - m_prevCenterX;
+            const float dy = centerY - m_prevCenterY;
+            const float dz = centerZ - m_prevCenterZ;
+            if (dx * dx + dy * dy + dz * dz < 25.0f) { // 5 blocks: not a teleport
+                horizontalSpeed = std::sqrt(dx * dx + dz * dz) / dt;
+                verticalSpeed = dy / dt;
+                velX = dx / dt;
+                velY = dy / dt;
+                velZ = dz / dt;
+                hasVel = true;
+            }
         }
         advanceWingAnimation(dt, horizontalSpeed, verticalSpeed);
     }
@@ -912,47 +851,40 @@ void WingsModule::onLocalPlayerTick(void* player) {
     m_prevCenterZ = centerZ;
     m_hasPrevCenter = true;
 
-    // Build the render pair directly from StateVectorComponent. Translating
-    // the current AABB by previousPosition - currentPosition keeps the wing
-    // anchor in lockstep with the model during both horizontal walking and
-    // vertical jump motion. If that pair is unavailable, use the previous
-    // bounds-derived center as a safe fallback.
-    AABB previousAABB = aabb;
-    if (motion.valid) {
-        const bedrocktools::sdk::Vec3 positionDelta{
-            motion.previous.x - motion.current.x,
-            motion.previous.y - motion.current.y,
-            motion.previous.z - motion.current.z,
-        };
-        const float positionDeltaSq =
-            positionDelta.x * positionDelta.x + positionDelta.y * positionDelta.y + positionDelta.z * positionDelta.z;
-        if (std::isfinite(positionDeltaSq) && positionDeltaSq < 25.0f && !teleport) {
-            previousAABB = translateAABB(aabb, positionDelta);
-        }
-    } else if (hadPreviousCenter && !teleport) {
-        previousAABB = translateAABB(aabb, {centerDX * -1.0f, centerDY * -1.0f, centerDZ * -1.0f});
-    }
-
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
-        // Rotation components do not expose the same previous/current pair as
-        // StateVectorComponent. Reuse the last published body rotation so a
-        // turn is interpolated instead of snapping the wings at 20 Hz.
-        const bedrocktools::sdk::Vec2 previousRot =
-            (!s_hasPrevSample || teleport) ? rot : s_curRot;
-        s_prevAABB = previousAABB;
-        s_prevRot = previousRot;
+
+        // Shift the interpolation window: the sample we published last tick
+        // becomes the "previous" one and this tick's measured sample becomes
+        // the "current" one.  The render hook lerps between them by the
+        // partial-tick fraction, which is what removes the walking jitter.  On
+        // the very first sample, or after a teleport, keep prev == cur so the
+        // lerp is a no-op instead of dragging the wings across a huge gap.
+        const bool teleport = m_hasPrevCenter && dt > 0.0f &&
+            ((centerX - m_prevCenterX) * (centerX - m_prevCenterX) +
+             (centerY - m_prevCenterY) * (centerY - m_prevCenterY) +
+             (centerZ - m_prevCenterZ) * (centerZ - m_prevCenterZ) >= 25.0f);
+        if (!s_hasPrevSample || teleport) {
+            s_prevAABB = aabb;
+            s_prevRot = rot;
+            s_hasPrevSample = true;
+        } else {
+            s_prevAABB = s_curAABB;
+            s_prevRot = s_curRot;
+        }
         s_curAABB = aabb;
         s_curRot = rot;
-        s_hasPrevSample = true;
 
         // Measure the tick interval (clamped) so the partial-tick fraction
-        // remains stable even when the game is not running at exactly 20 Hz.
+        // stays correct even when the game is not running at exactly 20 Hz.
         if (s_lastTickTimeValid) {
-            const float measured = std::chrono::duration<float>(now - s_lastTickTime).count();
-            if (measured > 0.001f && measured < 0.5f) s_tickInterval = measured;
+            float meas = std::chrono::duration<float>(now - s_lastTickTime).count();
+            if (meas > 0.001f && meas < 0.5f) s_tickInterval = meas;
         }
 
+        s_playerAABB = aabb;
+        s_playerRot = rot;
+        s_localPlayerPtr = player;
         s_hasPlayer = true;
         s_lastTickTime = now;
         s_lastTickTimeValid = true;
