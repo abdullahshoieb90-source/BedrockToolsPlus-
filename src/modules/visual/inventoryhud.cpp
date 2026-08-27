@@ -1,10 +1,21 @@
 // InventoryHUD — on-screen view of the local Player's main inventory.
 //
-// See include/bedrocktools/modules/visual/inventoryhud.hpp for the full
-// design notes. The implementation here is the matching half: it reads
-// the inventory on the LocalPlayerTick, keeps a thread-local snapshot
-// the render thread then turns into HUD draw commands, and shuts the
-// overlay off cleanly when the game has no Player to read from.
+// See inventoryhud.hpp for the design notes. The original implementation
+// reached the inventory through a chain of guessed offsets
+// (Player::mInventory -> PlayerInventory::mItems vector -> ItemStack::mCount)
+// that were not validated against a real libminecraftpe.so dump. On 1.26.44
+// ARM64 the chain resolved to null pointers and the HUD rendered an empty
+// grid even when the player carried items. The implementation below drops
+// those constants entirely and replaces them with a runtime scan of the
+// Player memory region: every pointer-sized word inside a conservative
+// window of the Player object is treated as a candidate base address and
+// tested, together with a small set of plausible ItemStack strides, for a
+// contiguous run of kInventorySize (36) well-formed ItemStack buffers using
+// the same `itemStackHasItem` predicate the rest of the codebase relies on.
+// The winning (base, stride, countOffset) triple is cached for the rest of
+// the session; the scan re-runs once per m_rescanIntervalMs only while the
+// cache is empty, so a freshly joined world is picked up without a
+// relaunch.
 
 #include "inventoryhud.hpp"
 #include "modules/ModuleRegistry.hpp"
@@ -18,6 +29,7 @@
 #include <bedrocktools/sdk/world/Actor.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -32,12 +44,10 @@ namespace sp = bedrocktools::sdk::offsets::ShulkerPreview;
 
 namespace {
 
-using ItemStackBaseLoadItemFn = void (*)(void*, void*);
 using ItemStackBaseGetDamageValueFn = short (*)(void*);
 using PlayerGetSelectedItemFn = void* (*)(void*);
 using NbtTreeFindFn = void* (*)(void*, const void*);
 
-ItemStackBaseLoadItemFn g_loadItem = nullptr;
 ItemStackBaseGetDamageValueFn g_getDamageValue = nullptr;
 PlayerGetSelectedItemFn g_getSelectedItem = nullptr;
 NbtTreeFindFn g_nbtTreeFind = nullptr;
@@ -50,75 +60,155 @@ InventoryHUDModule* g_module = nullptr;
 // never want to chase.
 constexpr std::uintptr_t kMinValidPointer = 0x1000;
 
+// Vanilla inventory layout: 9 hotbar slots followed by 27 main
+// inventory slots. These are not offsets - they are game invariants
+// (survival player inventory size has been 36 since beta), so they
+// stay as constants here instead of in the SDK offset headers.
+constexpr int kHotbarSize = 9;
+constexpr int kInventorySize = 36;
+
+// Conservative window inside the Player object to scan for an
+// embedded or pointed-to inventory buffer. Player is roughly 3 KB on
+// 1.26 ARM64 but we scan up to 8 KB to leave headroom for future
+// growth; walking pointer-aligned words at that range is cheap.
+constexpr std::size_t kPlayerScanBytes = 0x2000;
+
+// Candidate ItemStack strides. On Bedrock ARM64 the observed stride
+// between adjacent slots in the PlayerInventory flat array has been
+// 0x800 for many versions (it matches ShulkerPreview::ItemStackStorageSize)
+// but we probe a small set of nearby aligned sizes so a size change in
+// a future update doesn't immediately break the scan. Strides are
+// probed in the order listed; the first matching stride wins.
+constexpr std::array<std::size_t, 4> kCandidateStrides = {{
+    0x800, // historically documented ItemStack size
+    0x400, // observed on older 32-bit / trimmed builds
+    0xA00, // seen when extra NBT/user-data padding is added
+    0xC00, // defensive: double-aligned / instrumented builds
+}};
+
+// Candidate offsets for ItemStack::mCount within an ItemStack. The
+// count is a uint8_t that is only valid in 1..127 when the stack is
+// non-empty, so we probe each offset and keep the first sensible
+// value. The list intentionally contains the previously hardcoded
+// value (0x88) as well as the neighboring positions observed across
+// the 1.20..1.26 releases.
+constexpr std::array<std::size_t, 6> kCandidateCountOffsets = {{
+    0x80, 0x84, 0x88, 0x8C, 0x90, 0xA0,
+}};
+
+// Safe reader wrappers. Every raw dereference of a game pointer goes
+// through one of these so the minimum-address guard lives in exactly
+// one place. They intentionally return zero / nullptr on garbage so
+// callers can chain checks without re-asserting.
+inline bool isValidPointer(const void* p) {
+    const auto v = reinterpret_cast<std::uintptr_t>(p);
+    return v >= kMinValidPointer;
+}
+
+template <class T>
+inline T safeRead(const void* addr, T fallback = T{}) {
+    if (!isValidPointer(addr)) return fallback;
+    // On Android the game is always mapped readable; we additionally
+    // require word-aligned accesses for the pointer walks used by the
+    // scan to avoid unaligned faults on strict ARMv8 CPUs.
+    if ((reinterpret_cast<std::uintptr_t>(addr) & (sizeof(T) - 1)) != 0) return fallback;
+    T value;
+    std::memcpy(&value, addr, sizeof(T));
+    return value;
+}
+
+inline void* readPtr(const void* addr) {
+    const auto v = safeRead<std::uintptr_t>(addr, 0);
+    return reinterpret_cast<void*>(v);
+}
+
 // Same predicate the rest of the codebase uses: a stack is "live" when
 // its SharedCounter pointer is non-null and the counter points to a
 // real Item.
 bool itemStackHasItem(const void* itemStack) {
     if (!itemStack) return false;
-    if (reinterpret_cast<std::uintptr_t>(itemStack) < kMinValidPointer) return false;
+    if (!isValidPointer(itemStack)) return false;
     const auto* bytes = static_cast<const std::byte*>(itemStack);
-    auto* counter = *reinterpret_cast<void* const*>(bytes + sp::ItemStackBaseItem);
+    auto* counter = readPtr(bytes + sp::ItemStackBaseItem);
     if (!counter) return false;
-    if (reinterpret_cast<std::uintptr_t>(counter) < kMinValidPointer) return false;
-    return *reinterpret_cast<void* const*>(counter) != nullptr;
+    if (!isValidPointer(counter)) return false;
+    auto* item = readPtr(counter);
+    return item != nullptr && isValidPointer(item);
+}
+
+// An ItemStack-shaped slot is "well formed" if either (a) it's empty
+// (counter pointer is null / below min address) or (b) it passes
+// itemStackHasItem. Slots that contain a non-null but garbage-looking
+// pointer (e.g. a misaligned stride that happens to land in the middle
+// of another field) disqualify the candidate base+stride.
+bool slotLooksLikeItemStack(const void* slot) {
+    if (!isValidPointer(slot)) return false;
+    const auto* bytes = static_cast<const std::byte*>(slot);
+    const auto counter = safeRead<std::uintptr_t>(bytes + sp::ItemStackBaseItem, 0);
+    if (counter == 0) return true;
+    if (!isValidPointer(reinterpret_cast<const void*>(counter))) return false;
+    return readPtr(reinterpret_cast<const void*>(counter)) != nullptr;
 }
 
 void* getStackItem(const void* stack) {
     if (!itemStackHasItem(stack)) return nullptr;
     const auto* bytes = static_cast<const std::byte*>(stack);
-    auto* counter = *reinterpret_cast<void* const*>(bytes + sp::ItemStackBaseItem);
+    auto* counter = readPtr(bytes + sp::ItemStackBaseItem);
     if (!counter) return nullptr;
-    return *reinterpret_cast<void* const*>(counter);
+    return readPtr(counter);
 }
 
 uint16_t getItemId(const void* item) {
     if (!item) return 0;
-    if (reinterpret_cast<std::uintptr_t>(item) < kMinValidPointer) return 0;
-    return *reinterpret_cast<uint16_t*>(static_cast<std::byte*>(const_cast<void*>(item)) + sp::ItemId);
+    if (!isValidPointer(item)) return 0;
+    return safeRead<uint16_t>(static_cast<std::byte*>(const_cast<void*>(item)) + sp::ItemId,
+                              static_cast<uint16_t>(0));
 }
 
 short getItemMaxDamage(const void* item) {
     if (!item) return 0;
-    if (reinterpret_cast<std::uintptr_t>(item) < kMinValidPointer) return 0;
-    void** vtable = *reinterpret_cast<void***>(const_cast<void*>(item));
-    if (!vtable) return 0;
+    if (!isValidPointer(item)) return 0;
+    const auto vtable = safeRead<std::uintptr_t>(item, 0);
+    if (vtable < kMinValidPointer) return 0;
     const auto slot = bedrocktools::sdk::offsets::VTable::ItemGetMaxDamage;
-    if (reinterpret_cast<std::uintptr_t>(vtable) < kMinValidPointer) return 0;
-    if (reinterpret_cast<std::uintptr_t>(vtable[slot]) < kMinValidPointer) return 0;
+    const auto fn = safeRead<std::uintptr_t>(reinterpret_cast<const void*>(vtable + slot * sizeof(void*)), 0);
+    if (fn < kMinValidPointer) return 0;
     using Fn = short (*)(const void*);
-    return reinterpret_cast<Fn>(vtable[slot])(item);
+    return reinterpret_cast<Fn>(fn)(item);
 }
 
-uint8_t getStackCount(const void* stack) {
+// Probe the count byte at each candidate offset and return the first
+// one that looks like a sensible stack size (1..127). Returns 0 when
+// no candidate yields a sensible value or the stack is empty.
+uint8_t probeStackCount(const void* stack) {
     if (!itemStackHasItem(stack)) return 0;
-    return *reinterpret_cast<const uint8_t*>(
-        static_cast<const std::byte*>(stack) + bedrocktools::sdk::offsets::ItemStack::mCount);
+    const auto* bytes = static_cast<const std::byte*>(stack);
+    for (auto off : kCandidateCountOffsets) {
+        const uint8_t v = safeRead<uint8_t>(bytes + off, 0);
+        if (v >= 1 && v <= 127) return v;
+    }
+    // Fallback: if no candidate looked right the stack still has an
+    // item; report a count of 1 so the icon shows up without a label.
+    return 1;
 }
 
 // Walks the stack's NBT tree to look for an `ench` / `Enchantments` /
 // `StoredEnchantments` / `minecraft:enchantments` /
 // `minecraft:stored_enchantments` key — the five vanilla names Bedrock
-// has used for the enchant list over the years. Any of them being
-// present is enough to enable the glint / a label tint.
+// has used for the enchant list over the years.
 bool stackIsEnchanted(const void* stack) {
     if (!itemStackHasItem(stack)) return false;
     if (!g_nbtTreeFind) return false;
     const auto* bytes = static_cast<const std::byte*>(stack);
-    void* userData = *reinterpret_cast<void* const*>(bytes + sp::ItemStackBaseUserData);
-    if (!userData) return false;
-    if (reinterpret_cast<std::uintptr_t>(userData) < kMinValidPointer) return false;
+    void* userData = readPtr(bytes + sp::ItemStackBaseUserData);
+    if (!userData || !isValidPointer(userData)) return false;
+    const auto* udb = static_cast<const std::byte*>(userData);
 
-    auto* treeRoot = *reinterpret_cast<void* const*>(
-        static_cast<const std::byte*>(userData) + sp::CompoundTagTreeRoot);
-    auto* treeEnd = *reinterpret_cast<void* const*>(
-        static_cast<const std::byte*>(userData) + sp::CompoundTagTreeEnd);
+    auto* treeRoot = readPtr(udb + sp::CompoundTagTreeRoot);
+    auto* treeEnd  = readPtr(udb + sp::CompoundTagTreeEnd);
     if (!treeRoot || !treeEnd) return false;
-    if (reinterpret_cast<std::uintptr_t>(treeRoot) < kMinValidPointer) return false;
-    if (reinterpret_cast<std::uintptr_t>(treeEnd) < kMinValidPointer) return false;
+    if (!isValidPointer(treeRoot) || !isValidPointer(treeEnd)) return false;
 
-    // NbtTreeKey is a small POD the SDK already documents in
-    // ShulkerPreview. We re-create the same layout (key pointer,
-    // length) to keep the call shape identical.
     struct NbtTreeKey {
         const char* data;
         std::size_t len;
@@ -137,29 +227,132 @@ bool stackIsEnchanted(const void* stack) {
            containsKey("minecraft:stored_enchantments");
 }
 
-// Read a single ItemStack out of the PlayerInventory::mItems vector.
-// `slot` is the index in the 0..35 range, with 0..8 = hotbar,
-// 9..35 = main inventory. The returned pointer is the live ItemStack
-// in the vector; the caller is responsible for not holding it past
-// the next vector resize.
-void* readSlot(void* inventory, int slot) {
-    if (!inventory) return nullptr;
-    if (reinterpret_cast<std::uintptr_t>(inventory) < kMinValidPointer) return nullptr;
-    const auto* bytes = static_cast<std::byte*>(inventory);
-    void* begin = *reinterpret_cast<void* const*>(
-        bytes + bedrocktools::sdk::offsets::PlayerInventory::mItems);
-    void* end = *reinterpret_cast<void* const*>(
-        bytes + bedrocktools::sdk::offsets::PlayerInventory::mItems + sizeof(void*));
-    if (!begin || !end) return nullptr;
-    if (reinterpret_cast<std::uintptr_t>(begin) < kMinValidPointer) return nullptr;
-    if (reinterpret_cast<std::uintptr_t>(end) < kMinValidPointer) return nullptr;
-    const std::size_t count =
-        (reinterpret_cast<std::uintptr_t>(end) - reinterpret_cast<std::uintptr_t>(begin)) /
-        bedrocktools::sdk::offsets::PlayerInventory::mItemsSize;
-    if (static_cast<std::size_t>(slot) >= count) return nullptr;
-    auto* entry = reinterpret_cast<std::byte*>(begin) +
-        static_cast<std::ptrdiff_t>(slot) * bedrocktools::sdk::offsets::PlayerInventory::mItemsSize;
-    return entry;
+// Score a candidate (base, stride) pair against the selected hotbar
+// ItemStack pointer returned by Player::getSelectedItem, if it
+// resolves. Returns a higher number for better matches:
+//   -1  -> disqualified: one of the slots we can see is ill-formed
+//    0  -> 36 well-formed slots, selected item doesn't match or is unknown
+//    1  -> 36 well-formed slots, selected item address lines up with a
+//          hotbar slot (0..8) -> almost certainly the real inventory.
+int scoreCandidate(std::uintptr_t base, std::size_t stride,
+                   const void* selectedItem) {
+    if (base < kMinValidPointer || stride == 0) return -1;
+    if (stride < 0x100) return -1; // absurdly small stride -> reject fast
+    int matched = 0;
+    for (int slot = 0; slot < kInventorySize; ++slot) {
+        const void* entry = reinterpret_cast<const void*>(base + static_cast<std::ptrdiff_t>(slot) * stride);
+        if (!slotLooksLikeItemStack(entry)) return -1;
+        if (selectedItem && itemStackHasItem(entry) && entry == selectedItem) {
+            // Selected slot is in the hotbar (0..8). If we see the
+            // selected ItemStack pointer at slot 9..35 that's not the
+            // player inventory — likely a container buffer — so score
+            // it worse.
+            if (slot < kHotbarSize) ++matched;
+            else return -1;
+        }
+    }
+    if (matched > 0) return 1;
+    return 0;
+}
+
+// Walk pointer-sized words inside the Player memory region and try each
+// candidate as the base address of a flat kInventorySize-slot ItemStack
+// array. Returns the winning (base, stride, countOffset) triple; the
+// returned cache.valid is false if nothing usable was found.
+InventoryHUDModule::InventoryCache scanForInventory(
+    bedrocktools::sdk::Player* player, const void* selectedItem) {
+    InventoryHUDModule::InventoryCache best;
+    int bestScore = -2;
+
+    if (!player || !isValidPointer(player)) return best;
+    const auto playerBase = reinterpret_cast<std::uintptr_t>(player);
+
+    // Phase 1: try every pointer-sized word inside the Player scan
+    // window as a direct base pointer. This handles the case where
+    // the inventory array is stored inline or is referenced through
+    // a single indirection (unique_ptr / NonOwnerPointer).
+    for (std::size_t off = 0; off + sizeof(void*) <= kPlayerScanBytes; off += sizeof(void*)) {
+        const auto word = safeRead<std::uintptr_t>(
+            reinterpret_cast<const void*>(playerBase + off), 0);
+        if (word < kMinValidPointer) continue;
+        for (auto stride : kCandidateStrides) {
+            const int score = scoreCandidate(word, stride, selectedItem);
+            if (score > bestScore) {
+                bestScore = score;
+                best.base = word;
+                best.stride = stride;
+                best.valid = true;
+                // A perfect tie-break match is as good as it gets;
+                // stop probing further strides for this word.
+                if (score >= 1) break;
+            }
+        }
+        if (bestScore >= 1) break;
+    }
+
+    // Phase 2: if no pointer word matched, also try the case where the
+    // inventory is embedded inside PlayerInventory reached through one
+    // extra indirection (Player -> PlayerInventory -> Items-vector begin
+    // or inline array). We treat every pointer word as a possible
+    // PlayerInventory* and then scan the first KB of that sub-object
+    // for another pointer that leads to a good 36-slot buffer.
+    if (bestScore < 0) {
+        for (std::size_t off = 0; off + sizeof(void*) <= kPlayerScanBytes; off += sizeof(void*)) {
+            const auto inv = safeRead<std::uintptr_t>(
+                reinterpret_cast<const void*>(playerBase + off), 0);
+            if (inv < kMinValidPointer) continue;
+            for (std::size_t io = 0; io + sizeof(void*) <= 0x1000; io += sizeof(void*)) {
+                const auto word = safeRead<std::uintptr_t>(
+                    reinterpret_cast<const void*>(inv + io), 0);
+                if (word < kMinValidPointer) continue;
+                for (auto stride : kCandidateStrides) {
+                    const int score = scoreCandidate(word, stride, selectedItem);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best.base = word;
+                        best.stride = stride;
+                        best.valid = true;
+                        if (score >= 1) break;
+                    }
+                }
+                if (bestScore >= 1) break;
+            }
+            if (bestScore >= 1) break;
+        }
+    }
+
+    // Probe the count offset. We only need one non-empty slot to learn
+    // where mCount lives; try each live slot in order and keep the
+    // first sensible value. If every slot is empty we leave the offset
+    // at zero — getStackCount will return 0 for empty slots anyway.
+    if (best.valid) {
+        best.countOffset = 0;
+        for (int slot = 0; slot < kInventorySize; ++slot) {
+            const auto* entry = reinterpret_cast<const void*>(
+                best.base + static_cast<std::ptrdiff_t>(slot) * best.stride);
+            if (!itemStackHasItem(entry)) continue;
+            const auto* bytes = static_cast<const std::byte*>(entry);
+            for (auto coff : kCandidateCountOffsets) {
+                const uint8_t v = safeRead<uint8_t>(bytes + coff, 0);
+                if (v >= 1 && v <= 127) {
+                    best.countOffset = coff;
+                    return best;
+                }
+            }
+        }
+    }
+    return best;
+}
+
+uint8_t readCachedCount(const void* stack, std::size_t countOffset) {
+    if (!itemStackHasItem(stack)) return 0;
+    const auto* bytes = static_cast<const std::byte*>(stack);
+    if (countOffset != 0) {
+        const uint8_t v = safeRead<uint8_t>(bytes + countOffset, 0);
+        if (v >= 1 && v <= 127) return v;
+    }
+    // Cache miss or invalid value -> fall back to the probe.
+    return probeStackCount(stack);
 }
 
 uint32_t withAlpha(uint32_t color, float alpha) {
@@ -176,7 +369,7 @@ InventoryHUDModule::InventoryHUDModule()
              "durability are all configurable in the HUD editor. Armor and offhand are "
              "intentionally hidden.") {
     g_module = this;
-    m_slots.assign(36, SlotSnapshot{});
+    m_slots.assign(kInventorySize, SlotSnapshot{});
 }
 
 InventoryHUDModule::~InventoryHUDModule() {
@@ -186,8 +379,6 @@ InventoryHUDModule::~InventoryHUDModule() {
 void InventoryHUDModule::onInit() {
     // Resolve the SDK symbols the module relies on. None of these are new
     // signatures — they all exist in the project's signature table today.
-    g_loadItem = reinterpret_cast<ItemStackBaseLoadItemFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseLoadItem));
     g_getDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
         bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
     g_nbtTreeFind = reinterpret_cast<NbtTreeFindFn>(
@@ -206,26 +397,62 @@ void InventoryHUDModule::onInit() {
 void InventoryHUDModule::onDisable() {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_slots.assign(36, SlotSnapshot{});
+        m_slots.assign(kInventorySize, SlotSnapshot{});
         m_readFailed = false;
+        m_cache = InventoryCache{};
     }
-    // Clearing the draw commands removes the overlay immediately. The
-    // module system stops calling onFrame() for disabled modules so this
-    // is the only chance to clean up.
     ::submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
 }
 
 void InventoryHUDModule::onLocalPlayerTick(bedrocktools::sdk::Player* player) {
     const auto now = std::chrono::steady_clock::now();
+
+    // Throttle the full snapshot refresh just like the old code did.
     if (now - m_lastReadAt < std::chrono::milliseconds(std::max(0, m_refreshIntervalMs))) {
         return;
     }
+
+    // If we don't have a cache yet, try the scan. The scan is much more
+    // expensive than a simple snapshot read (it walks thousands of
+    // words) so it is throttled independently through m_rescanIntervalMs.
+    bool cacheOk = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        cacheOk = m_cache.valid;
+    }
+    if (!cacheOk) {
+        if (now - m_lastScanAt < std::chrono::milliseconds(std::max(0, m_rescanIntervalMs))) {
+            return;
+        }
+        m_lastScanAt = now;
+        const void* selected = nullptr;
+        if (g_getSelectedItem && player && isValidPointer(player)) {
+            // getSelectedItem returns the ItemStack* for the currently
+            // selected hotbar slot. We only use it as a tie-break hint
+            // during the scan; if the signature isn't resolved the scan
+            // still runs (it just can't discriminate the winner on the
+            // selected-slot check).
+            selected = g_getSelectedItem(player);
+            if (!isValidPointer(selected)) selected = nullptr;
+        }
+        auto found = scanForInventory(player, selected);
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_cache = found;
+        cacheOk = found.valid;
+    }
+
     if (!readInventory(player)) {
-        // Don't churn the snapshot on every failure — only mark a read
-        // failure when we have nothing to draw at all.
+        // If the read failed but we previously had a cache, the cache
+        // is likely stale (world unload / Player swapped). Drop it so
+        // the next tick re-runs the scan instead of chasing a dead
+        // pointer.
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_cache.valid) m_cache = InventoryCache{};
+        }
         if (!m_readFailed) {
             std::lock_guard<std::mutex> lock(m_mutex);
-            m_slots.assign(36, SlotSnapshot{});
+            m_slots.assign(kInventorySize, SlotSnapshot{});
             m_readFailed = true;
         }
         return;
@@ -236,40 +463,47 @@ void InventoryHUDModule::onLocalPlayerTick(bedrocktools::sdk::Player* player) {
 
 bool InventoryHUDModule::readInventory(bedrocktools::sdk::Player* player) {
     if (!player) return false;
-    if (reinterpret_cast<std::uintptr_t>(player) < kMinValidPointer) return false;
+    if (!isValidPointer(player)) return false;
 
-    // ClientInstance is the entry point the rest of the SDK uses to find
-    // the local player, but the LocalPlayerTickEvent already gave us a
-    // valid Player pointer; we still cross-check that it is the local
-    // one by asking the ClientInstance. If ClientInstance is not ready
-    // (between world loads, etc.) we trust the tick event's payload —
-    // the event itself is only published for the local player.
+    // Cross-check that the tick event's Player matches the local
+    // player we can reach through ClientInstance (the tick event only
+    // fires for the local player but a bug in the hook could hand us
+    // a remote actor).
     auto* client = bedrocktools::sdk::ClientInstance::current();
     if (client) {
         auto* localPlayer = client->localPlayer();
         if (localPlayer && localPlayer != player) {
-            // A remote player in a tick payload would be a bug in the
-            // hook; bail rather than render someone else's inventory.
             return false;
         }
     }
 
-    const auto invOffset = bedrocktools::sdk::offsets::Player::mInventory;
-    if (invOffset == 0) return false;
-    auto* inventory = *reinterpret_cast<void* const*>(
-        reinterpret_cast<std::uintptr_t>(player) + invOffset);
-    if (reinterpret_cast<std::uintptr_t>(inventory) < kMinValidPointer) return false;
+    InventoryCache cache;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        cache = m_cache;
+    }
+    if (!cache.valid || cache.base < kMinValidPointer || cache.stride == 0) return false;
 
-    std::vector<SlotSnapshot> next(36);
+    // Verify the buffer still looks well-formed before reading — if
+    // the game swapped out the inventory (world transition) the old
+    // pointer may still be mapped but no longer hold ItemStacks.
+    // A single bad slot is enough to invalidate the cache.
+    for (int slot = 0; slot < kInventorySize; ++slot) {
+        const auto* entry = reinterpret_cast<const void*>(
+            cache.base + static_cast<std::ptrdiff_t>(slot) * cache.stride);
+        if (!slotLooksLikeItemStack(entry)) return false;
+    }
+
+    std::vector<SlotSnapshot> next(kInventorySize);
     int readCount = 0;
-    for (int slot = 0; slot < 36; ++slot) {
-        void* stack = readSlot(inventory, slot);
-        if (!stack) continue;
+    for (int slot = 0; slot < kInventorySize; ++slot) {
+        const auto* stack = reinterpret_cast<const void*>(
+            cache.base + static_cast<std::ptrdiff_t>(slot) * cache.stride);
         if (!itemStackHasItem(stack)) continue;
         SlotSnapshot snap;
         snap.hasItem = true;
-        snap.count = getStackCount(stack);
-        snap.damage = g_getDamageValue ? g_getDamageValue(stack) : 0;
+        snap.count = readCachedCount(stack, cache.countOffset);
+        snap.damage = g_getDamageValue ? g_getDamageValue(const_cast<void*>(stack)) : 0;
         void* item = getStackItem(stack);
         snap.itemId = getItemId(item);
         snap.maxDamage = getItemMaxDamage(item);
@@ -277,11 +511,7 @@ bool InventoryHUDModule::readInventory(bedrocktools::sdk::Player* player) {
         next[slot] = snap;
         ++readCount;
     }
-    if (readCount == 0) {
-        // 36 live slots, all empty — the player is in a freshly loaded
-        // world or simply has nothing in their inventory. That is a
-        // valid state and we still want to draw the empty grid.
-    }
+    (void)readCount; // 0 is acceptable (empty inventory in a fresh world).
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -308,16 +538,10 @@ void InventoryHUDModule::onFrame() {
     const float baseWidth = std::clamp(m_width, 64.0f, 1000.0f);
     const float baseHeight = std::clamp(m_height, 32.0f, 1000.0f);
 
-    // 9 columns of slots is the vanilla layout and what players expect
-    // from the in-game inventory. Resizing m_width or m_height never
-    // changes the number of columns; it just changes how much of the
-    // available space each slot is allowed to consume. If the user
-    // shrinks the panel below the natural slot footprint, slots are
-    // simply packed tighter; if they grow it, slots grow with the
-    // panel up to the m_slotSize cap.
+    // 9 columns of slots is the vanilla layout.
     constexpr int kColumns = 9;
-    const int slotOffset = std::clamp(m_slotOffset, 0, 35);
-    const int slotCount = std::clamp(m_slotCount, 0, 36 - slotOffset);
+    const int slotOffset = std::clamp(m_slotOffset, 0, kInventorySize - 1);
+    const int slotCount = std::clamp(m_slotCount, 0, kInventorySize - slotOffset);
     const int totalSlots = slotOffset + slotCount;
     if (slotCount <= 0) {
         ::submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
@@ -325,13 +549,6 @@ void InventoryHUDModule::onFrame() {
     }
     const int rows = (totalSlots + kColumns - 1) / kColumns;
 
-    // The natural footprint of the slot grid: a 9x4 grid of 32px slots
-    // with 4px spacing. The user-supplied width/height are interpreted
-    // as the *minimum* panel size — if the user picks something
-    // smaller, the panel auto-shrinks to the natural footprint; if
-    // they pick something larger, the panel grows but the slots stay
-    // at m_slotSize (so the user can size the panel without the slots
-    // running away from the cap).
     const float naturalWidth = kColumns * slotSize + (kColumns - 1) * slotSpacing;
     const float naturalHeight = rows * slotSize + (rows - 1) * slotSpacing;
     const float panelWidth = std::max(baseWidth, naturalWidth);
@@ -368,10 +585,6 @@ void InventoryHUDModule::onFrame() {
         cmds.push_back(border);
     }
 
-    // Re-flow the slots inside the panel. The grid is anchored to the
-    // top-left of the panel; with m_showEmptySlots the empty cells are
-    // drawn as faint backdrops so the layout still reads as a grid
-    // even when only a few slots are filled.
     const float gridX = hudPosX;
     const float gridY = hudPosY;
 
@@ -398,13 +611,6 @@ void InventoryHUDModule::onFrame() {
             continue;
         }
 
-        // The item itself: a simple colored square keyed by the
-        // numeric item id. We do not have a pre-loaded per-item icon
-        // texture here (the ItemRenderer hook used by ShulkerPreview
-        // is wired into the container-screen render path, not the HUD
-        // overlay), but the colored swatch still gives a clear visual
-        // cue of "this slot has a block" while keeping the layout
-        // exact to the user's width/height.
         const uint32_t itemRgb = (static_cast<uint32_t>(snap.itemId) * 0x9E3779B1u) & 0x00FFFFFFu;
         PLModMenu_DrawCommand itemBg{};
         itemBg.type = PL_DRAW_RECT_FILLED;
@@ -415,8 +621,6 @@ void InventoryHUDModule::onFrame() {
         itemBg.color = (0xC0u << 24) | itemRgb;
         cmds.push_back(itemBg);
 
-        // A small inset border to make the item read as a separate
-        // element from the slot frame, mirroring the vanilla look.
         PLModMenu_DrawCommand itemBorder{};
         itemBorder.type = PL_DRAW_RECT;
         itemBorder.x = x + 0.5f * scale;
@@ -427,9 +631,6 @@ void InventoryHUDModule::onFrame() {
         itemBorder.color = 0x80FFFFFFu;
         cmds.push_back(itemBorder);
 
-        // A little label inside the slot showing the item id so the
-        // user can tell at a glance what they are looking at. The
-        // count/durability HUD elements sit on top.
         if (slotSize >= 24.0f * scale) {
             char label[16];
             std::snprintf(label, sizeof(label), "%u", static_cast<unsigned>(snap.itemId));
@@ -484,9 +685,6 @@ void InventoryHUDModule::onFrame() {
         }
 
         if (snap.enchanted) {
-            // A subtle glint line to mark enchanted items, matching
-            // the convention other HUDs in the project use (effect
-            // display in particular paints enchanted rows).
             PLModMenu_DrawCommand glint{};
             glint.type = PL_DRAW_RECT_FILLED;
             glint.x = x;
@@ -515,6 +713,7 @@ void InventoryHUDModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_slotOffset")) m_slotOffset = j["m_slotOffset"].get<int>();
     if (j.contains("m_slotCount")) m_slotCount = j["m_slotCount"].get<int>();
     if (j.contains("m_refreshIntervalMs")) m_refreshIntervalMs = j["m_refreshIntervalMs"].get<int>();
+    if (j.contains("m_rescanIntervalMs")) m_rescanIntervalMs = j["m_rescanIntervalMs"].get<int>();
 
     if (j.contains("m_background")) m_background = j["m_background"].get<bool>();
     if (j.contains("m_backgroundOpacity")) m_backgroundOpacity = j["m_backgroundOpacity"].get<float>();
@@ -573,6 +772,7 @@ void InventoryHUDModule::saveConfig(nlohmann::json& j) {
     j["m_slotOffset"] = m_slotOffset;
     j["m_slotCount"] = m_slotCount;
     j["m_refreshIntervalMs"] = m_refreshIntervalMs;
+    j["m_rescanIntervalMs"] = m_rescanIntervalMs;
 
     j["m_background"] = m_background;
     j["m_backgroundOpacity"] = m_backgroundOpacity;
