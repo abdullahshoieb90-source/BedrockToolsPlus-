@@ -17,7 +17,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Player Health, Chunk Border, Block Outline, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass
+**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Block Outline, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass
 
 **HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair
 
@@ -50,22 +50,6 @@ The **Wings** module renders animated 3D wings on your back that flap, idle and 
 - **Fairy** — small translucent cyan/pink wings
 
 The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. Each style is drawn as closed, tapered feather prisms with a rest-pose fan, a backwards sweep and per-face shading, so the wings read as real 3D volume. Developers can preview every style offline (and compare against the legacy renderer) with `./scripts/gen_wings_preview.sh`, which writes PNGs to `build/wings-preview/`.
-
-## Player Health
-
-The **Player Health** module shows every nearby player's live health as a second nametag line, drawn exactly between the top of the player and the bottom of the name. Pick the look in the module's **Style** selector:
-
-- **Hearts** — `❤❤❤❤❤❤❤❤❤❤` style, red filled and dark empty hearts
-- **Bar** — `||||||||||` style, green filled and gray empty segments
-- **Numbers** — `❤ 17/20` with a ratio color (green / yellow / red / gray)
-
-Notes:
-
-- Health is read from the actor's live health attribute (Mob/Health Attribute), falling back to synced entity data (`SynchedActorData`) when needed, so it works across all servers and game modes.
-- **Always Show** (on by default) keeps the indicator visible without aiming at the player, like the TNT Timer countdown; turn it off for vanilla nametag visibility rules.
-- **Range** (64 by default, 0 = unlimited) skips far players; **Show Self** (off by default) also tags your own nametag in third person.
-- Boosted health pools (absorption, health boost) are squeezed onto the same ten glyphs.
-- Nametags are restored exactly when the module is disabled, a player leaves your range, or the server renames them; the Tablist module keeps showing the plain name line.
 
 ## System Requirements
 

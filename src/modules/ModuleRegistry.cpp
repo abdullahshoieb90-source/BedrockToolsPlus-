@@ -25,7 +25,6 @@
 #include "visual/viewmodel.hpp"
 #include "hud/keystrokes.hpp"
 #include "visual/thirdpersonnametag.hpp"
-#include "visual/playerhealth.hpp"
 #include "hud/tablist.hpp"
 #include "hud/combocounter.hpp"
 #include "visual/chunkborder.hpp"
@@ -125,7 +124,6 @@ void registerAllModules() {
     registry.emplace<ViewModelModule>();
     registry.emplace<KeystrokesModule>();
     registry.emplace<ThirdPersonNametagModule>();
-    registry.emplace<PlayerHealthModule>();
     registry.emplace<TablistModule>();
     registry.emplace<ChunkBorderModule>();
     registry.emplace<BlockOutlineModule>();
