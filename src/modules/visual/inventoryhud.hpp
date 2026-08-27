@@ -23,26 +23,28 @@
 // Architecture & SDK use
 //   - Player comes from ClientInstance::localPlayer() through the existing
 //     ClientInstanceGetLocalPlayer signature (no new signature required).
-//   - The actual inventory is reached through Player::mInventory (offset
-//     in <bedrocktools/sdk/offsets/World.hpp>, documented in-place). The
-//     vector of ItemStack objects is read through the existing
-//     ShulkerPreview::ItemStackBaseItem / ItemStackBaseUserData offsets,
-//     so the per-slot read is validated the same way ShulkerPreview
-//     validates its copies — the ItemSharedCounter pointer must be live
-//     and the dereferenced Item must be non-null before the slot is
-//     considered non-empty.
-//   - The selected hotbar item comes from Player::getSelectedItem (the
-//     signature the project ships for that exact purpose) when it is
-//     resolved, and otherwise falls back to the PlayerInventory's
-//     mSelectedSlot field.
+//   - The inventory buffer is NOT reached through hardcoded offsets
+//     (Player::mInventory / PlayerInventory::mItems / ItemStack::mCount
+//     have all been observed to shift between Bedrock builds). Instead
+//     the module scans pointer-sized words inside the Player memory
+//     region, tests each candidate pointer against the same
+//     `itemStackHasItem` predicate the rest of the codebase uses, and
+//     caches the first (base, stride) pair that yields 36 well-formed
+//     ItemStack slots. The cache is reused every tick; the scan
+//     re-runs once per m_rescanIntervalMs when the cache is empty so a
+//     freshly loaded world is picked up without a relaunch. When
+//     Player::getSelectedItem resolves, the scan prefers candidates
+//     whose slot 0..8 matches the returned ItemStack address, which
+//     avoids confusing nearby same-shaped buffers (the UI container
+//     preview, etc.) with the real inventory.
+//   - ItemStack::mCount is not a fixed offset either: the count byte
+//     is probed at a small set of candidate offsets within the stack
+//     and the first sensible value (1..127, only on slots that pass
+//     itemStackHasItem) wins. The discovered count offset is cached
+//     alongside the inventory base+stride.
 //   - The 3D item icon uses ItemStackBaseLoadItem to materialize a real
 //     ItemStack from NBT and ItemRendererRenderItemGroup to draw it. Both
-//     are signatures the project already exposes. The module never
-//     invents a new rendering path — it reuses the same pattern the
-//     ShulkerPreview module uses for the same purpose, with the only
-//     difference being that BaseActorRenderContext is constructed
-//     per-frame here (it is cheap and avoids the ShulkerPreview's
-//     global state).
+//     are signatures the project already exposes.
 //
 // HUD editor
 //   All the visual knobs (width, height, scale, slot size, slot spacing,
@@ -55,22 +57,20 @@
 //
 // Safety
 //   - Every pointer read from the game is checked against a minimum
-//     address (>= 0x1000) before being dereferenced.
+//     address (>= kMinValidPointer) before being dereferenced.
 //   - Every ItemStack read is validated through itemStackHasItem, the
 //     same predicate the rest of the codebase uses for stack validity.
-//   - If Player / PlayerInventory / any slot is null the module simply
+//   - If Player / inventory / any slot is null the module simply
 //     skips drawing that frame; it never dereferences a dangling
 //     pointer, even during world unload (ClientInstance::current()
 //     returns null at that point).
+//   - The pointer walk during the scan only dereferences values that
+//     look like live heap pointers (> kMinValidPointer, canonically
+//     aligned); non-pointers (integers, floats, tagged booleans) are
+//     skipped without touching them.
 //   - Submitting an empty draw command list when there is no data
 //     makes the overlay disappear, so the HUD cannot get stuck on
 //     screen across a world transition.
-//
-// Independence
-//   The module does not import ShulkerPreview, Hotbar (there is no
-//   Hotbar module in the project today), or any other module's state.
-//   The only shared piece is the SDK, which is the documented channel
-//   for SDK access anyway.
 
 #include "modules/Module.hpp"
 
@@ -155,9 +155,7 @@ public:
 
     // First slot drawn. 0 draws the full inventory (vanilla layout:
     // hotbar at the bottom, main grid at the top). 9 skips the
-    // hotbar (the user asked for "regular inventory only"; the
-    // option exists for users who still want the HUD but the
-    // vanilla hotbar is enough for them).
+    // hotbar.
     int m_slotOffset = 0;
     int m_slotCount = 36;
 
@@ -166,6 +164,27 @@ public:
     // visible HUD but keeps the work well below the per-frame budget
     // even on a 4-core device.
     int m_refreshIntervalMs = 50;
+
+    // How often the runtime pointer/stride scan is allowed to run
+    // when the cache is empty. The default of 1000 ms means that
+    // after a world load (where the inventory pointer changes or the
+    // cache is cold) the module retries the scan once a second until
+    // it finds a well-formed 36-slot buffer; once found the scan is
+    // skipped entirely until/unless the cache is invalidated (world
+    // change, etc.).
+    int m_rescanIntervalMs = 1000;
+
+    // Discovered layout of the inventory buffer. Populated by the
+    // runtime scan; once valid the inventory reader uses this cache
+    // directly instead of walking hardcoded offsets. Exposed here
+    // (rather than hidden in the .cpp) so the scanner free function
+    // can return it without friendship gymnastics.
+    struct InventoryCache {
+        std::uintptr_t base = 0;       // address of slot 0
+        std::size_t    stride = 0;     // byte stride between slots
+        std::size_t    countOffset = 0;// byte offset within ItemStack of mCount
+        bool           valid = false;  // true once the cache is trustworthy
+    };
 
 private:
     void onLocalPlayerTick(bedrocktools::sdk::Player* player);
@@ -183,5 +202,7 @@ private:
     mutable std::mutex m_mutex;
     std::vector<SlotSnapshot> m_slots;
     std::chrono::steady_clock::time_point m_lastReadAt{};
+    std::chrono::steady_clock::time_point m_lastScanAt{};
     bool m_readFailed = false;
+    InventoryCache m_cache{};
 };

@@ -6,37 +6,13 @@
 namespace bedrocktools::sdk::offsets {
 
 namespace Player {
-// mInventory is the per-player PlayerInventory that owns both the hotbar and
-// the main inventory (36 slots: 9 hotbar + 27 main). On 1.21+ Bedrock ARM64
-// the field is a unique pointer wrapped in a Bedrock::NonOwnerPointer-style
-// structure: the first pointer-sized slot is the reference control and the
-// second holds the PlayerInventory object. The actual object is what
-// InventoryHUD reads from; the wrapper is invisible to callers because the
-// field stores the raw object pointer in practice.
-// The default value below is the 1.26.44 ARM64-v8a offset that has been
-// verified against the bundled signatures. If a future Bedrock update
-// reshuffles Player, this is the single value the InventoryHUD module needs
-// to be rebuilt against.
 inline constexpr std::size_t mName = 2824;
 inline constexpr std::size_t mSkin = 2552;
-inline constexpr std::size_t mInventory = 0xA18;
-}
-
-namespace PlayerInventory {
-// PlayerInventory stores its hotbar (9 slots) and main inventory (27 slots)
-// in a flat ItemStack array. mItems is a Bedrock::BedrockVector<ItemStack>
-// with the usual begin/end/capacity pointer triple; mInventorySize is the
-// total number of slots (hotbar + main = 36 on vanilla). Both fields are
-// laid out as documented in the 1.26.44 ARM64-v8a decompile.
-inline constexpr std::size_t mItems = 0x10;
-inline constexpr std::size_t mItemsSize = 0x800; // one ItemStack
-inline constexpr std::size_t mInventorySize = 36;
-inline constexpr std::size_t mHotbarSize = 9;
-inline constexpr std::size_t mSelectedSlot = 0xE0; // current hotbar index
-}
-
-namespace ItemStack {
-inline constexpr std::size_t mCount = 0x88;          // uint8: stack size
+// mInventory, the PlayerInventory pointer / wrapper, is no longer hardcoded.
+// The InventoryHUD module discovers the inventory buffer at runtime by
+// scanning the Player memory region for a contiguous run of 36 well-formed
+// ItemStack slots (9 hotbar + 27 main), so a Bedrock update that reshuffles
+// Player fields does not require an offset rebuild.
 }
 
 namespace Mob {

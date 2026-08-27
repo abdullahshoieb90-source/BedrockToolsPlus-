@@ -118,6 +118,8 @@ int main() {
         check(j.contains("m_slotSpacing"), "saveConfig writes m_slotSpacing");
         check(j.contains("m_slotOffset"), "saveConfig writes m_slotOffset");
         check(j.contains("m_slotCount"), "saveConfig writes m_slotCount");
+        check(j.contains("m_refreshIntervalMs"), "saveConfig writes m_refreshIntervalMs");
+        check(j.contains("m_rescanIntervalMs"), "saveConfig writes m_rescanIntervalMs");
         check(j.contains("m_background"), "saveConfig writes m_background");
         check(j.contains("m_backgroundOpacity"), "saveConfig writes m_backgroundOpacity");
         check(j.contains("m_border"), "saveConfig writes m_border");
