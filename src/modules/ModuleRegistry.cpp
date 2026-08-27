@@ -43,6 +43,7 @@
 #include "misc/commandhotkey.hpp"
 #include "hud/crosshair.hpp"
 #include "visual/swingmodifier.hpp"
+#include "visual/inventoryhud.hpp"
 #include <bedrocktools/modules/visual/wings.hpp>
 
 
@@ -144,4 +145,5 @@ void registerAllModules() {
     registry.emplace<CrosshairModule>();
     registry.emplace<SwingModifierModule>();
     registry.emplace<WingsModule>();
+    registry.emplace<InventoryHUDModule>();
 }
