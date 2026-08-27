@@ -117,8 +117,8 @@ public:
     // Current per-bone pose computed from the flap clock, flight intensity
     // and glide factor.
     WingBoneAngles currentBoneAngles() const;
-    // Interpolated version that renders the previous/current tick interval
-    // used by the player model (called from the RenderLevel hook).
+    // Interpolated version that adds time since last tick for ultra-low
+    // latency rendering (called from the RenderLevel hook).
     WingBoneAngles currentBoneAnglesInterpolated() const;
 
     // Directory the module writes its assets to; kept for menu description
@@ -209,13 +209,9 @@ private:
     // synchronized; otherwise a torn sample can make the flap phase jump.
     mutable std::mutex m_animationMutex;
     float m_flapTime = 0.0f;
-    float m_previousFlapTime = 0.0f; // previous tick, for render-time interpolation
     float m_intensity = 0.0f;   // smoothed idle->flight blend
-    float m_previousIntensity = 0.0f;
     float m_glide = 0.0f;       // smoothed glide blend
-    float m_previousGlide = 0.0f;
     float m_airTime = 0.0f;     // sustained descent time used for glide
-    float m_lastAnimationInterval = 0.05f;
     bool m_flapClockStarted = false;
     std::chrono::steady_clock::time_point m_lastFlapTick;
 
