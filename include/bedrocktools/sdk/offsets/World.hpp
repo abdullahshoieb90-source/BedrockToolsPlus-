@@ -8,11 +8,6 @@ namespace bedrocktools::sdk::offsets {
 namespace Player {
 inline constexpr std::size_t mName = 2824;
 inline constexpr std::size_t mSkin = 2552;
-// mInventory, the PlayerInventory pointer / wrapper, is no longer hardcoded.
-// The InventoryHUD module discovers the inventory buffer at runtime by
-// scanning the Player memory region for a contiguous run of 36 well-formed
-// ItemStack slots (9 hotbar + 27 main), so a Bedrock update that reshuffles
-// Player fields does not require an offset rebuild.
 }
 
 namespace Mob {
