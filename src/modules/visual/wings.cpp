@@ -170,22 +170,14 @@ static AABB getActorAABB(void* actor) {
     return aabb;
 }
 
-// ActorRotationComponent is the body transform used by the player model.
-// Do not use the camera/view rotation here: the view can orbit independently
-// of the model (third person), while the wings must remain children of the
-// chest/body transform.
-static bedrocktools::sdk::Vec2 getActorBodyRotation(void* actor) {
-    bedrocktools::sdk::Vec2 bodyRotation{0, 0};
+static bedrocktools::sdk::Vec2 getActorRotation(void* actor) {
+    bedrocktools::sdk::Vec2 rot{0,0};
     std::uintptr_t actorAddr = (std::uintptr_t)actor;
-    if (actorAddr < 0x1000) return bodyRotation;
+    if (actorAddr < 0x1000) return rot;
     std::uintptr_t rotComp = *(std::uintptr_t*)(actorAddr + Actor::mActorRotationComponent);
-    if (rotComp < 0x1000) return bodyRotation;
-    bodyRotation = *(bedrocktools::sdk::Vec2*)rotComp;
-    return bodyRotation;
-}
-
-static float getActorBodyYaw(void* actor) {
-    return getActorBodyRotation(actor).y;
+    if (rotComp < 0x1000) return rot;
+    rot = *(bedrocktools::sdk::Vec2*)rotComp;
+    return rot;
 }
 
 static MaterialPtr getMaterial(const char* name) {
@@ -406,7 +398,7 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
                     depth > 0.0f && depth < 16.0f;
         if (liveValid) {
             aabb = liveAABB;             // freshest "current" sample
-            bedrocktools::sdk::Vec2 liveRot = getActorBodyRotation(playerPtr);
+            bedrocktools::sdk::Vec2 liveRot = getActorRotation(playerPtr);
             if (std::isfinite(liveRot.x) && std::isfinite(liveRot.y)) {
                 rot = liveRot;
             }
@@ -489,12 +481,8 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
 
     // Player yaw -> right/forward vectors
     constexpr float kPi = 3.14159265358979323846f;
-    // This is deliberately the actor's body yaw, never the camera yRot/yaw.
-    // The AABB center is the model origin and the root pivot (0, 24, 0) is
-    // the chest/back pivot, so both translation and rotation share one body
-    // transform.
-    const float bodyYaw = rot.y;
-    float yawRad = bodyYaw * kPi / 180.0f;
+    float yawDeg = rot.y;
+    float yawRad = yawDeg * kPi / 180.0f;
     float cosYaw = std::cos(yawRad);
     float sinYaw = std::sin(yawRad);
 
@@ -818,7 +806,7 @@ void WingsModule::onLocalPlayerTick(void* player) {
     // Track player AABB and rotation for rendering, and derive the player's
     // speed from consecutive AABB centers (teleports are ignored).
     AABB aabb = getActorAABB(player);
-    bedrocktools::sdk::Vec2 rot = getActorBodyRotation(player);
+    bedrocktools::sdk::Vec2 rot = getActorRotation(player);
 
     const float centerX = (aabb.min.x + aabb.max.x) * 0.5f;
     const float centerY = (aabb.min.y + aabb.max.y) * 0.5f;
