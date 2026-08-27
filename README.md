@@ -9,7 +9,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 46 configurable modules
+- 47 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -17,7 +17,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Player Health, Chunk Border, Block Outline, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass
+**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Player Health, Chunk Border, Block Outline, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Wings, Cat Pet
 
 **HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair
 
@@ -50,6 +50,19 @@ The **Wings** module renders animated 3D wings on your back that flap, idle and 
 - **Fairy** — small translucent cyan/pink wings
 
 The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. Each style is drawn as closed, tapered feather prisms with a rest-pose fan, a backwards sweep and per-face shading, so the wings read as real 3D volume. Developers can preview every style offline (and compare against the legacy renderer) with `./scripts/gen_wings_preview.sh`, which writes PNGs to `build/wings-preview/`.
+
+## Cat Pet
+
+The **Cat Pet** module gives you a big chibi voxel cat that follows you around. It is drawn with the same world-space overlay tech as Wings (a `RenderLevel` hook + tessellator), so it is fully client-side: no entities are spawned and servers never see it.
+
+- **Follows you like a real pet** — it trots at your heel, sprints to catch up when you run, stops in a small comfort zone next to you, and teleports back if it falls more than ~12 blocks behind.
+- **Fully animated** — a diagonal-pair trot with a gallop bounce whose stride frequency follows its speed, breathing and tail S-sway while idle, look-around head motion, one-ear twitches, blinking, and after a few seconds of standing still it sits down (chest up, hind legs tucked, tail wrapped with a lazy tip flick). Position and animation are interpolated per frame, so the cat stays smooth at any FPS.
+- **Scale** slider (default `1.75`, up to `5.0`) — the pet is intentionally big and huggable by default; crank it up for a truly giant cat (it automatically keeps more distance so it never stands inside you).
+- **Cat Style** selector — Orange Tabby, Tuxedo Black, Snow White, Gray Tabby, Siamese and Calico coats.
+- **Sit When Idle** toggle — turn off if you want the cat to keep standing.
+
+Developers can preview every coat and pose offline with `./scripts/gen_catpet_preview.sh`, which writes PNGs to `build/catpet-preview/`.
+
 
 ## Player Health
 
