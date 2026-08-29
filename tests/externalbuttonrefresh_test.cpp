@@ -117,10 +117,10 @@ FakeObject gOverlay{"overlay"};
 FakeObject gOverlayZoom{"overlay"};
 FakeObject gView{"view"};
 FakeObject gViewZoom{"view"};
-FakeObject gModuleStr{"string", "bedrocktools.Command Hotkey"};
-FakeObject gZoomModuleStr{"string", "bedrocktools.Zoom"};
-FakeObject gButtonIdStr{"string", "bedrocktools.CommandHotkey.Button1"};
-FakeObject gZoomButtonIdStr{"string", "bedrocktools.Zoom.Button1"};
+FakeObject gModuleStr{"string", "bedrocktoolsplus.Command Hotkey"};
+FakeObject gZoomModuleStr{"string", "bedrocktoolsplus.Zoom"};
+FakeObject gButtonIdStr{"string", "bedrocktoolsplus.CommandHotkey.Button1"};
+FakeObject gZoomButtonIdStr{"string", "bedrocktoolsplus.Zoom.Button1"};
 
 // VM / call bookkeeping.
 int g_attachCalls = 0;
@@ -342,7 +342,7 @@ int main() {
     std::printf("external button refresh (detached native thread - the reported bug)\n");
     resetWorld();
     g_envMode = EnvMode::Detached;
-    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktools.Command Hotkey");
+    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
 
     check(g_attachCalls == 1, "detached thread is attached to the JVM exactly once");
     check(g_detachCalls == 1, "thread is detached again after the refresh");
@@ -360,7 +360,7 @@ int main() {
     std::printf("external button refresh (already-attached thread)\n");
     resetWorld();
     g_envMode = EnvMode::Attached;
-    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktools.Command Hotkey");
+    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
 
     check(g_attachCalls == 0 && g_detachCalls == 0,
           "already-attached thread is reused without attach/detach");
@@ -371,14 +371,14 @@ int main() {
     std::printf("external button refresh (failure modes)\n");
     resetWorld();
     g_envMode = EnvMode::VersionError;
-    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktools.Command Hotkey");
+    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
     check(g_attachCalls == 0 && gOverlay.currentButton == &gButtonStale,
           "GetEnv failure leaves everything untouched");
 
     resetWorld();
     g_envMode = EnvMode::Detached;
     g_attachResult = JNI_ERR;
-    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktools.Command Hotkey");
+    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
     check(g_attachCalls == 1 && g_detachCalls == 0,
           "failed AttachCurrentThread is not followed by DetachCurrentThread");
     check(g_log.empty() || g_log.back() != "detach", "no detach event after a failed attach");
@@ -386,13 +386,13 @@ int main() {
     resetWorld();
     g_envMode = EnvMode::Detached;
     g_classesReachable = false; // launcher classes not found on this build
-    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktools.Command Hotkey");
+    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
     check(g_attachCalls == 1 && g_detachCalls == 1,
           "early return while attached still detaches (no leaked attachment)");
 
     resetWorld();
     bedrocktools::launcher::setJavaVm(nullptr);
-    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktools.Command Hotkey");
+    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
     check(g_attachCalls == 0 && g_detachCalls == 0,
           "no VM registered -> no-op without crashing");
     bedrocktools::launcher::setJavaVm(&g_vm);

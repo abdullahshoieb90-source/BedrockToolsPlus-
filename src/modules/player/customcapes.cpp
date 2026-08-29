@@ -36,8 +36,8 @@ void freeBlobDeleter(unsigned char* data) {
 
 constexpr std::uint32_t kCapeImageFormat = 4;
 constexpr int kLoadRetryTicks = 120;
-constexpr const char* kCapeIdBase = "bedrocktools";
-constexpr std::size_t kCapeIdBaseLen = 12;
+constexpr const char* kCapeIdBase = "bedrocktoolsplus";
+constexpr std::size_t kCapeIdBaseLen = 16;
 
 void writeShortStdString(uintptr_t addr, const char* text, std::size_t len) {
     if (len > 22) return; // libc++ short-string capacity inside 24 bytes
@@ -58,7 +58,7 @@ std::string capeDirectoryForConfig() {
     const std::string configPath = bedrocktools::config::ConfigManager::get().getConfigPath();
     const std::size_t lastSlash = configPath.find_last_of('/');
     std::string dir = (lastSlash != std::string::npos) ? configPath.substr(0, lastSlash)
-                                                       : "/sdcard/games/BedrockTools";
+                                                       : "/sdcard/games/BedrockToolsPlus";
     return dir + "/capes";
 }
 
@@ -81,7 +81,7 @@ void* resolvePlayerSkin(void* player) {
 } // namespace
 
 CustomCapesModule::CustomCapesModule()
-    : Module("Custom Capes", "Wear any PNG from the BedrockTools capes folder as your cape (local only).") {
+    : Module("Custom Capes", "Wear any PNG from the BedrockToolsPlus capes folder as your cape (local only).") {
     g_customCapes = this;
 }
 

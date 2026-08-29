@@ -34,9 +34,17 @@ inline std::uintptr_t resolve(memory::SignatureId id, const ApiV1* runtime) {
 using GetApiFunction = const ApiV1*(*)(std::uint32_t version);
 
 inline const ApiV1* find(std::uint32_t version = AbiVersion) {
-    void* handle = dlopen("libBedrockTools.so", RTLD_NOW | RTLD_NOLOAD);
+    void* handle = dlopen("libBedrockToolsPlus.so", RTLD_NOW | RTLD_NOLOAD);
+    if (!handle) {
+        // Fallback for backward compatibility with old library name
+        handle = dlopen("libBedrockTools.so", RTLD_NOW | RTLD_NOLOAD);
+    }
     if (!handle) return nullptr;
-    auto getter = reinterpret_cast<GetApiFunction>(dlsym(handle, "BedrockTools_GetApi"));
+    auto getter = reinterpret_cast<GetApiFunction>(dlsym(handle, "BedrockToolsPlus_GetApi"));
+    if (!getter) {
+        // Fallback for backward compatibility with old symbol
+        getter = reinterpret_cast<GetApiFunction>(dlsym(handle, "BedrockTools_GetApi"));
+    }
     const ApiV1* result = getter ? getter(version) : nullptr;
     dlclose(handle);
     return compatible(result) ? result : nullptr;
@@ -44,4 +52,5 @@ inline const ApiV1* find(std::uint32_t version = AbiVersion) {
 
 }
 
+extern "C" BEDROCKTOOLS_API const bedrocktools::api::ApiV1* BedrockToolsPlus_GetApi(std::uint32_t version);
 extern "C" BEDROCKTOOLS_API const bedrocktools::api::ApiV1* BedrockTools_GetApi(std::uint32_t version);

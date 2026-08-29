@@ -1,8 +1,8 @@
-# BedrockTools
+# BedrockToolsPlus
 
 ## Introduction
 
-BedrockTools is an open-source native mod for Minecraft Bedrock on Android, made for [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid). It adds a collection of visual, HUD, player, and utility modules while also providing a small C++ SDK and event system for native mod development.
+BedrockToolsPlus is an open-source native mod for Minecraft Bedrock on Android, made for [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid). It adds a collection of visual, HUD, player, and utility modules while also providing a small C++ SDK and event system for native mod development.
 
 The source is public so people can study how a real LeviLauncher mod is structured, learn from it, and use the SDK as a starting point for their own mods.
 
@@ -30,7 +30,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 The **Custom Capes** module lets you wear any PNG as a classic cape.
 
 1. Put cape images (`.png`, ideally 64x32 — any other size is scaled automatically) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a sample cape).
-2. (Re)launch the game, open the BedrockTools mod menu and enable **Custom Capes**.
+2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Custom Capes**.
 3. Pick a file in the module's **Cape** selector — the cape updates in-game immediately. Choose `None` to bring your vanilla cape back.
 
 Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
@@ -56,12 +56,12 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 - Android 9 or newer
 - 64-bit ARM device (`arm64-v8a`)
 - [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid)
-- A Minecraft Bedrock version supported by the BedrockTools release you are using
+- A Minecraft Bedrock version supported by the BedrockToolsPlus release you are using
 
 ## Installation
 
 1. Install LeviLauncher.
-2. Download the latest `BedrockTools.levipack` release.
+2. Download the latest `BedrockToolsPlus.levipack` release.
 3. Import the package from LeviLauncher's mod manager and enable it.
 4. Launch Minecraft through LeviLauncher.
 
@@ -80,14 +80,14 @@ xmake f -y -p android -a arm64-v8a -m release --ndk=/path/to/android-ndk-r28c
 xmake -y
 ```
 
-The release build produces `libBedrockTools.so` and `BedrockTools.levipack` in the xmake target directory.
+The release build produces `libBedrockToolsPlus.so` and `BedrockToolsPlus.levipack` in the xmake target directory.
 
 Public SDK headers are under `include/bedrocktools`. Shared runtime code lives under `src/core`, while features are kept under `src/modules` by category. Minecraft signatures and offsets are version-specific, so those are the main pieces that normally need updating for a new game build.
 
 Example event subscription from another native mod:
 
 ```cpp
-#include <bedrocktools/BedrockTools.hpp>
+#include <bedrocktools/BedrockToolsPlus.hpp>
 
 bedrocktools::events::RuntimeListener<bedrocktools::events::LocalPlayerTickEvent> listener(
     [](auto& event) {
@@ -103,13 +103,13 @@ Pull requests are highly appreciated. Keep changes focused, preserve the existin
 
 ## Usage Guidelines
 
-Do not use LeviLauncher or BedrockTools to violate Mojang or Microsoft's user agreements.
+Do not use LeviLauncher or BedrockToolsPlus to violate Mojang or Microsoft's user agreements.
 
-**Disclaimer:** The authors and contributors of BedrockTools and LeviLauncher are not responsible for bans, damages, or issues arising from the use of this software. Use it at your own risk and in accordance with Minecraft's terms of service.
+**Disclaimer:** The authors and contributors of BedrockToolsPlus and LeviLauncher are not responsible for bans, damages, or issues arising from the use of this software. Use it at your own risk and in accordance with Minecraft's terms of service.
 
 ## Credits & Acknowledgements
 
-BedrockTools is made by [RadiantByte](https://github.com/RadiantByte).
+BedrockToolsPlus is made by [RadiantByte](https://github.com/RadiantByte) and maintained by VENOM P2 GM.
 
 Special thanks to [dreamguxiang](https://github.com/dreamguxiang) for helping make this mod possible.
 
@@ -127,4 +127,4 @@ Discord: [discord.gg/rMgdpTFFVg](https://discord.gg/rMgdpTFFVg)
 
 ## License
 
-BedrockTools is licensed under the [GNU General Public License v3.0](LICENSE).
+BedrockToolsPlus is licensed under the [GNU General Public License v3.0](LICENSE).

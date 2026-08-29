@@ -107,7 +107,7 @@ int main() {
     j["m_buttonBorderColor"] = "#373737"; // non-legacy so text/label keys apply
     mod.loadConfig(j);
 
-    const std::string btn1 = "bedrocktools.CommandHotkey.Button1";
+    const std::string btn1 = "bedrocktoolsplus.CommandHotkey.Button1";
     check(g_registerCount[btn1] >= 1, "slot 1 registered on first load");
     check(g_labelById[btn1] == "MyHome", "button shows the configured label");
 

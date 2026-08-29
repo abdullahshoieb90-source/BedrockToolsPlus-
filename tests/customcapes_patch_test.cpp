@@ -210,9 +210,9 @@ int main() {
           "injected pixels match the resampled cape");
 
     const std::uint8_t* capeId = skinBase + off::SerializedSkinImpl::mCapeId;
-    check(capeId[0] == static_cast<std::uint8_t>(14u << 1) &&
-              std::memcmp(capeId + 1, "bedrocktools-1", 14) == 0,
-          "mCapeId (336) holds the short-string id \"bedrocktools-1\"");
+    check(capeId[0] == static_cast<std::uint8_t>(18u << 1) &&
+              std::memcmp(capeId + 1, "bedrocktoolsplus-1", 18) == 0,
+          "mCapeId (336) holds the short-string id \"bedrocktoolsplus-1\"");
     check(skin[off::SerializedSkinImpl::mIsPersona] == 0,
           "persona flag untouched");
 

@@ -212,7 +212,7 @@ static void ensureMaterials() {
 static std::string wingsDirectoryForConfig() {
     const std::string configPath = bedrocktools::config::ConfigManager::get().getConfigPath();
     const std::size_t lastSlash = configPath.find_last_of('/');
-    std::string dir = (lastSlash != std::string::npos) ? configPath.substr(0, lastSlash) : "/sdcard/games/BedrockTools";
+    std::string dir = (lastSlash != std::string::npos) ? configPath.substr(0, lastSlash) : "/sdcard/games/BedrockToolsPlus";
     return dir + "/wings";
 }
 
