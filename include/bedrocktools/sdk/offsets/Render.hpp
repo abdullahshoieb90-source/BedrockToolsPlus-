@@ -58,6 +58,11 @@ inline constexpr std::size_t mRenderFirstPersonTransformPatchOffset1 = 0x194C;
 inline constexpr std::size_t mRenderFirstPersonTransformPatchOffset2 = 0x1950;
 }
 
+namespace ItemInHandRenderer {
+inline constexpr std::size_t mRenderFirstPersonTransformPatchOffset1 = 0x194C;
+inline constexpr std::size_t mRenderFirstPersonTransformPatchOffset2 = 0x1950;
+}
+
 namespace BlockTessellator {
 inline constexpr std::size_t mRegion = 0x8;
 inline constexpr std::size_t mInternalTexture = 0x18;
