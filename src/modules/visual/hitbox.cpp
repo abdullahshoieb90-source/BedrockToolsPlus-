@@ -540,8 +540,10 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 
     ActorVec actors{};
     if (s_actorFetchNearby) {
-        constexpr float kActorFetchRadius = 30.0f;
-        bedrocktools::sdk::Vec3 extent = {kActorFetchRadius, kActorFetchRadius, kActorFetchRadius};
+        // Use the largest render distance so we fetch enough actors for all categories.
+        float fetchRadius = g_hitboxMod->itemsRenderDistance;
+        if (fetchRadius < 30.0f) fetchRadius = 30.0f;
+        bedrocktools::sdk::Vec3 extent = {fetchRadius, fetchRadius, fetchRadius};
         actors = s_actorFetchNearby(g_localPlayerPtr, &extent, 1);
     }
 
@@ -664,6 +666,8 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             } else {
                 if (!g_hitboxMod->showItems) continue;
                 groupColor = g_hitboxMod->showItemsColor;
+                // Enforce the items render distance limit.
+                if (it->mDistance > g_hitboxMod->itemsRenderDistance) continue;
             }
 
             if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
@@ -767,6 +771,11 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     showEntities = j.value("showEntities", showEntities);
     showPlayers = j.value("showPlayers", showPlayers);
     showItems = j.value("showItems", showItems);
+    if (j.contains("itemsRenderDistance")) {
+        try { itemsRenderDistance = j["itemsRenderDistance"].get<float>(); } catch (...) {}
+    }
+    if (itemsRenderDistance < 30.0f) itemsRenderDistance = 30.0f;
+    if (itemsRenderDistance > 200.0f) itemsRenderDistance = 200.0f;
     // Prefer the current key; fall back to the old "showSelf" name so
     // existing configs keep working after the rename.
     if (j.contains("show3rdPerson")) {
@@ -818,6 +827,7 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["showEntities"] = showEntities;
     j["showPlayers"] = showPlayers;
     j["showItems"] = showItems;
+    j["itemsRenderDistance"] = itemsRenderDistance;
     j["show3rdPerson"] = show3rdPerson;
     j["showEyeLine"] = showEyeLine;
     j["showLookLine"] = showLookLine;
