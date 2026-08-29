@@ -5,12 +5,6 @@
 namespace bedrocktools::sdk::offsets {
 
 namespace VTable {
-// Slot indices into class vtables. The MinecraftUIRenderContext values below
-// match the Android client build this mod targets (ShulkerPreview exercises
-// getLineLength/drawText/flushText/drawImage/getTexture/fillRectangle there
-// on device). Note that recent Windows BDS builds differ: LeviLamina's
-// current headers place getTexture at 11 and fillRectangle at 21 there — do
-// not "fix" these numbers against BDS-only sources.
 inline constexpr std::size_t ClientInstance_getRegion = 31;
 inline constexpr std::size_t BlockSource_getDimensionId = 18;
 inline constexpr std::size_t RenderMaterialGroup_getMaterial = 2;
@@ -19,7 +13,6 @@ inline constexpr std::size_t MinecraftUIRenderContextGetLineLength = 2;
 inline constexpr std::size_t MinecraftUIRenderContextDrawText = 6;
 inline constexpr std::size_t MinecraftUIRenderContextFlushText = 7;
 inline constexpr std::size_t MinecraftUIRenderContextDrawImage = 8;
-inline constexpr std::size_t MinecraftUIRenderContextDrawNineslice = 9;
 inline constexpr std::size_t MinecraftUIRenderContextFlushImages = 10;
 inline constexpr std::size_t MinecraftUIRenderContextFillRectangle = 16;
 inline constexpr std::size_t MinecraftUIRenderContextGetTexture = 32;
