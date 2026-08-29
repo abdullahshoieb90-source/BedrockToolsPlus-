@@ -6,28 +6,56 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install compiler
+        run: sudo apt-get update && sudo apt-get install -y g++
+
+      - name: Run host tests
+        run: ./scripts/run_tests.sh
+
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup xmake
         uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: "2.9.8"
 
       - uses: nttld/setup-ndk@v1
         id: ndk
         with:
           ndk-version: r28c
+          add-to-path: false
+          local-cache: true
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3
 
       - name: Build and package
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }}
-          xmake -y
+          set -euo pipefail
+          echo "NDK: ${ANDROID_NDK_HOME}"
+          test -d "${ANDROID_NDK_HOME}"
+          xmake f -y -v -p android -a arm64-v8a -m release --ndk="${ANDROID_NDK_HOME}"
+          xmake -y -v
 
       - uses: actions/upload-artifact@v4
         with:
           name: BedrockTools-levipack
-          path: build/android/arm64-v8a/release/BedrockTools.levipack
+          path: |
+            **/BedrockTools.levipack
           if-no-files-found: error
-          
