@@ -1,4 +1,4 @@
-Enter#include "autosprint.hpp"
+#include "autosprint.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/input/MoveInput.hpp>
 
