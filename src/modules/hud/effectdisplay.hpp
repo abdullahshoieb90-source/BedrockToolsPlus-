@@ -46,32 +46,12 @@ public:
 
     void updateEffects(bedrocktools::sdk::Player* player);
 
-    // Detours installed on MinecraftUIRenderContext::drawImage and
-    // drawNineslice (layer 2 of the vanilla potion-bar suppression below).
-    // Public — with the original function pointers kept as class statics — so
-    // the host-side unit test can drive them directly with a fake render
-    // context.
-    static void drawImageDetour(void* context, const void* texture, const void* position,
-                                const void* size, const void* uv, const void* uvSize, bool colorCorrected);
-    static void drawNinesliceDetour(void* context, const void* texture, const void* info);
-    static void (*s_originalDrawImage)(void* context, const void* texture, const void* position,
-                                       const void* size, const void* uv, const void* uvSize, bool colorCorrected);
-    static void (*s_originalDrawNineslice)(void* context, const void* texture, const void* info);
-
-    // How often the texture filter re-resolves the vanilla bar's textures
-    // while it is suppressing. Static so the render-thread detours can read
-    // it without owning a module instance; the unit test sets it to zero to
-    // make every detour call refresh deterministically.
-    static std::chrono::milliseconds s_vanillaBarRefreshInterval;
-
 private:
     void registerResources();
     void installVanillaBarHook();
-    void installVanillaBarFilter();
 
-    // Detour used to suppress the vanilla status-effect (potion) bar by
-    // skipping the whole HUD draw (layer 1). It is a static member so it can
-    // read private state (m_hideVanillaHud) directly.
+    // Detour used to suppress the vanilla status-effect (potion) bar. It is a
+    // static member so it can read private state (m_hideVanillaHud) directly.
     static void renderPotionEffectsDetour(void* self, void* renderContext, void* screenView, float posX, float posY);
 
     std::mutex m_mutex;
@@ -114,19 +94,9 @@ private:
     // languages from effecti18n.hpp. See saveConfig()/loadConfig().
     int m_language = 0;
 
-    // Vanilla potion-bar suppression, layer 1 (see installVanillaBarHook): a
-    // hook on HudScreen::_renderStatusEffects. The hook itself is kept
-    // installed for the whole session; the detour decides per-frame whether
-    // to skip the vanilla draw call.
+    // Vanilla potion-bar hook (installed once in onInit). The hook itself is
+    // kept installed for the whole session; the detour decides per-frame
+    // whether to skip the vanilla draw call.
     bedrocktools::hooks::State* m_vanillaBarHook = nullptr;
     bool m_vanillaBarHooked = false;
-
-    // Vanilla potion-bar suppression, layer 2 (see installVanillaBarFilter):
-    // filters on MinecraftUIRenderContext::drawImage and drawNineslice that
-    // swallow the bar's own texture draws while the module is enabled. Needs
-    // no per-build byte pattern — the virtuals are resolved through the
-    // class's RTTI name, the same mechanism ShulkerPreview uses on device.
-    bedrocktools::hooks::State* m_vanillaBarFilterHook = nullptr;
-    bedrocktools::hooks::State* m_vanillaNinesliceHook = nullptr;
-    bool m_vanillaBarFilterHooked = false;
 };
