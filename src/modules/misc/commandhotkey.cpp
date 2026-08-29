@@ -50,7 +50,7 @@ constexpr float kLauncherButtonBaseSize = 52.0f;
 // LeviLauncher derives an independent persisted HUD position from each stable
 // button ID ("external_button:<id>").
 std::string commandButtonId(std::size_t index) {
-    return "bedrocktools.CommandHotkey.Button" + std::to_string(index + 1);
+    return "bedrocktoolsplus.CommandHotkey.Button" + std::to_string(index + 1);
 }
 
 std::string launcherLabel(std::string value) {

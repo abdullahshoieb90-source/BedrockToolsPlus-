@@ -205,7 +205,7 @@ void refreshExternalButtonsForModule(std::string_view moduleId) {
     if (envState != JNI_EDETACHED) return;
 
     JavaVMAttachArgs attachArgs{
-        JNI_VERSION_1_6, const_cast<char*>("BedrockTools/ButtonRefresh"), nullptr};
+        JNI_VERSION_1_6, const_cast<char*>("BedrockToolsPlus/ButtonRefresh"), nullptr};
     if (vm->AttachCurrentThread(&env, &attachArgs) != JNI_OK || !env) return;
 
     // Detaching also frees every local reference created above, so the

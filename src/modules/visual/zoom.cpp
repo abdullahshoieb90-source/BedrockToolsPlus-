@@ -183,8 +183,8 @@ static const char* zoomEnabledSvg = R"svg(<svg viewBox="0 0 64 64" xmlns="http:/
 
 void ZoomModule::updateZoomButton() {
     if (m_overlayToggle) {
-        pl::modmenu::ButtonBuilder("bedrocktools.Zoom.Button", "Zoom")
-                .moduleId("bedrocktools.Zoom")
+        pl::modmenu::ButtonBuilder("bedrocktoolsplus.Zoom.Button", "Zoom")
+                .moduleId("bedrocktoolsplus.Zoom")
                 .behavior(pl::modmenu::ButtonBehavior::Toggle)
                 .stylePreset(pl::modmenu::ButtonStylePreset::Accent)
                 .styleColors(0x00000001, 0x00000001, 0x00000001)
@@ -204,6 +204,6 @@ void ZoomModule::updateZoomButton() {
                 })
                 .registerButton();
     } else {
-        pl::modmenu::unregisterButton("bedrocktools.Zoom.Button");
+        pl::modmenu::unregisterButton("bedrocktoolsplus.Zoom.Button");
     }
 }

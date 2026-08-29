@@ -20,7 +20,7 @@ std::string ConfigManager::getConfigPath() const {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_configPath.empty()) return m_configPath;
     }
-    return "/sdcard/games/BedrockTools/config.json";
+    return "/sdcard/games/BedrockToolsPlus/config.json";
 }
 
 void ConfigManager::setConfigPath(const std::string& path) {

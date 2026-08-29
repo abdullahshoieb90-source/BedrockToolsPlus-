@@ -95,7 +95,7 @@ static void dumpSkin(void* targetPlayer) {
     
     std::string configPath = bedrocktools::config::ConfigManager::get().getConfigPath();
     size_t lastSlash = configPath.find_last_of('/');
-    std::string configDir = (lastSlash != std::string::npos) ? configPath.substr(0, lastSlash) : "/sdcard/games/BedrockTools";
+    std::string configDir = (lastSlash != std::string::npos) ? configPath.substr(0, lastSlash) : "/sdcard/games/BedrockToolsPlus";
     
     std::string outPath = configDir + "/" + cleanName + "_skin.png";
     

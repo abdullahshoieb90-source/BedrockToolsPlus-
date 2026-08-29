@@ -48,7 +48,7 @@ constexpr float kDefaultCommentButtonHeight = 64.0f;
 // LeviLauncher derives an independent persisted HUD position from each stable
 // button ID ("external_button:<id>").
 std::string commentButtonId(std::size_t index) {
-    return "bedrocktools.CommentKey.Button" + std::to_string(index + 1);
+    return "bedrocktoolsplus.CommentKey.Button" + std::to_string(index + 1);
 }
 
 std::string launcherLabel(std::string value, std::string fallback) {
