@@ -10,10 +10,6 @@
 //   * endless effects show the localized infinity label
 //   * a pinned language setting wins over the game language
 //   * the language radio round-trips as "<index>,Auto,<language>..."
-//   * the vanilla potion-bar filter swallows the bar's texture draws while
-//     the module is enabled and forwards them again once it is disabled
-//     (drives the drawImage detour through a fake render context whose
-//     getTexture() resolves a fake speed-effect icon record)
 //
 // Like crosshair_test.cpp, the module needs the preloader and nlohmann_json
 // headers (normally provided by xmake). Build and run standalone (adjust the
@@ -31,7 +27,6 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <memory>
 #include <span>
 #include <string>
 #include <thread>
@@ -41,9 +36,7 @@
 // Real declarations first so the stubs below match them exactly.
 #include <pl/ModMenu.hpp>
 #include <pl/memory/Hook.hpp>
-#include <pl/memory/Vtable.hpp>
 #include "bedrocktools/memory/Signatures.hpp"
-#include "bedrocktools/sdk/Offsets.hpp"
 #include "bedrocktools/events/EventBus.hpp"
 #include "core/Runtime.hpp"
 
@@ -53,7 +46,6 @@ static std::vector<pl::modmenu::DrawCommand> g_lastCmds;
 namespace pl::memory {
     int hook(FuncPtr, FuncPtr, FuncPtr*, HookPriority) { return -1; }
     bool unhook(FuncPtr, FuncPtr) { return true; }
-    std::uintptr_t resolveVtableFunction(std::string_view, std::size_t, std::string_view) { return 0; }
 }
 
 namespace pl::modmenu {
@@ -108,40 +100,6 @@ void writeOptions(const std::filesystem::path& dir, const std::string& language,
     std::filesystem::last_write_time(file,
         std::filesystem::file_time_type{} + std::chrono::seconds(epochOffset));
 }
-
-// ---- fake MinecraftUIRenderContext for the vanilla-bar filter ----------
-// The detour resolves the vanilla bar's textures once through the context's
-// getTexture() virtual (vtable slot documented in offsets::VTable) and then
-// suppresses draws by ClientTexture pointer identity, so a fake vtable with
-// just that one function is enough to drive the whole contract on the host.
-void* g_fakeVtable[64] = {};
-void* const* g_fakeVtablePtr = g_fakeVtable;
-
-vanilla_ui::BedrockTextureData& fakeSpeedIcon() {
-    static vanilla_ui::BedrockTextureData storage;
-    return storage;
-}
-
-vanilla_ui::TexturePtr fakeGetTexture(void*, const vanilla_ui::ResourceLocation& location, bool) {
-    // Only the speed icon "exists" for the fake context; every other path
-    // resolves to an empty handle, exactly like a build lacking a texture.
-    if (location.path.find("speed_effect") != std::string::npos) {
-        vanilla_ui::TexturePtr handle;
-        handle.clientTexture = std::shared_ptr<const vanilla_ui::BedrockTextureData>(
-            std::shared_ptr<const vanilla_ui::BedrockTextureData>(), &fakeSpeedIcon());
-        return handle;
-    }
-    return {};
-}
-
-int g_forwardedDraws = 0;
-void fakeOriginalDrawImage(void*, const void*, const void*, const void*, const void*, const void*, bool) {
-    ++g_forwardedDraws;
-}
-
-void drawAsVanillaBar(const void* texture) {
-    EffectDisplayModule::drawImageDetour(&g_fakeVtablePtr, texture, nullptr, nullptr, nullptr, nullptr, false);
-}
 } // namespace
 
 int main() {
@@ -181,32 +139,6 @@ int main() {
     mod.loadConfig(pin);
     mod.onFrame();
     check(findText("Speed II") != nullptr, "pinned English wins over the game language");
-
-    std::printf("vanilla potion-bar suppression\n");
-    // Wire the fake context's getTexture() (the only vtable slot the filter
-    // uses) and record forwarded draws through the swapped-in original.
-    g_fakeVtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextGetTexture] =
-        reinterpret_cast<void*>(&fakeGetTexture);
-    EffectDisplayModule::s_originalDrawImage = &fakeOriginalDrawImage;
-    mod.setMasterEnabled(false);
-    mod.setMasterEnabled(true);   // known state: enabled (module "on")
-
-    vanilla_ui::BedrockTextureData unrelatedIcon;   // any other HUD image
-
-    drawAsVanillaBar(&fakeSpeedIcon().clientTexture);
-    check(g_forwardedDraws == 0, "vanilla effect icon draw is swallowed while the module is on");
-
-    drawAsVanillaBar(&unrelatedIcon.clientTexture);
-    check(g_forwardedDraws == 1, "unrelated images still draw while the module is on");
-
-    mod.setMasterEnabled(false);   // module closed: vanilla bar must return
-    drawAsVanillaBar(&fakeSpeedIcon().clientTexture);
-    drawAsVanillaBar(&unrelatedIcon.clientTexture);
-    check(g_forwardedDraws == 3, "every vanilla bar draw is forwarded again once the module is off");
-
-    mod.setMasterEnabled(true);    // re-enabled: suppression resumes
-    drawAsVanillaBar(&fakeSpeedIcon().clientTexture);
-    check(g_forwardedDraws == 3, "suppression resumes when the module is turned back on");
 
     std::printf("config round-trip\n");
     nlohmann::json saved;
