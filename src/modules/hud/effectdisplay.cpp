@@ -8,17 +8,14 @@
 #include "modules/ModuleRegistry.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
-#include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/world/Actor.hpp>
 #include <entt/entt.hpp>
 #include <pl/ModMenu.hpp>
-#include <pl/memory/Vtable.hpp>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -26,7 +23,6 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
@@ -1171,232 +1167,29 @@ void effectTickCallback(bedrocktools::sdk::Player* player) {
 }
 
 // ---------------------------------------------------------------------------
-// Vanilla potion-bar suppression
+// Vanilla potion-bar hook
 // ---------------------------------------------------------------------------
-// While the Effect Display module is enabled, the built-in status-effect
-// (potion) bar of the game must not be drawn, so it can never overlap this
-// module's own panel; the moment the module is disabled, the vanilla bar has
-// to come back exactly as it was. Nothing outside the module is ever
-// modified, so "coming back" is simply a matter of letting the game's own
-// draw calls through again.
-//
-// Layer 1 - whole-bar hook. Bedrock draws the bar from
+// Bedrock draws the built-in status-effect (potion) bar from
 // `HudScreen::_renderStatusEffects(MinecraftUIRenderContext&, ScreenView&,
-// float, float)`. Hooking it lets the module skip the draw call entirely.
+// float, float)`. Hooking it lets this module skip the draw call entirely, so
+// the vanilla bar cannot overlap this module's own panel.
+//
 // The address is located through `SignatureId::RenderPotionEffects` (see
 // src/core/memory/Signatures.cpp). The pattern registered there is a clearly
-// marked placeholder: until it is replaced with the real ARM64 byte pattern
-// of `_renderStatusEffects` for the target game build, `resolve()` returns 0,
-// `installVanillaBarHook()` bails out quietly and this layer stays inactive.
+// marked placeholder: until it is replaced with the real ARM64 byte pattern of
+// `_renderStatusEffects` for the target game build, `resolve()` returns 0,
+// `installVanillaBarHook()` bails out quietly and the vanilla bar stays
+// visible. The module itself remains fully functional either way.
 //
-// Layer 2 - texture filter, active without any byte pattern. The bar's icons
-// and frame are ordinary UI textures (the very same `textures/ui/*_effect`
-// artwork this module embeds for its own panel) and reach the screen through
-// the `MinecraftUIRenderContext::drawImage` virtual. That function is
-// resolved from the class's RTTI name plus its vtable slot (the same
-// mechanism ShulkerPreview already uses on device), hooked once, and the
-// detour swallows exactly the draws whose texture belongs to the vanilla
-// bar - every other UI image (hearts, hotbar, containers, ...) passes
-// through untouched. The launcher-side overlay that renders this module's
-// own panel never goes through the game's render context, so the filter
-// cannot hide the module's own icons.
-//
-// Both layers only ever *skip* draw calls while the module is enabled (and
-// its "Hide Vanilla Hud" option is on); with the module disabled every call
-// is forwarded to the original function and the vanilla bar is exactly what
-// the game would have drawn anyway.
+// The prototype below matches Bedrock's `_renderStatusEffects` signature on
+// the builds the rest of this codebase targets. If a different build renames
+// or re-shapes this function, only the prototype (and the pattern) need to be
+// updated here — the early-return logic stays the same.
 using RenderPotionEffectsFn = void (*)(void* self, void* renderContext, void* screenView, float posX, float posY);
 
 RenderPotionEffectsFn g_origRenderPotionEffects = nullptr;
 
-constexpr const char* kMinecraftLibrary = "libminecraftpe.so";
-
-// Minimal stand-ins for the game's texture-handle types, laid out exactly
-// like the definitions the ShulkerPreview module has verified on device.
-namespace vanilla_ui {
-
-// mce::ClientTexture - opaque payload; only its address is ever compared.
-struct ClientTexture {
-    std::byte storage[24];
-};
-
-// BedrockTextureData - the shared texture record a handle points at, with
-// the ClientTexture as its first member (so the address of the record and of
-// the client texture inside it coincide).
-struct BedrockTextureData {
-    ClientTexture clientTexture;
-};
-
-enum class ResourceFileSystem : int {
-    UserPackage = 0,
-};
-
-// ResourceLocation - path plus the engine's FNV-style hash of it. Passing a
-// hand-built instance to MinecraftUIRenderContext::getTexture resolves the
-// same texture record the game itself uses for that path.
-class ResourceLocation {
-public:
-    ResourceFileSystem fileSystem;
-    std::string path;
-    std::uint64_t pathHash;
-    std::uint64_t fullHash;
-
-    explicit ResourceLocation(const char* value)
-        : fileSystem(ResourceFileSystem::UserPackage),
-          path(value ? value : ""),
-          pathHash(computeHash(path)),
-          fullHash(pathHash ^ static_cast<std::uint64_t>(fileSystem)) {}
-
-private:
-    static std::uint64_t computeHash(std::string_view value) {
-        constexpr std::uint64_t Offset = 1469598103934665603ULL;
-        constexpr std::uint64_t Prime = 1099511628211ULL;
-        std::uint64_t hash = Offset;
-        for (unsigned char ch : value) hash = static_cast<std::uint64_t>(ch) ^ (Prime * hash);
-        return hash;
-    }
-};
-
-// mce::TexturePtr - the handle getTexture() returns by value.
-class TexturePtr {
-public:
-    std::shared_ptr<const BedrockTextureData> clientTexture;
-    std::shared_ptr<ResourceLocation> resourceLocation;
-};
-
-using GetTextureFn = TexturePtr (*)(void* context, const ResourceLocation& location, bool forceReload);
-
-} // namespace vanilla_ui
-
-// Everything the vanilla status-effect bar can put on screen besides the
-// per-effect icons (those come from kVanillaIconAssets above): the frame
-// texture drawn behind each icon, plus a legacy icon not in the id table.
-// Paths the running game build has no texture for resolve to an empty handle
-// and are simply ignored.
-const char* const kVanillaEffectBarExtraTextures[] = {
-    "textures/ui/mob_effect_background",   // rounded frame behind each icon
-    "textures/ui/effect_background",
-    "textures/ui/frozen_effect",           // legacy icon, not in the id table
-};
-
-// Pointer-identity set of the resolved ClientTexture records. The array is
-// fixed-size so resolving never allocates on the render thread, and the
-// stored pointers are only ever compared - never dereferenced - so a stale
-// entry can at worst stop hiding the bar, never crash. If a resolve attempt
-// comes back completely empty (the very first draws can happen before the
-// resource system answers), it is retried about once a second instead of
-// latching an empty set for the whole session.
-struct VanillaBarTextureCache {
-    static constexpr int kCapacity = 40;   // 34 icons + 3 extras + slack
-    static constexpr int kRetryDelay = 60;   // draws between empty retries
-
-    const void* textures[kCapacity] = {};
-    int count = 0;
-    bool resolved = false;
-    int retryCountdown = 0;
-};
-
-VanillaBarTextureCache g_vanillaBarTextures;
-
-vanilla_ui::TexturePtr fetchUiTexture(void* context, const char* path) {
-    if (!context) return {};
-    void* const* vtable = *reinterpret_cast<void* const**>(context);
-    if (!vtable) return {};
-    auto* getTexture = reinterpret_cast<vanilla_ui::GetTextureFn>(
-        vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextGetTexture]);
-    if (!getTexture) return {};
-    const vanilla_ui::ResourceLocation location(path);
-    return getTexture(context, location, false);
-}
-
-void rememberVanillaBarTexture(const void* texture) {
-    auto& cache = g_vanillaBarTextures;
-    if (!texture || cache.count >= VanillaBarTextureCache::kCapacity) return;
-    for (int i = 0; i < cache.count; ++i) {
-        if (cache.textures[i] == texture) return;
-    }
-    cache.textures[cache.count++] = texture;
-}
-
-// Resolves every vanilla-bar texture through the live render context and
-// remembers the addresses of their ClientTexture records. Runs on the first
-// draw the detour ever sees (that call supplies the context) and retries
-// occasionally while nothing resolves at all; the set is latched as soon as
-// at least one texture is known, since the rest are simply textures this
-// game build does not have.
-void resolveVanillaBarTextures(void* context) {
-    if (!context) {   // nothing to resolve with; try again later
-        g_vanillaBarTextures.retryCountdown = VanillaBarTextureCache::kRetryDelay;
-        return;
-    }
-    for (const char* path : kVanillaEffectBarExtraTextures) {
-        const auto handle = fetchUiTexture(context, path);
-        if (const auto* data = handle.clientTexture.get()) {
-            rememberVanillaBarTexture(&data->clientTexture);
-        }
-    }
-    for (const auto& asset : kVanillaIconAssets) {
-        const auto handle = fetchUiTexture(context, asset.path);
-        if (const auto* data = handle.clientTexture.get()) {
-            rememberVanillaBarTexture(&data->clientTexture);
-        }
-    }
-    if (g_vanillaBarTextures.count > 0) g_vanillaBarTextures.resolved = true;
-    else g_vanillaBarTextures.retryCountdown = VanillaBarTextureCache::kRetryDelay;
-}
-
-bool isVanillaEffectBarTexture(const void* texture) {
-    const auto& cache = g_vanillaBarTextures;
-    for (int i = 0; i < cache.count; ++i) {
-        if (cache.textures[i] == texture) return true;
-    }
-    return false;
-}
-
 } // namespace
-
-// The original drawImage is a class static (rather than a file-local like
-// g_origRenderPotionEffects) so the host-side unit test can install its own
-// recording stub and observe which draws get forwarded.
-void (*EffectDisplayModule::s_originalDrawImage)(void*, const void*, const void*, const void*, const void*, const void*, bool) = nullptr;
-
-void EffectDisplayModule::drawImageDetour(void* context, const void* texture, const void* position,
-                                          const void* size, const void* uv, const void* uvSize, bool tiled) {
-    // Resolve (once, with cheap retries) which texture records make up the
-    // vanilla bar; the intercepted draws supply the live render context.
-    if (!g_vanillaBarTextures.resolved) {
-        if (g_vanillaBarTextures.retryCountdown > 0) --g_vanillaBarTextures.retryCountdown;
-        else resolveVanillaBarTextures(context);
-    }
-
-    // Enabled module + vanilla-bar texture: swallow the draw so the bar's
-    // icons never reach the screen. Anything else is forwarded untouched.
-    if (texture && g_effectDisplay && g_effectDisplay->enabled && g_effectDisplay->m_hideVanillaHud &&
-        isVanillaEffectBarTexture(texture)) {
-        return;
-    }
-
-    if (s_originalDrawImage) s_originalDrawImage(context, texture, position, size, uv, uvSize, tiled);
-}
-
-void EffectDisplayModule::installVanillaBarFilter() {
-    if (m_vanillaBarFilterHooked) return;
-
-    // drawImage is a virtual, so its address follows from the class's RTTI
-    // name and the vtable slot documented in offsets::VTable - no per-build
-    // byte pattern is needed, and a failed resolve just leaves this layer off.
-    const auto address = pl::memory::resolveVtableFunction(
-        "24MinecraftUIRenderContext",
-        bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextDrawImage,
-        kMinecraftLibrary);
-    if (!address) return;
-
-    m_vanillaBarFilterHook = bedrocktools::hooks::install(
-        reinterpret_cast<void*>(address),
-        reinterpret_cast<void*>(&EffectDisplayModule::drawImageDetour),
-        reinterpret_cast<void**>(&s_originalDrawImage));
-    m_vanillaBarFilterHooked = m_vanillaBarFilterHook != nullptr;
-}
 
 void EffectDisplayModule::renderPotionEffectsDetour(void* self, void* renderContext, void* screenView, float posX, float posY) {
     // Suppress the vanilla potion bar while the module is enabled and the
@@ -1428,8 +1221,7 @@ void EffectDisplayModule::installVanillaBarHook() {
 EffectDisplayModule::EffectDisplayModule()
     : Module("Effect Display",
              "Shows every active status effect with its icon, level, and remaining duration. "
-             "Effect names follow the game's language setting. "
-             "While enabled, the game's default potion bar is hidden; turning the module off brings it back.") {
+             "Effect names follow the game's language setting.") {
     g_effectDisplay = this;
 }
 
@@ -1438,9 +1230,6 @@ EffectDisplayModule::~EffectDisplayModule() {
     if (m_vanillaBarHook) bedrocktools::hooks::remove(m_vanillaBarHook);
     m_vanillaBarHook = nullptr;
     m_vanillaBarHooked = false;
-    if (m_vanillaBarFilterHook) bedrocktools::hooks::remove(m_vanillaBarFilterHook);
-    m_vanillaBarFilterHook = nullptr;
-    m_vanillaBarFilterHooked = false;
 }
 
 void EffectDisplayModule::registerResources() {
@@ -1462,7 +1251,6 @@ void EffectDisplayModule::registerResources() {
 void EffectDisplayModule::onInit() {
     registerResources();
     installVanillaBarHook();
-    installVanillaBarFilter();
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>([](auto& event) {
         effectTickCallback(event.player);
     });
