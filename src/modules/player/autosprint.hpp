@@ -1,4 +1,4 @@
-Enter#pragma once
+#pragma once
 
 #include "../Module.hpp"
 
