@@ -13,6 +13,7 @@
 #include <bedrocktools/sdk/client/ClientInstance.hpp>
 #include <bedrocktools/sdk/network/Packet.hpp>
 #include <bedrocktools/sdk/render/Block.hpp>
+#include <bedrocktools/sdk/input/MoveInput.hpp>
 #include <bedrocktools/sdk/render/BlockTessellator.hpp>
 #include <bedrocktools/sdk/render/LevelRenderer.hpp>
 #include <bedrocktools/sdk/render/LevelRendererPlayer.hpp>
