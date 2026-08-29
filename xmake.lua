@@ -1,14 +1,17 @@
 add_rules("mode.debug", "mode.release")
-set_policy("package.requires_lock", true)
+-- The checked-in lock file only records android|arm64-v8a hashes and pins
+-- preloader as "@default", which makes CI fail with exit 255 when xmake
+-- cannot match the custom git package. Fetch packages normally instead.
+set_policy("package.requires_lock", false)
 
 package("preloader")
     set_homepage("https://github.com/LiteLDev/preloader-android")
     set_description("Preloader Android")
     add_urls("https://github.com/LiteLDev/preloader-android.git")
-    add_versions("main", "main")
+    add_versions("1.0.0", "main")
     add_deps("cmake")
     on_install("android", function (package)
-        import("package.tools.cmake").install(package)
+        import("package.tools.cmake").install(package, {"-DCMAKE_BUILD_TYPE=Release"})
     end)
 package_end()
 
