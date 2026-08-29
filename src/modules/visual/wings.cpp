@@ -119,6 +119,35 @@ static std::uintptr_t s_renderMaterialGroup = 0;
 
 static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3) = nullptr;
 
+// -----------------------------------------------------------------------
+// Perspective id capture (Bedrock reports 0 = First Person, 1 = Third
+// Person Back, 2 = Third Person Front on the version this mod ships
+// against; we treat anything other than 0 as third-person for the wings).
+// GetPerspective is called by the game on the main thread, but the render
+// hook reads it from the render thread, so the value is guarded by its
+// own mutex. Until the hook fires at least once we fall back to
+// "third-person" (s_perspectiveIdInitialized == false): rendering is
+// gated by the hook anyway because the wing pass is registered on
+// RenderLevel, which only runs while a level is active, by which point
+// GetPerspective has been called. The fallback simply avoids hiding the
+// wings before the first sample lands.
+// -----------------------------------------------------------------------
+static int (*_getPerspective_orig)(void*) = nullptr;
+static std::mutex s_perspectiveMutex;
+static int s_perspectiveId = 1; // 0=first, 1=third back, 2=third front
+static bool s_perspectiveIdInitialized = false;
+
+static int _getPerspective_hook(void* _this) {
+    int result = 0;
+    if (_getPerspective_orig) result = _getPerspective_orig(_this);
+    {
+        std::lock_guard<std::mutex> lock(s_perspectiveMutex);
+        s_perspectiveId = result;
+        s_perspectiveIdInitialized = true;
+    }
+    return result;
+}
+
 // Player tracking (written in tick, read in render)
 struct AABB {
     bedrocktools::sdk::Vec3 min{0,0,0};
@@ -467,10 +496,31 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float feetY = aabb.min.y;
     float feetZ = (aabb.min.z + aabb.max.z) * 0.5f;
 
-    // First-person: the camera sits inside the player's head (inside the AABB),
-    // so the back-mounted wings overlap/clip the view. Only draw them from a
-    // real third-person point of view, matching how the Hitbox module hides its
-    // own box in first-person.
+    // --- Torso / chest bone binding ---
+    // The wing shoulder pivots live at y = 21 px in model space (see
+    // wings_styles.hpp::kRootPivotY) - that is the upper chest, right below
+    // the head, where the back is wide enough to host a wing root. Anchoring
+    // the wings at the feet (aabb.min.y) would push the whole rig 21/16
+    // blocks below the back, dragging the meshes through the legs; anchoring
+    // at the head would lift them up into the camera. Bind to the torso
+    // instead: a fixed ratio of the AABB height hits the upper chest for a
+    // standing player and scales automatically while sneaking/swimming
+    // (where the AABB shortens). The X/Z origin is still the AABB center,
+    // which is the body transform origin in the actor's local space.
+    const float playerHeight = aabb.max.y - aabb.min.y;
+    float torsoY = feetY + playerHeight * WingsModule::kTorsoAnchorRatio;
+
+    // --- First-person guard ---
+    // The wings are anchored to the player's back; in first-person the camera
+    // sits inside the head and any back-mounted overlay ends up rendering in
+    // front of the face. The primary check is the perspective id captured by
+    // the GetPerspective hook: hide the pass as soon as the game reports
+    // perspective == 0 (First Person). The AABB test is kept as a defensive
+    // secondary check (it also catches sneak/swim cases where the eye drops
+    // below the head and momentarily exits the box while the perspective is
+    // still first-person) so the wings stay hidden even if a future Bedrock
+    // build changes which id means first-person.
+    if (WingsModule::isFirstPersonPerspective()) return;
     if (!WingsModule::isThirdPersonCamera(camX, camY, camZ,
                                           aabb.min.x, aabb.min.y, aabb.min.z,
                                           aabb.max.x, aabb.max.y, aabb.max.z)) return;
@@ -531,12 +581,18 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     const wings::Vec3 forwardVec{fwdX, 0.0f, fwdZ};
     const wings::Vec3 cam{camX, camY, camZ};
 
+    // Anchor for the wing rig. Use the torso height (computed above) so the
+    // shoulder root pivots (y = 21 px in model space) end up at the upper
+    // chest of the player, exactly where the back-attached bone should sit.
+    // X/Z stay at the AABB center - the body transform origin in model space.
+    const wings::Vec3 torsoAnchor{feetX, torsoY, feetZ};
+
     // Right wing (span along -X, so a positive lift angle is a negative Z
     // rotation); left wing mirrors it.
     emitWing(tess, style.rightBones, style.boneCount, wings::kRightRootPivotX, wingAngles, -1.0f,
-             feet, rightVec, forwardVec, cam);
+             torsoAnchor, rightVec, forwardVec, cam);
     emitWing(tess, leftBonesFor(styleIdx), style.boneCount, wings::kLeftRootPivotX, wingAngles, 1.0f,
-             feet, rightVec, forwardVec, cam);
+             torsoAnchor, rightVec, forwardVec, cam);
 
     s_renderMesh(screenContext, tess, matFill, pad);
 
@@ -600,6 +656,20 @@ void WingsModule::onInit() {
         m_renderMaterialGroupAddr = (void*)rmg;
         std::uintptr_t groupAddr = resolveADRP(reinterpret_cast<std::uint32_t*>(rmg), 2, 0);
         if (groupAddr) s_renderMaterialGroup = groupAddr + MaterialGroup::mRenderMaterialGroupOffset;
+    }
+
+    // Hook GetPerspective so the render pass can hide the wings the moment
+    // the local player switches to first-person. The hook is best-effort: if
+    // the signature does not resolve (different build, hot-patch offset, etc.)
+    // the AABB test still keeps the wings out of the camera, and the default
+    // s_perspectiveId (1 = third-person) keeps them visible. The exact
+    // install pattern matches ViewModelModule's perspective hook.
+    if (!m_perspectiveHooked) {
+        std::uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::GetPerspective);
+        if (addr != 0) {
+            bedrocktools::hooks::install((void*)addr, (void*)_getPerspective_hook, (void**)&_getPerspective_orig);
+            m_perspectiveHooked = true;
+        }
     }
 
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
@@ -902,6 +972,34 @@ bool WingsModule::isThirdPersonCamera(float camX, float camY, float camZ,
         camY >= aabbMinY - m && camY <= aabbMaxY + m &&
         camZ >= aabbMinZ - m && camZ <= aabbMaxZ + m;
     return !cameraInsideBox;
+}
+
+int WingsModule::currentPerspectiveId() {
+    std::lock_guard<std::mutex> lock(s_perspectiveMutex);
+    return s_perspectiveId;
+}
+
+bool WingsModule::isFirstPersonPerspective() {
+    // The hook writes the perspective id on the game thread; the render
+    // thread reads it from here. The mutex keeps the load from tearing on
+    // architectures that do not guarantee aligned 32-bit atomic loads under
+    // arbitrary concurrent writes.
+    std::lock_guard<std::mutex> lock(s_perspectiveMutex);
+    // Until the hook fires once we cannot tell which view we are in; treat
+    // it as third-person so the wings keep showing. The render hook is
+    // only entered from a level render which implies the game has already
+    // queried perspective at least once, so the fallback rarely matters.
+    if (!s_perspectiveIdInitialized) return false;
+    return s_perspectiveId == 0;
+}
+
+void WingsModule::setPerspectiveIdForTest(int id) {
+    // The host tests cannot install a hook on Bedrock's vtable, so they
+    // drive the perspective cache directly. This matches what the hook
+    // writes at runtime; production code never calls this.
+    std::lock_guard<std::mutex> lock(s_perspectiveMutex);
+    s_perspectiveId = id;
+    s_perspectiveIdInitialized = true;
 }
 
 // ---------------------------------------------------------------------------
