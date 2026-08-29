@@ -44,6 +44,7 @@
 #include "hud/crosshair.hpp"
 #include "visual/swingmodifier.hpp"
 #include <bedrocktools/modules/visual/wings.hpp>
+#include "player/autosprint.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -144,4 +145,5 @@ void registerAllModules() {
     registry.emplace<CrosshairModule>();
     registry.emplace<SwingModifierModule>();
     registry.emplace<WingsModule>();
+    registry.emplace<AutoSprintModule>();
 }
