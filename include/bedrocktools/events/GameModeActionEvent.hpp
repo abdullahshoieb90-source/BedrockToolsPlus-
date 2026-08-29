@@ -34,5 +34,4 @@ struct GameModeActionEvent {
     bool nativeResult;
 };
 
-
 }
