@@ -22,7 +22,10 @@
 // 64x32 inputs keep manually-authored Elytra pixels; if that area is empty,
 // the wing fallback is generated from the cape face. The result is written
 // into the local player's SerializedSkinImpl::mCapeImage each tick, together
-// with the image metadata the engine needs to upload it: format, width,
+// with the image metadata the engine needs to upload it: the RGBA8Unorm
+// format (mce::ImageFormat value 3 — the enum tops out at 3; writing the
+// naive "4 channels" value 4 hands the texture factory an out-of-range
+// format and it silently refuses to build the cape texture), width,
 // height, a depth of 1 (it is a 2D texture) and an image usage. A player
 // who owns no cape at all carries a default-constructed, all-zero
 // mCapeImage, so those fields have to be filled in instead of left alone
