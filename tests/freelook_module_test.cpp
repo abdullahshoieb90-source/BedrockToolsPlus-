@@ -1,11 +1,19 @@
 // Host-side integration test for the Free Look module.
 //
 // Builds the real module (src/modules/visual/freelook.cpp) as a second
-// translation unit against the host fakes, then drives it through the public
-// entry points the game would call: the keybind handler, the pre/post tick
-// rotation writes and the redirected turn callback. A fake player object
-// carries a real ActorRotationComponent pointer at the offset the module
-// reads, so the test observes exactly what the module writes into the player.
+// translation unit against the host fakes, then drives it through the exact
+// entry points the game uses: the keybind handler, the applyTurnDelta hook
+// path (shouldInterceptTurn + onTurnDelta) and the pre/post tick rotation
+// writes. A fake player object carries a real ActorRotationComponent pointer
+// at the offset the module reads, so the test observes exactly what the
+// module writes into the body.
+//
+// The camera is the game's to own — the module only steers it with deltas
+// through applyTurnDelta — so the camera side is asserted on the deltas the
+// module hands back (onTurnDelta's return value) and on the compensating
+// deltas it emits during the release (lastCameraDelta / cameraDeltaCount).
+// The fake hook hands back a null trampoline, which is what the real module
+// null-checks before calling the original.
 //
 //     g++ -std=c++20 -I src -I include -I tests/fakepl -I tests/fakejson
 //         tests/freelook_module_test.cpp src/modules/visual/freelook.cpp
@@ -37,7 +45,7 @@ EventBus& bus() {
 namespace bedrocktools::memory {
 std::uintptr_t resolve(SignatureId id) {
     // Pretend the applyTurnDelta signature resolved so the module engages its
-    // hook path (the fake pl::memory::hook "succeeds").
+    // hook path (the fake pl::memory::hook "succeeds", with a null original).
     return id == SignatureId::LocalPlayerApplyTurnDelta ? 0x10000 : 0;
 }
 } // namespace bedrocktools::memory
@@ -90,6 +98,27 @@ void checkRot(const FakePlayer& player, float pitch, float yaw, const std::strin
               "}, want {" + std::to_string(pitch) + ", " + std::to_string(yaw) + "})");
 }
 
+void checkTurn(const freelook::Turn& turn, float pitch, float yaw, const std::string& what) {
+    check(std::fabs(turn.pitch - pitch) < 0.001f && std::fabs(turn.yaw - yaw) < 0.001f,
+          what + " (got {" + std::to_string(turn.pitch) + ", " + std::to_string(turn.yaw) +
+              "}, want {" + std::to_string(pitch) + ", " + std::to_string(yaw) + "})");
+}
+
+// Drives the real applyTurnDelta detour body with one delta and returns what
+// would be handed to the game's original function — i.e. what reaches the
+// camera. The body must never move as a side effect of this.
+freelook::Turn feedTurn(FreeLookModule& mod, FakePlayer& player, float pitch, float yaw) {
+    const auto out = mod.filterTurnDelta(&player, bedrocktools::sdk::Vec2{pitch, yaw});
+    return freelook::Turn{out.x, out.y};
+}
+
+// Config helper: round-trips the module's own settings and overrides some.
+nlohmann::json settings(FreeLookModule& mod) {
+    nlohmann::json cfg;
+    mod.saveConfig(cfg);
+    return cfg;
+}
+
 } // namespace
 
 int main() {
@@ -99,116 +128,223 @@ int main() {
     check(mod.moduleId == "bedrocktoolsplus.Free Look", "module id");
     mod.onInit(); // hooks + event subscriptions + overlay button
 
-    // Module off by default: ticks must not touch the player.
+    // -----------------------------------------------------------------
+    // Module off: nothing is intercepted and no rotation is written.
+    // -----------------------------------------------------------------
     FakePlayer player;
     player.setRot(10.0f, 20.0f);
     mod.onPreTick(&player);
     mod.onPostTick(&player);
-    checkRot(player, 10.0f, 20.0f, "disabled module leaves the rotation alone");
+    checkRot(player, 10.0f, 20.0f, "disabled module leaves the body alone");
+    check(!mod.shouldInterceptTurn(&player), "disabled module does not intercept turns");
+    checkTurn(feedTurn(mod, player, 5.0f, 5.0f), 5.0f, 5.0f, "disabled module passes turns through");
 
-    // Enable (master toggle) and hold the keybind.
+    // -----------------------------------------------------------------
+    // Engage: the body locks, the camera keeps receiving the full input.
+    // -----------------------------------------------------------------
     mod.setMasterEnabled(true);
     check(mod.enabled, "module enabled");
     mod.onKeybindEvent("keybind", true);
     mod.onPreTick(&player);
     checkRot(player, 10.0f, 20.0f, "engaging locks at the current rotation");
+    check(mod.shouldInterceptTurn(&player), "engaged module intercepts turns");
 
-    // A redirected turn (the game applied +5 pitch / -40 yaw; the hook undid
-    // it on the player and reported the measured delta).
-    mod.onTurnMeasured(5.0f, -40.0f, 5.0f, -40.0f);
+    // The turn reaches the camera unchanged (Free Look must not reshape the
+    // look input) and the body does not follow it.
+    checkTurn(feedTurn(mod, player, 5.0f, -40.0f), 5.0f, -40.0f, "turn passes through to the camera");
+    checkTurn(mod.cameraSwing(), 5.0f, -40.0f, "camera swing tracks the turn");
+    checkRot(player, 10.0f, 20.0f, "the turn does not move the body");
+
+    // applyTurnDelta may be shared with other actors: a turn that is not the
+    // tracked local player's is passed on untouched and ignored entirely.
+    FakePlayer stranger;
+    stranger.setRot(0.0f, 0.0f);
+    checkTurn(feedTurn(mod, stranger, 3.0f, 4.0f), 3.0f, 4.0f, "a foreign actor's turn passes through");
+    checkRot(stranger, 0.0f, 0.0f, "a foreign actor's body is not touched");
+    checkTurn(mod.cameraSwing(), 5.0f, -40.0f, "a foreign actor's turn does not move the swing");
+
+    // Post-tick re-asserts the lock so the player model renders locked too.
+    player.setRot(99.0f, 99.0f); // pretend the tick moved the rotation
     mod.onPostTick(&player);
-    checkRot(player, 15.0f, -20.0f, "camera angle written after the tick");
+    checkRot(player, 10.0f, 20.0f, "post-tick re-asserts the locked body");
+    check(mod.cameraDeltaCount() == 0, "no compensating deltas while active");
 
-    // Next tick: the body is forced back to the locked rotation.
+    // Next tick: the lock must be back in place *before* the tick runs —
+    // that write is what movement and the MovePlayerPacket read. Something
+    // else moving the rotation between ticks must not survive into the tick.
+    player.setRot(-42.0f, 123.0f);
     mod.onPreTick(&player);
-    checkRot(player, 10.0f, 20.0f, "body locked during the tick");
-
-    // Another turn accumulates on the camera.
-    mod.onTurnMeasured(0.0f, 10.0f, 0.0f, 10.0f);
+    checkRot(player, 10.0f, 20.0f, "pre-tick restores the lock before the tick runs");
+    checkTurn(feedTurn(mod, player, 0.0f, 10.0f), 0.0f, 10.0f, "further turns keep flowing");
+    checkTurn(mod.cameraSwing(), 5.0f, -30.0f, "swing accumulates");
     mod.onPostTick(&player);
-    checkRot(player, 15.0f, -10.0f, "camera accumulates further turns");
+    checkRot(player, 10.0f, 20.0f, "body still locked after the tick");
 
-    // Release: the smooth return animates the camera home.
+    // -----------------------------------------------------------------
+    // Release with Smooth Return: compensating deltas walk the camera home
+    // and the body is unlocked only once it arrives.
+    // -----------------------------------------------------------------
+    mod.resetCameraDeltaLog();
     mod.onKeybindEvent("keybind", false);
     mod.onPreTick(&player);
     checkRot(player, 10.0f, 20.0f, "release keeps the body locked");
-    mod.onPostTick(&player);
-    check(player.rot().y > -10.0f && player.rot().y < 20.0f,
-          "release steps the camera toward the body");
+    check(mod.shouldInterceptTurn(&player), "the return still owns the camera");
+    checkTurn(feedTurn(mod, player, 30.0f, 30.0f), 0.0f, 0.0f, "input is zeroed during the return");
 
-    // Run the return out: it must settle and then stop writing.
-    int steps = 0;
-    while (steps < 200) {
+    freelook::Turn compensated{0.0f, 0.0f};
+    mod.onPostTick(&player);
+    check(mod.cameraDeltaCount() == 1, "the release sends a compensating delta");
+    compensated.pitch += mod.lastCameraDelta().pitch;
+    compensated.yaw += mod.lastCameraDelta().yaw;
+    check(mod.lastCameraDelta().pitch < 0.0f && mod.lastCameraDelta().yaw > 0.0f,
+          "compensation runs opposite to the swing");
+    check(std::fabs(mod.cameraSwing().yaw) < 30.0f, "the swing shrinks with every step");
+    check(std::fabs(mod.cameraSwing().yaw) > 0.0f, "smooth return does not snap");
+
+    int steps = 1;
+    while (mod.shouldInterceptTurn(&player) && steps < 200) {
         mod.onPreTick(&player);
+        checkRot(player, 10.0f, 20.0f, "the body stays locked until the camera lands");
+        const int before = mod.cameraDeltaCount();
         mod.onPostTick(&player);
-        ++steps;
-        // postTick of the settling step writes locked; detect the inactive
-        // state by overwriting the rotation and tick once more.
-        if (player.rot().y == 20.0f && player.rot().x == 10.0f) {
-            player.setRot(1.0f, 1.0f);
-            mod.onPreTick(&player);
-            mod.onPostTick(&player);
-            if (player.rot().x == 1.0f && player.rot().y == 1.0f) break;
+        if (mod.cameraDeltaCount() != before) {
+            compensated.pitch += mod.lastCameraDelta().pitch;
+            compensated.yaw += mod.lastCameraDelta().yaw;
         }
+        ++steps;
     }
-    check(steps < 200, "smooth return settles");
+    check(steps > 1 && steps < 200, "smooth return settles over several ticks");
+    checkTurn(compensated, -5.0f, 30.0f, "compensating deltas undo the whole swing");
+    checkTurn(mod.cameraSwing(), 0.0f, 0.0f, "no swing left after the return");
+    check(!mod.shouldInterceptTurn(&player), "the body is unlocked once the camera arrives");
+    checkTurn(feedTurn(mod, player, 7.0f, 7.0f), 7.0f, 7.0f, "turns pass through again");
+
+    // Settled: ticks no longer touch the rotation.
+    player.setRot(1.0f, 1.0f);
+    mod.onPreTick(&player);
+    mod.onPostTick(&player);
     checkRot(player, 1.0f, 1.0f, "settled module writes nothing");
 
-    // Toggle mode: one press engages, another releases.
-    nlohmann::json cfg;
-    mod.saveConfig(cfg);
+    // -----------------------------------------------------------------
+    // Smooth Return off: one full compensating step.
+    // -----------------------------------------------------------------
+    nlohmann::json cfg = settings(mod);
+    cfg["m_smoothReturn"] = false;
+    mod.loadConfig(cfg);
+    mod.resetCameraDeltaLog();
+    mod.onKeybindEvent("keybind", true);
+    player.setRot(0.0f, 0.0f);
+    mod.onPreTick(&player);
+    (void)feedTurn(mod, player, 12.0f, 50.0f);
+    mod.onPostTick(&player);
+    mod.onKeybindEvent("keybind", false);
+    mod.onPreTick(&player);
+    mod.onPostTick(&player);
+    check(mod.cameraDeltaCount() == 1, "snap return sends exactly one delta");
+    checkTurn(mod.lastCameraDelta(), -12.0f, -50.0f, "snap return undoes the swing in one step");
+    check(!mod.shouldInterceptTurn(&player), "snap return unlocks the body immediately");
+    checkRot(player, 0.0f, 0.0f, "snap return leaves the body on the lock");
+
+    // -----------------------------------------------------------------
+    // Swing limits: the hook trims the delta handed to the camera.
+    // -----------------------------------------------------------------
+    cfg = settings(mod);
+    cfg["m_maxYaw"] = 45;
+    cfg["m_maxPitch"] = 20;
+    mod.loadConfig(cfg);
+    mod.onKeybindEvent("keybind", true);
+    player.setRot(0.0f, 0.0f);
+    mod.onPreTick(&player);
+    checkTurn(feedTurn(mod, player, 90.0f, 90.0f), 20.0f, 45.0f, "the delta is trimmed to the limits");
+    checkTurn(feedTurn(mod, player, 10.0f, 10.0f), 0.0f, 0.0f, "input at the limit is blocked");
+    checkTurn(feedTurn(mod, player, -10.0f, -10.0f), -10.0f, -10.0f, "turning back is immediate");
+    checkRot(player, 0.0f, 0.0f, "the body never followed the trimmed turns");
+    mod.onKeybindEvent("keybind", false);
+    mod.onPreTick(&player);
+    mod.onPostTick(&player); // snap return is still configured
+    check(!mod.shouldInterceptTurn(&player), "released after the limited swing");
+
+    // -----------------------------------------------------------------
+    // Toggle mode.
+    // -----------------------------------------------------------------
+    cfg = settings(mod);
     cfg["m_holdMode"] = false;
+    cfg["m_maxYaw"] = 180; // back to unlimited for the remaining cases
+    cfg["m_maxPitch"] = 90;
     mod.loadConfig(cfg);
     mod.onKeybindEvent("keybind", true);
     mod.onKeybindEvent("keybind", false); // release of the same press
     player.setRot(-5.0f, 30.0f);
     mod.onPreTick(&player);
     checkRot(player, -5.0f, 30.0f, "toggle mode engages on press");
-    mod.onKeybindEvent("keybind", true);
+    check(mod.shouldInterceptTurn(&player), "toggle mode stays engaged after the release");
+    (void)feedTurn(mod, player, 0.0f, 25.0f);
+    player.setRot(60.0f, -170.0f); // something else nudged the rotation
+    mod.onPreTick(&player);
+    checkRot(player, -5.0f, 30.0f, "toggle mode re-locks the body before the tick");
+    mod.onPostTick(&player);
+    checkRot(player, -5.0f, 30.0f, "body locked in toggle mode");
+    mod.onKeybindEvent("keybind", true); // toggle off
     mod.onKeybindEvent("keybind", false);
     mod.onPreTick(&player);
     mod.onPostTick(&player);
-    // smooth return runs; force it out through the module's disable path
-    // after first checking the body went back to the lock immediately.
-    checkRot(player, -5.0f, 30.0f, "toggle off restores the body");
-    mod.setMasterEnabled(false);
-    checkRot(player, -5.0f, 30.0f, "disable keeps the body restored");
+    check(!mod.shouldInterceptTurn(&player), "toggle off releases");
+    checkRot(player, -5.0f, 30.0f, "toggle off leaves the body on the lock");
 
-    // Re-enable and verify the instant-restore path from onDisable: engage,
-    // turn the camera, then disable while active.
-    mod.setMasterEnabled(true);
-    mod.onKeybindEvent("keybind", true); // toggle back on (toggle mode)
+    // -----------------------------------------------------------------
+    // Disabling the module mid-swing: the camera is snapped back in one
+    // compensating delta and the body is released.
+    // -----------------------------------------------------------------
+    mod.onKeybindEvent("keybind", true); // toggle back on
     player.setRot(0.0f, 0.0f);
     mod.onPreTick(&player);
-    mod.onTurnMeasured(10.0f, 90.0f, 10.0f, 90.0f);
+    (void)feedTurn(mod, player, 10.0f, 90.0f);
     mod.onPostTick(&player);
-    checkRot(player, 10.0f, 90.0f, "camera moved before disable");
+    checkRot(player, 0.0f, 0.0f, "body locked before the disable");
+    mod.resetCameraDeltaLog();
     mod.setMasterEnabled(false);
-    checkRot(player, 0.0f, 0.0f, "onDisable snaps the camera home");
+    check(mod.cameraDeltaCount() == 1, "onDisable sends the catch-up delta");
+    checkTurn(mod.lastCameraDelta(), -10.0f, -90.0f, "onDisable snaps the camera home");
+    checkRot(player, 0.0f, 0.0f, "onDisable leaves the body on the lock");
+    check(!mod.shouldInterceptTurn(&player), "disabled module stops intercepting");
+    player.setRot(3.0f, 3.0f);
+    mod.onPreTick(&player);
+    mod.onPostTick(&player);
+    checkRot(player, 3.0f, 3.0f, "disabled module writes nothing");
 
-    // Player switch (dimension change / respawn): the module must relock at
-    // the new player's rotation and never write the old lock into it.
+    // -----------------------------------------------------------------
+    // Player switch (respawn / dimension change): re-lock at the new player
+    // and never write the old lock into it.
+    // -----------------------------------------------------------------
     mod.setMasterEnabled(true);
-    cfg = nlohmann::json();
-    mod.saveConfig(cfg);
+    cfg = settings(mod);
     cfg["m_holdMode"] = true;
-    cfg["m_smoothReturn"] = false; // snap releases for a deterministic check
+    cfg["m_smoothReturn"] = false;
+    cfg["m_maxYaw"] = 180;
+    cfg["m_maxPitch"] = 90;
     mod.loadConfig(cfg);
     mod.onKeybindEvent("keybind", true);
     player.setRot(7.0f, -30.0f);
     mod.onPreTick(&player);
     checkRot(player, 7.0f, -30.0f, "engaged at the first player");
+    (void)feedTurn(mod, player, 0.0f, 40.0f);
 
     FakePlayer other;
     other.setRot(50.0f, 100.0f);
+    mod.resetCameraDeltaLog();
     mod.onPreTick(&other);
-    checkRot(other, 50.0f, 100.0f, "player switch relocks at the new player");
-    mod.onTurnMeasured(0.0f, 20.0f, 0.0f, 20.0f);
-    mod.onPostTick(&other);
-    checkRot(other, 50.0f, 120.0f, "new player carries the camera");
+    checkRot(other, 50.0f, 100.0f, "player switch re-locks at the new player");
     checkRot(player, 7.0f, -30.0f, "old player untouched after the switch");
+    check(mod.cameraDeltaCount() == 0, "no compensation into a replaced camera");
+    checkTurn(mod.cameraSwing(), 0.0f, 0.0f, "the swing is dropped with the old player");
+    check(!mod.shouldInterceptTurn(&player), "the old player is no longer intercepted");
+    checkTurn(feedTurn(mod, other, 0.0f, 20.0f), 0.0f, 20.0f, "the new player's turns flow");
+    mod.onPostTick(&other);
+    checkRot(other, 50.0f, 100.0f, "new player's body is locked");
 
+    // -----------------------------------------------------------------
     // Config round-trip and clamping.
+    // -----------------------------------------------------------------
     cfg = nlohmann::json();
     cfg["m_returnSpeed"] = 5.0f;
     cfg["m_maxYaw"] = 500;
@@ -224,6 +360,7 @@ int main() {
     check(saved["m_maxPitch"].get<int>() == 15, "max pitch clamped to 15");
     check(saved["m_holdMode"].get<bool>() == false, "hold mode round-trips");
     check(saved["m_smoothReturn"].get<bool>() == false, "smooth return round-trips");
+    check(saved.contains("m_returnSpeed"), "return speed round-trips");
     check(saved["m_overlayToggle"].get<bool>() == false, "overlay toggle round-trips");
     check(saved.contains("keybind"), "base config keys round-trip");
 

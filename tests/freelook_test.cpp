@@ -1,10 +1,13 @@
 // Host-side tests for the Free Look module logic.
 //
-// Everything the game-side module does runs through the pure helpers in
-// modules/visual/freelook_logic.hpp: angle wrapping, the pitch/yaw swing
-// limits, the smooth return animation, the runtime calibration that decodes
-// how the game applies turn deltas, and the Inactive/Active/Returning phase
-// machine that decides which rotation the player must carry at tick time.
+// Free Look drives the camera through LocalPlayer::applyTurnDelta (which is
+// what the modern Bedrock camera system listens to) and freezes the actor
+// rotation component (the body). Everything that decides how much of a turn
+// reaches the camera, how the camera is walked back onto the body on release
+// and when the body is unlocked again lives in the pure helpers of
+// modules/visual/freelook_logic.hpp, which is what this test covers:
+// the swing limits, the release animation and the Inactive/Active/Returning
+// phase machine.
 //
 //     g++ -std=c++20 -I src tests/freelook_test.cpp -o /tmp/freelook_test
 //     /tmp/freelook_test
@@ -33,6 +36,13 @@ void checkNear(float actual, float expected, const std::string& what, float eps 
           what + " (got " + std::to_string(actual) + ", want " + std::to_string(expected) + ")");
 }
 
+void checkTurn(const freelook::Turn& actual, float pitch, float yaw, const std::string& what,
+               float eps = 0.001f) {
+    check(std::fabs(actual.pitch - pitch) <= eps && std::fabs(actual.yaw - yaw) <= eps,
+          what + " (got {" + std::to_string(actual.pitch) + ", " + std::to_string(actual.yaw) +
+              "}, want {" + std::to_string(pitch) + ", " + std::to_string(yaw) + "})");
+}
+
 } // namespace
 
 static void testAngles() {
@@ -44,150 +54,121 @@ static void testAngles() {
     checkNear(freelook::wrapDegrees(-180.0f), 180.0f, "wrap -180 -> 180");
     checkNear(freelook::wrapDegrees(42.0f), 42.0f, "wrap keeps small values");
 
-    // Shortest arc must cross the +/-180 seam instead of spinning 340 degrees.
-    // (-180 and 180 are the same heading, so accept either.)
-    const float seamMid = freelook::lerpAngle(-170.0f, 170.0f, 0.5f);
-    check(std::fabs(std::fabs(seamMid) - 180.0f) < 0.001f, "lerp across the seam");
-    checkNear(freelook::lerpAngle(-170.0f, 170.0f, 0.25f), -175.0f, "lerp quarter across the seam");
-    checkNear(freelook::lerpAngle(10.0f, 30.0f, 0.5f), 20.0f, "lerp plain");
+    checkNear(freelook::clampf(5.0f, 0.0f, 3.0f), 3.0f, "clamp above");
+    checkNear(freelook::clampf(-5.0f, 0.0f, 3.0f), 0.0f, "clamp below");
 }
 
-static void testLookDelta() {
-    std::printf("free camera movement\n");
+static void testTurnClipping() {
+    std::printf("turn clipping\n");
 
-    freelook::Settings settings; // 180 yaw / 90 pitch swing = effectively free
+    freelook::Settings settings; // 180 yaw / 90 pitch = effectively unlimited
     const freelook::Angles locked{0.0f, 0.0f};
+    const freelook::Turn none{0.0f, 0.0f};
 
-    freelook::Angles cam = freelook::applyLookDelta({0.0f, 0.0f}, 10.0f, 25.0f, locked, settings);
-    checkNear(cam.pitch, 10.0f, "pitch accumulates");
-    checkNear(cam.yaw, 25.0f, "yaw accumulates");
+    // Inside the limits the delta reaches the camera untouched — Free Look
+    // must not scale or reshape the look input.
+    checkTurn(freelook::clipTurn(none, locked, {10.0f, 25.0f}, settings), 10.0f, 25.0f,
+              "delta passes through unchanged");
+    checkTurn(freelook::clipTurn({10.0f, 25.0f}, locked, {-3.0f, -5.0f}, settings), -3.0f, -5.0f,
+              "negative delta passes through unchanged");
 
-    // Absolute pitch is clamped to the game range even with a free swing.
-    cam = freelook::applyLookDelta({85.0f, 0.0f}, 20.0f, 0.0f, locked, settings);
-    checkNear(cam.pitch, 90.0f, "pitch clamps at +90");
-    cam = freelook::applyLookDelta({-85.0f, 0.0f}, -20.0f, 0.0f, locked, settings);
-    checkNear(cam.pitch, -90.0f, "pitch clamps at -90");
+    // Absolute pitch: the camera never leaves [-90, 90], so a delta running
+    // into the pole is trimmed to what is left rather than dropped.
+    checkTurn(freelook::clipTurn({85.0f, 0.0f}, locked, {20.0f, 0.0f}, settings), 5.0f, 0.0f,
+              "pitch trimmed at +90");
+    checkTurn(freelook::clipTurn({-85.0f, 0.0f}, locked, {-20.0f, 0.0f}, settings), -5.0f, 0.0f,
+              "pitch trimmed at -90");
+    checkTurn(freelook::clipTurn({90.0f, 0.0f}, locked, {5.0f, 0.0f}, settings), 0.0f, 0.0f,
+              "pitch pinned at +90 blocks further up");
+    // No dead zone: turning back down moves immediately.
+    checkTurn(freelook::clipTurn({90.0f, 0.0f}, locked, {-5.0f, 0.0f}, settings), -5.0f, 0.0f,
+              "no dead zone after the pitch pole");
 
-    // Clamping the stored value must not create a dead zone to unwind: after
-    // pinning at +90, turning back down moves immediately.
-    cam = freelook::applyLookDelta({90.0f, 0.0f}, -5.0f, 0.0f, locked, settings);
-    checkNear(cam.pitch, 85.0f, "no dead zone after the pitch clamp");
+    // The absolute pole is measured on the resulting camera angle, not on the
+    // swing, so it also engages when the lock itself is already tilted.
+    const freelook::Angles tilted{80.0f, 0.0f};
+    checkTurn(freelook::clipTurn(none, tilted, {20.0f, 0.0f}, settings), 10.0f, 0.0f,
+              "pole measured from the locked pitch");
 
-    // Yaw wraps continuously across the seam; with the default 180 degree
-    // swing limit a 170+30 turn pins at the limit (the 180/-180 heading).
-    cam = freelook::applyLookDelta({0.0f, 170.0f}, 0.0f, 30.0f, locked, settings);
-    check(std::fabs(std::fabs(cam.yaw) - 180.0f) < 0.001f, "yaw pins at the +180 swing limit");
-    cam = freelook::applyLookDelta({0.0f, -170.0f}, 0.0f, -30.0f, locked, settings);
-    check(std::fabs(std::fabs(cam.yaw) - 180.0f) < 0.001f, "yaw pins at the -180 swing limit");
-
-    // Swing limits are measured around the locked angle, wrapped.
+    // Swing limits.
     freelook::Settings limited;
     limited.maxYaw = 90.0f;
     limited.maxPitch = 45.0f;
-    cam = freelook::applyLookDelta({0.0f, 0.0f}, 0.0f, 120.0f, locked, limited);
-    checkNear(cam.yaw, 90.0f, "yaw swing limit engages");
-    cam = freelook::applyLookDelta({0.0f, 90.0f}, 0.0f, 120.0f, locked, limited);
-    checkNear(cam.yaw, 90.0f, "yaw stays pinned at the limit");
-    cam = freelook::applyLookDelta({0.0f, 90.0f}, 0.0f, -200.0f, locked, limited);
-    checkNear(cam.yaw, -90.0f, "yaw swings back to the other limit");
 
-    cam = freelook::applyLookDelta({0.0f, 0.0f}, 60.0f, 0.0f, locked, limited);
-    checkNear(cam.pitch, 45.0f, "pitch swing limit engages");
+    checkTurn(freelook::clipTurn(none, locked, {60.0f, 0.0f}, limited), 45.0f, 0.0f,
+              "pitch swing limit trims the delta");
+    checkTurn(freelook::clipTurn({45.0f, 0.0f}, locked, {10.0f, 0.0f}, limited), 0.0f, 0.0f,
+              "pitch stays pinned at the swing limit");
+    checkTurn(freelook::clipTurn({45.0f, 0.0f}, locked, {-5.0f, 0.0f}, limited), -5.0f, 0.0f,
+              "no dead zone after the pitch swing limit");
+    checkTurn(freelook::clipTurn(none, locked, {-60.0f, 0.0f}, limited), -45.0f, 0.0f,
+              "pitch swing limit trims downward too");
 
-    // Limits hold when the locked angle itself is off-center, including
-    // through the seam (locked at 170, limit 90 -> [-110 through +180] ... 100).
-    const freelook::Angles lockedYaw{0.0f, 170.0f};
-    cam = freelook::applyLookDelta({0.0f, 170.0f}, 0.0f, 30.0f, lockedYaw, limited);
-    checkNear(cam.yaw, -160.0f, "swing measured through the seam");
-    checkNear(freelook::wrapDegrees(cam.yaw - lockedYaw.yaw), 30.0f, "seam swing stays +30");
-    cam = freelook::applyLookDelta({0.0f, 170.0f}, 0.0f, 1000.0f, lockedYaw, limited);
-    checkNear(cam.yaw, -100.0f, "seam swing clamps at +90");
+    checkTurn(freelook::clipTurn(none, locked, {0.0f, 120.0f}, limited), 0.0f, 90.0f,
+              "yaw swing limit trims the delta");
+    checkTurn(freelook::clipTurn({0.0f, 90.0f}, locked, {0.0f, 120.0f}, limited), 0.0f, 0.0f,
+              "yaw stays pinned at the swing limit");
+    checkTurn(freelook::clipTurn({0.0f, 90.0f}, locked, {0.0f, -200.0f}, limited), 0.0f, -180.0f,
+              "yaw swings across to the other limit");
+
+    // The yaw limit works on the incrementally accumulated swing, never on
+    // wrapDegrees(camera - locked): the wrapped difference flips sign at the
+    // seam, which would hand the far side of the lock to the next delta and
+    // teleport the camera 350 degrees around.
+    freelook::Settings wide; // maxYaw 180: the swing can reach the seam
+    checkTurn(freelook::clipTurn({0.0f, -180.0f}, locked, {0.0f, -10.0f}, wide), 0.0f, 0.0f,
+              "swing pinned at -180 does not jump to the far side");
+    checkTurn(freelook::clipTurn({0.0f, -180.0f}, locked, {0.0f, 10.0f}, wide), 0.0f, 10.0f,
+              "swing at -180 still turns back");
+    checkTurn(freelook::clipTurn({0.0f, 180.0f}, locked, {0.0f, 10.0f}, wide), 0.0f, 0.0f,
+              "swing pinned at +180 blocks further turning");
+
+    // Limits hold when the locked angle itself sits near the seam: only the
+    // swing matters, the absolute camera yaw may wrap freely.
+    const freelook::Angles nearSeam{0.0f, 170.0f};
+    checkTurn(freelook::clipTurn(none, nearSeam, {0.0f, 30.0f}, limited), 0.0f, 30.0f,
+              "turning through the seam is not clipped");
+    checkTurn(freelook::clipTurn({0.0f, 30.0f}, nearSeam, {0.0f, 1000.0f}, limited), 0.0f, 60.0f,
+              "seam swing clamps at +90");
+
+    // A zero swing limit freezes the camera completely.
+    freelook::Settings frozen;
+    frozen.maxYaw = 0.0f;
+    frozen.maxPitch = 0.0f;
+    checkTurn(freelook::clipTurn(none, locked, {50.0f, 50.0f}, frozen), 0.0f, 0.0f,
+              "zero limits block everything");
 }
 
-static void testReturn() {
-    std::printf("smooth return\n");
+static void testReturnStep() {
+    std::printf("release animation\n");
 
-    const freelook::Angles locked{0.0f, 90.0f};
-    freelook::Angles cam{20.0f, -90.0f}; // 180 degrees of yaw away
+    freelook::Settings smooth;
+    smooth.smoothReturn = true;
+    smooth.returnLerp = 0.45f;
 
-    check(!freelook::returnSettled(cam, locked), "return not settled while far away");
+    // The compensating delta walks the camera back: opposite sign, a share of
+    // the remaining swing per tick.
+    checkTurn(freelook::returnStep({20.0f, -40.0f}, smooth), -9.0f, 18.0f,
+              "smooth return steps 45% of the swing back");
 
-    // Step toward the locked angle along the shortest arc. -90 and 90 are
-    // 180 degrees apart, so the halfway point is 0 either way.
-    cam = freelook::stepReturn(cam, locked, 0.5f);
-    checkNear(cam.pitch, 10.0f, "return steps pitch halfway");
-    checkNear(cam.yaw, 0.0f, "return steps yaw halfway");
+    freelook::Settings snap;
+    snap.smoothReturn = false;
+    checkTurn(freelook::returnStep({20.0f, -40.0f}, snap), -20.0f, 40.0f,
+              "snap return undoes the whole swing at once");
+    checkTurn(freelook::returnStep({0.0f, 0.0f}, snap), 0.0f, 0.0f, "no swing, no step");
 
-    // Keep stepping until it settles.
-    int steps = 0;
-    while (!freelook::returnSettled(cam, locked) && steps < 200) {
-        cam = freelook::stepReturn(cam, locked, 0.45f);
-        ++steps;
-    }
-    check(steps < 200, "return converges");
-    checkNear(cam.pitch, 0.0f, "return pitch reaches locked", 0.5f);
-    checkNear(freelook::wrapDegrees(cam.yaw - locked.yaw), 0.0f, "return yaw reaches locked", 0.5f);
-    check(freelook::returnSettled(cam, locked), "return reports settled");
+    // A misconfigured lerp cannot stall the return (or overshoot it).
+    freelook::Settings broken;
+    broken.smoothReturn = true;
+    broken.returnLerp = 0.0f;
+    checkTurn(freelook::returnStep({100.0f, 0.0f}, broken), -5.0f, 0.0f, "zero lerp is floored");
+    broken.returnLerp = 5.0f;
+    checkTurn(freelook::returnStep({100.0f, 0.0f}, broken), -100.0f, 0.0f, "huge lerp is capped");
 
-    check(freelook::returnSettled(locked, locked), "already at target counts as settled");
-}
-
-static void testCalibration() {
-    std::printf("turn-delta calibration\n");
-
-    // Default decode assumes {x = pitch, y = yaw}, identity signs.
-    freelook::Calibration cal;
-    float dPitch = 0.0f, dYaw = 0.0f;
-    freelook::decodeRawDelta(cal, 3.0f, 7.0f, dPitch, dYaw);
-    checkNear(dPitch, 3.0f, "default decode maps x to pitch");
-    checkNear(dYaw, 7.0f, "default decode maps y to yaw");
-
-    check(!cal.syncKnown, "sync unknown before any observation");
-
-    // A queued (async) turn produces no rotation change: no sync proof.
-    freelook::observeTurn(cal, 1.0f, 2.0f, 0.0f, 0.0f);
-    check(!cal.syncKnown, "async turn does not prove sync");
-
-    // A turn that immediately changes the rotation proves sync.
-    freelook::observeTurn(cal, 1.0f, 2.0f, 1.0f, 2.0f);
-    check(cal.syncKnown && cal.syncApply, "applied turn proves sync");
-
-    // A clamped turn (non-zero argument, zero change) must not un-prove sync.
-    freelook::observeTurn(cal, 5.0f, 0.0f, 0.0f, 0.0f);
-    check(cal.syncApply, "clamped turn keeps sync proven");
-
-    // Single-axis observations identify the axis mapping and signs.
-    freelook::Calibration mapped;
-    // Purely vertical look: x-only argument, pitch-only response, negative sign.
-    freelook::observeTurn(mapped, -2.0f, 0.0f, 2.0f, 0.0f);
-    check(mapped.axisXIsPitch, "x-only pitch turn marks x as pitch");
-    checkNear(mapped.signX, -1.0f, "x sign learned from the vertical turn");
-    // Purely horizontal look: y-only argument, yaw-only response.
-    freelook::observeTurn(mapped, 0.0f, 4.0f, 0.0f, 4.0f);
-    checkNear(mapped.signY, 1.0f, "y sign learned from the horizontal turn");
-
-    freelook::decodeRawDelta(mapped, -2.0f, 4.0f, dPitch, dYaw);
-    checkNear(dPitch, 2.0f, "calibrated decode applies the learned x sign");
-    checkNear(dYaw, 4.0f, "calibrated decode applies the learned y sign");
-
-    // Swapped layout: argument.x drives yaw instead of pitch.
-    freelook::Calibration swapped;
-    freelook::observeTurn(swapped, 3.0f, 0.0f, 0.0f, 3.0f);
-    check(!swapped.axisXIsPitch, "x-only yaw turn marks x as yaw");
-    checkNear(swapped.signX, 1.0f, "x sign learned for yaw");
-    freelook::decodeRawDelta(swapped, 3.0f, 5.0f, dPitch, dYaw);
-    checkNear(dPitch, 5.0f, "swapped decode maps y to pitch");
-    checkNear(dYaw, 3.0f, "swapped decode maps x to yaw");
-
-    // Diagonal turns carry no decisive information and must not disturb a
-    // learned mapping.
-    freelook::observeTurn(swapped, 2.0f, 3.0f, 5.0f, 2.0f);
-    check(!swapped.axisXIsPitch, "diagonal turn keeps the learned mapping");
-
-    // Zero arguments are pure noise and change nothing.
-    freelook::Calibration untouched;
-    freelook::observeTurn(untouched, 0.0f, 0.0f, 4.0f, 0.0f);
-    check(!untouched.syncKnown && untouched.axisXIsPitch, "zero argument changes nothing");
+    check(freelook::swingSettled({0.2f, -0.3f}), "small swing counts as settled");
+    check(!freelook::swingSettled({0.2f, -3.0f}), "large swing is not settled");
+    check(freelook::swingZero({0.0f, 0.0f}), "zero swing detected");
+    check(!freelook::swingZero({0.0f, 0.01f}), "near-zero swing is not zero");
 }
 
 static void testPhaseMachine() {
@@ -196,126 +177,165 @@ static void testPhaseMachine() {
     freelook::Core core;
     check(core.phase() == freelook::Core::Phase::Inactive, "starts inactive");
 
-    // Not requested: ticks are untouched.
+    // Inactive: turns are none of our business and ticks are untouched.
+    checkTurn(core.filterTurn({7.0f, 9.0f}), 7.0f, 9.0f, "inactive turn passes through");
     check(!core.preTick(true, {10.0f, 20.0f}).has_value(), "inactive tick writes nothing");
+    check(!core.postTick().body.has_value(), "inactive post-tick writes nothing");
 
-    // Requested: engage at the current rotation.
+    // Requested: engage and lock the body where it faces.
     core.setRequestActive(true);
     auto body = core.preTick(true, {10.0f, 20.0f});
     check(body.has_value(), "engaging returns a body angle");
     checkNear(body->pitch, 10.0f, "locked pitch captured");
     checkNear(body->yaw, 20.0f, "locked yaw captured");
     check(core.active(), "engaged phase is active");
+    checkTurn(core.swing(), 0.0f, 0.0f, "engaging starts with no swing");
 
-    // Turns redirect into the camera; the locked angle never moves.
-    core.applyTurn(15.0f, -40.0f);
-    auto view = core.postTick();
-    check(view.has_value(), "active tick produces a camera angle");
-    checkNear(view->pitch, 25.0f, "camera pitch carries the turn");
-    checkNear(view->yaw, -20.0f, "camera yaw carries the turn");
+    // Turns reach the camera untouched and are booked into the swing; the
+    // body never moves with them.
+    checkTurn(core.filterTurn({15.0f, -40.0f}), 15.0f, -40.0f, "active turn reaches the camera");
+    checkTurn(core.swing(), 15.0f, -40.0f, "swing tracks the camera");
+    checkNear(core.camera().pitch, 25.0f, "camera pitch = locked + swing");
+    checkNear(core.camera().yaw, -20.0f, "camera yaw = locked + swing");
+    checkNear(core.locked().pitch, 10.0f, "locked pitch untouched by the turn");
+    checkNear(core.locked().yaw, 20.0f, "locked yaw untouched by the turn");
 
-    body = core.preTick(true, {25.0f, -20.0f});
-    checkNear(body->pitch, 10.0f, "body stays locked at the tick");
-    checkNear(body->yaw, 20.0f, "body yaw stays locked at the tick");
+    auto out = core.postTick();
+    check(out.body.has_value(), "active post-tick re-asserts the body");
+    checkNear(out.body->pitch, 10.0f, "post-tick body pitch locked");
+    checkNear(out.body->yaw, 20.0f, "post-tick body yaw locked");
+    check(!out.camera.has_value(), "active post-tick sends no camera delta");
 
-    // Turns while not active (e.g. mid-return) are dropped.
+    body = core.preTick(true, {10.0f, 20.0f});
+    check(body.has_value() && body->pitch == 10.0f && body->yaw == 20.0f,
+          "body stays locked at the next tick");
+
+    // Release: the body stays locked, the camera is walked home.
     core.setRequestActive(false);
-    body = core.preTick(true, {25.0f, -20.0f});
+    body = core.preTick(true, {10.0f, 20.0f});
     check(core.phase() == freelook::Core::Phase::Returning, "release starts the return");
-    check(body.has_value(), "return keeps the body locked");
-    checkNear(body->pitch, 10.0f, "return body pitch locked");
-    checkNear(body->yaw, 20.0f, "return body yaw locked");
+    check(body.has_value() && body->yaw == 20.0f, "return keeps the body locked");
 
-    core.applyTurn(50.0f, 50.0f); // dropped: not active
-    view = core.postTick();
-    check(view.has_value(), "return produces a camera angle");
-    check(std::fabs(view->pitch - 25.0f) < 15.0f && std::fabs(view->pitch - 25.0f) > 0.0f,
-          "return steps the camera toward the body");
+    // Fresh input is swallowed while the return owns the camera.
+    checkTurn(core.filterTurn({50.0f, 50.0f}), 0.0f, 0.0f, "input is zeroed during the return");
+    checkTurn(core.swing(), 15.0f, -40.0f, "swallowed input does not move the swing");
 
-    // Run the return out.
+    // Every step sends a compensating delta and shrinks the swing; the body
+    // is only unlocked once the camera has arrived.
+    freelook::Turn compensated{0.0f, 0.0f};
     int steps = 0;
     while (core.phase() != freelook::Core::Phase::Inactive && steps < 200) {
-        core.preTick(true, core.camera());
-        core.postTick();
+        out = core.postTick();
+        check(out.body.has_value(), "returning post-tick keeps the body locked");
+        if (out.camera) {
+            compensated.pitch += out.camera->pitch;
+            compensated.yaw += out.camera->yaw;
+        }
         ++steps;
+        if (core.phase() != freelook::Core::Phase::Inactive) {
+            core.preTick(true, {10.0f, 20.0f});
+        }
     }
-    check(core.phase() == freelook::Core::Phase::Inactive, "return finishes");
-    checkNear(core.camera().yaw, 20.0f, "camera back at the locked yaw", 0.5f);
-    check(!core.postTick().has_value(), "inactive post-tick writes nothing");
+    check(steps > 1, "smooth return takes several ticks");
+    check(steps < 200, "smooth return finishes");
+    checkTurn(compensated, -15.0f, 40.0f, "compensating deltas undo the swing exactly");
+    checkTurn(core.swing(), 0.0f, 0.0f, "swing is closed out");
+    check(core.phase() == freelook::Core::Phase::Inactive, "body unlocked after the camera lands");
+    check(!core.postTick().body.has_value(), "nothing written once inactive");
+    checkTurn(core.filterTurn({4.0f, 4.0f}), 4.0f, 4.0f, "turns pass through again");
 
-    // Re-engage during a return: the camera continues from where it is.
-    core.setRequestActive(true);
-    (void)core.preTick(true, {0.0f, 0.0f}); // engage
-    core.applyTurn(0.0f, 90.0f);
-    core.setRequestActive(false);
-    (void)core.preTick(true, {0.0f, 90.0f}); // start returning
-    check(core.phase() == freelook::Core::Phase::Returning, "returning mid-test");
-    core.setRequestActive(true);
-    body = core.preTick(true, {0.0f, 0.0f});
-    check(core.active(), "re-engage resumes from the return");
+    // Snap return: one full step, done.
+    freelook::Core snap;
+    snap.settings.smoothReturn = false;
+    snap.setRequestActive(true);
+    (void)snap.preTick(true, {0.0f, 0.0f});
+    (void)snap.filterTurn({12.0f, 30.0f});
+    snap.setRequestActive(false);
+    (void)snap.preTick(true, {0.0f, 0.0f});
+    check(snap.phase() == freelook::Core::Phase::Returning, "snap release still returns first");
+    out = snap.postTick();
+    check(out.camera.has_value(), "snap return sends a camera delta");
+    checkTurn(*out.camera, -12.0f, -30.0f, "snap return undoes the swing in one step");
+    check(snap.phase() == freelook::Core::Phase::Inactive, "snap return finishes in one tick");
+    checkTurn(snap.swing(), 0.0f, 0.0f, "snap return leaves no swing");
+
+    // Releasing without any swing skips the return entirely.
+    freelook::Core idle;
+    idle.setRequestActive(true);
+    (void)idle.preTick(true, {3.0f, 4.0f});
+    idle.setRequestActive(false);
+    (void)idle.preTick(true, {3.0f, 4.0f});
+    check(idle.phase() == freelook::Core::Phase::Inactive, "release without swing ends at once");
+    check(!idle.postTick().camera.has_value(), "no compensation without swing");
+
+    // Re-engage mid-return: the camera keeps the swing it still has.
+    freelook::Core again;
+    again.setRequestActive(true);
+    (void)again.preTick(true, {0.0f, 0.0f});
+    (void)again.filterTurn({0.0f, 90.0f});
+    again.setRequestActive(false);
+    (void)again.preTick(true, {0.0f, 0.0f});
+    (void)again.postTick(); // one return step
+    const float partial = again.swing().yaw;
+    check(partial > 0.0f && partial < 90.0f, "return moved part of the way");
+    again.setRequestActive(true);
+    body = again.preTick(true, {0.0f, 0.0f});
+    check(again.active(), "re-engage resumes from the return");
     checkNear(body->yaw, 0.0f, "re-engage keeps the original lock");
-    view = core.postTick();
-    checkNear(view->yaw, 90.0f, "camera kept across the re-engage");
+    checkNear(again.swing().yaw, partial, "re-engage keeps the current swing");
+    checkTurn(again.filterTurn({0.0f, 5.0f}), 0.0f, 5.0f, "input flows again after re-engage");
 
-    // Module disabled mid-free-look: the core releases like a normal release
-    // (the smooth return still runs, because the tick handlers keep firing);
-    // the module itself additionally snaps the camera home through
-    // forceInactive, which is what onDisable calls.
-    core.setRequestActive(false);
-    body = core.preTick(false, {0.0f, 90.0f});
-    check(core.phase() == freelook::Core::Phase::Returning, "disabled tick releases smoothly");
-    check(body.has_value(), "disabled tick still writes the locked body");
-    checkNear(body->yaw, 0.0f, "disabled release body yaw locked");
-    core.forceInactive();
-    check(core.phase() == freelook::Core::Phase::Inactive, "forceInactive drops the phase");
-    check(!core.postTick().has_value(), "nothing written after forceInactive");
+    // The module disabling itself mid-swing: forceInactive drops everything
+    // without compensating (the module sends the catch-up delta itself).
+    again.forceInactive();
+    check(again.phase() == freelook::Core::Phase::Inactive, "forceInactive drops the phase");
+    checkTurn(again.swing(), 0.0f, 0.0f, "forceInactive clears the swing");
 
-    // forceInactive resets the camera to the locked angle.
-    core.setRequestActive(true);
-    (void)core.preTick(true, {5.0f, 5.0f}); // engage at 5/5
-    core.applyTurn(10.0f, 10.0f);           // camera now 15/15
-    core.setRequestActive(false);
-    core.forceInactive();
-    check(core.phase() == freelook::Core::Phase::Inactive, "forceInactive drops the phase again");
-    checkNear(core.camera().pitch, 5.0f, "forceInactive resets the camera pitch");
-    checkNear(core.camera().yaw, 5.0f, "forceInactive resets the camera yaw");
+    // A tick with the module disabled releases like a normal release.
+    freelook::Core off;
+    off.setRequestActive(true);
+    (void)off.preTick(true, {0.0f, 0.0f});
+    (void)off.filterTurn({0.0f, 20.0f});
+    body = off.preTick(false, {0.0f, 0.0f});
+    check(off.phase() == freelook::Core::Phase::Returning, "disabled tick releases the camera");
+    check(body.has_value() && body->yaw == 0.0f, "disabled tick still locks the body");
 }
 
-static void testTurnRedirectionThroughCore() {
-    std::printf("measured turn redirection\n");
+static void testLimitsThroughCore() {
+    std::printf("limits through the core\n");
 
-    // Simulates the calibrated hook path: the game applies +5 pitch / +10 yaw,
-    // the module reverts the player and redirects the measured delta.
     freelook::Core core;
+    core.settings.maxYaw = 60.0f;
+    core.settings.maxPitch = 30.0f;
     core.setRequestActive(true);
-    (void)core.preTick(true, {0.0f, 0.0f});
+    (void)core.preTick(true, {0.0f, 170.0f}); // locked near the +/-180 seam
 
-    core.applyTurn(5.0f, 10.0f);
-    core.applyTurn(5.0f, 10.0f);
-    const auto view = core.postTick();
-    checkNear(view->pitch, 10.0f, "measured pitch deltas accumulate");
-    checkNear(view->yaw, 20.0f, "measured yaw deltas accumulate");
+    // The first flick is trimmed to the limits, the next one is swallowed.
+    checkTurn(core.filterTurn({100.0f, 100.0f}), 30.0f, 60.0f, "first flick trims to the limits");
+    checkTurn(core.filterTurn({10.0f, 10.0f}), 0.0f, 0.0f, "further input at the limit is blocked");
+    checkNear(core.camera().pitch, 30.0f, "camera pitch sits at the limit");
+    checkNear(core.camera().yaw, -130.0f, "camera yaw wrapped across the seam");
+    checkNear(core.locked().yaw, 170.0f, "body still locked at the seam");
 
-    // The same turn through the raw-decode path (uncalibrated hook).
-    freelook::Core raw;
-    raw.setRequestActive(true);
-    (void)raw.preTick(true, {0.0f, 0.0f});
-    float dPitch = 0.0f, dYaw = 0.0f;
-    freelook::decodeRawDelta(raw.calibration, 5.0f, 10.0f, dPitch, dYaw);
-    raw.applyTurn(dPitch, dYaw);
-    const auto rawView = raw.postTick();
-    checkNear(rawView->pitch, 5.0f, "raw decode pitch matches identity layout");
-    checkNear(rawView->yaw, 10.0f, "raw decode yaw matches identity layout");
+    // Turning back is immediate and the return compensates the real swing,
+    // seam or not.
+    checkTurn(core.filterTurn({-5.0f, -5.0f}), -5.0f, -5.0f, "turning back is not blocked");
+    core.setRequestActive(false);
+    (void)core.preTick(true, {0.0f, 170.0f});
+    core.settings.smoothReturn = false;
+    const auto out = core.postTick();
+    check(out.camera.has_value(), "return compensates across the seam");
+    checkTurn(*out.camera, -25.0f, -55.0f, "compensation matches the accumulated swing");
+    check(core.phase() == freelook::Core::Phase::Inactive, "body unlocked after the seam return");
 }
 
 int main() {
     std::printf("free look logic\n");
     testAngles();
-    testLookDelta();
-    testReturn();
-    testCalibration();
+    testTurnClipping();
+    testReturnStep();
     testPhaseMachine();
-    testTurnRedirectionThroughCore();
+    testLimitsThroughCore();
 
     std::printf("\n");
     if (g_failures == 0) {

@@ -14,19 +14,34 @@
 // ---------------------------------------------------------------------------
 // Free Look
 //
-// While active, the look input turns a virtual camera instead of the player:
-//   * LocalPlayer::applyTurnDelta is intercepted. The turn the game would
-//     have applied is measured (the game's own clamping included), undone on
-//     the player and accumulated into the free camera instead.
-//   * Around every LocalPlayer tick the body rotation is forced back to the
-//     locked angle, so movement, attacks and the rotation sent to the server
-//     keep the direction Free Look started with.
-//   * Right after the tick the free camera angle is written into the player's
-//     rotation component, which is what the frames until the next tick (and
-//     with them the camera) render with.
+// On modern Bedrock the camera and the body are two separate things:
 //
-// The applyTurnDelta hook is shared with the Zoom module; the two hooks chain,
-// so Zoom's sensitivity scaling still applies while Free Look is active.
+//   * LocalPlayer::applyTurnDelta feeds the new camera system. It moves the
+//     camera and does not touch the actor rotation.
+//   * The actor rotation component (Actor::mActorRotationComponent, Vec2
+//     { x = pitch, y = yaw }) is the body: player model, movement direction
+//     and the rotation that is sent to the server.
+//
+// So Free Look lets the look input reach the camera as usual and freezes the
+// body instead:
+//
+//   * The applyTurnDelta hook passes the deltas straight through while
+//     active; it only trims them where the camera would swing further than
+//     Max Yaw / Max Pitch from the locked angle, and zeroes them while the
+//     release animation is steering the camera home. The camera angle is
+//     tracked by summing whatever was allowed through.
+//   * The locked body angle is written into the rotation component at
+//     LocalPlayerPreTickEvent (so the tick, and with it the movement and the
+//     MovePlayerPacket, uses it) and again at LocalPlayerTickEvent (so the
+//     player model renders with it).
+//   * On release the accumulated swing is undone with compensating deltas
+//     sent through `_applyTurnDelta_orig` from the post-tick — one full step
+//     with Smooth Return off, an exponential lerp otherwise. The body is
+//     unlocked only once the camera has arrived back on it.
+//
+// The applyTurnDelta hook is shared with the Zoom module; the two hooks
+// chain, so Zoom's sensitivity scaling still applies while Free Look is
+// active.
 // ---------------------------------------------------------------------------
 
 static FreeLookModule* g_freeLookMod = nullptr;
@@ -34,7 +49,7 @@ static FreeLookModule* g_freeLookMod = nullptr;
 static void (*_applyTurnDelta_orig)(void*, bedrocktools::sdk::Vec2*) = nullptr;
 
 // The first Vec2 of ActorRotationComponent is { x = pitch, y = yaw } (the
-// same layout the Debug Menu and Hitbox modules read).
+// same layout the Debug Menu, Hitbox and Wings modules read).
 static bedrocktools::sdk::Vec2 readRotation(void* player) {
     bedrocktools::sdk::Vec2 rot{0.0f, 0.0f};
     if (!player || (uintptr_t)player < 0x1000) return rot;
@@ -55,47 +70,15 @@ static void writeRotation(void* player, const bedrocktools::sdk::Vec2& rot) {
 
 static void _applyTurnDelta_hook(void* _this, bedrocktools::sdk::Vec2* rotationDelta) {
     FreeLookModule* mod = g_freeLookMod;
-    if (!mod || !mod->enabled || !rotationDelta) {
+    if (!mod || !rotationDelta) {
         if (_applyTurnDelta_orig) _applyTurnDelta_orig(_this, rotationDelta);
         return;
     }
 
-    const bool redirect = mod->shouldRedirectTurn(_this);
-    const bedrocktools::sdk::Vec2 before = readRotation(_this);
-
-    if (!redirect) {
-        if (_applyTurnDelta_orig) _applyTurnDelta_orig(_this, rotationDelta);
-        // Pass-through: keep learning how the game applies turns, but only
-        // from the local player — applyTurnDelta may be shared with mobs.
-        if (_this == mod->player()) {
-            const bedrocktools::sdk::Vec2 after = readRotation(_this);
-            mod->onTurnObserved(_this, rotationDelta->x, rotationDelta->y,
-                                after.x - before.x, after.y - before.y);
-        }
-        return;
-    }
-
-    if (mod->useMeasuredTurns()) {
-        // Calibrated: let the game apply the turn with all of its internal
-        // logic (clamping, Zoom's sensitivity scaling, ...), measure the
-        // effect, undo it on the player and hand it to the free camera.
-        if (_applyTurnDelta_orig) _applyTurnDelta_orig(_this, rotationDelta);
-        const bedrocktools::sdk::Vec2 after = readRotation(_this);
-        writeRotation(_this, before);
-        mod->onTurnMeasured(rotationDelta->x, rotationDelta->y,
-                            after.x - before.x, after.y - before.y);
-    } else {
-        // Not calibrated yet (no turn observed so far): block the turn so the
-        // body stays locked and decode the raw argument with the assumed
-        // { x = pitch, y = yaw } layout.
-        bedrocktools::sdk::Vec2 zero{0.0f, 0.0f};
-        if (_applyTurnDelta_orig) _applyTurnDelta_orig(_this, &zero);
-        const bedrocktools::sdk::Vec2 after = readRotation(_this);
-        if (after.x != before.x || after.y != before.y) {
-            writeRotation(_this, before);
-        }
-        mod->onTurnRaw(rotationDelta->x, rotationDelta->y);
-    }
+    // The delta always goes on to the camera; filterTurnDelta only decides
+    // how much of it gets there. The body is never written from here.
+    bedrocktools::sdk::Vec2 delta = mod->filterTurnDelta(_this, *rotationDelta);
+    if (_applyTurnDelta_orig) _applyTurnDelta_orig(_this, &delta);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,36 +109,38 @@ void FreeLookModule::syncRequestActive() {
 
 void FreeLookModule::handlePlayerChanged(void* player) {
     // A different local player instance (respawn, dimension change, new
-    // world): the previous state is meaningless and the old actor may
-    // already be destroyed, so drop it without writing to it.
+    // world): the previous state is meaningless, the old actor may already be
+    // destroyed and the camera has been reset by the game anyway, so drop the
+    // swing without trying to compensate it.
     m_core.forceInactive();
     m_player = player;
 }
 
-void FreeLookModule::restoreLockedRotation() {
-    if (!m_player || !m_core.directing()) return;
-    writeRotation(m_player, bedrocktools::sdk::Vec2{m_core.locked().pitch, m_core.locked().yaw});
+void FreeLookModule::sendCameraDelta(void* player, const freelook::Turn& delta) {
+    m_lastCameraDelta = delta;
+    ++m_cameraDeltaCount;
+    if (!_applyTurnDelta_orig || !player) return;
+    // Straight to the original: going through our own hook would just have
+    // the core swallow it again.
+    bedrocktools::sdk::Vec2 vec{delta.pitch, delta.yaw};
+    _applyTurnDelta_orig(player, &vec);
 }
 
-bool FreeLookModule::shouldRedirectTurn(void* player) const {
-    return m_core.directing() && player != nullptr && player == m_player;
+bool FreeLookModule::shouldInterceptTurn(void* player) const {
+    return enabled && m_core.directing() && player != nullptr && player == m_player;
 }
 
-void FreeLookModule::onTurnObserved(void* player, float argX, float argY, float dPitch, float dYaw) {
-    (void)player;
-    freelook::observeTurn(m_core.calibration, argX, argY, dPitch, dYaw);
-}
+bedrocktools::sdk::Vec2 FreeLookModule::filterTurnDelta(void* player,
+                                                        const bedrocktools::sdk::Vec2& delta) {
+    // Not ours (Free Look idle, or a turn for some other actor): pass it on
+    // untouched so the camera behaves exactly as it would without the module
+    // and Zoom keeps its sensitivity scaling.
+    if (!shouldInterceptTurn(player)) return delta;
 
-void FreeLookModule::onTurnMeasured(float argX, float argY, float dPitch, float dYaw) {
-    freelook::observeTurn(m_core.calibration, argX, argY, dPitch, dYaw);
-    m_core.applyTurn(dPitch, dYaw);
-}
-
-void FreeLookModule::onTurnRaw(float argX, float argY) {
-    float dPitch = 0.0f;
-    float dYaw = 0.0f;
-    freelook::decodeRawDelta(m_core.calibration, argX, argY, dPitch, dYaw);
-    m_core.applyTurn(dPitch, dYaw);
+    // applyTurnDelta takes { x = pitch, y = yaw }, the same identity layout
+    // the rotation component uses.
+    const freelook::Turn allowed = m_core.filterTurn(freelook::Turn{delta.x, delta.y});
+    return bedrocktools::sdk::Vec2{allowed.pitch, allowed.yaw};
 }
 
 void FreeLookModule::onPreTick(void* player) {
@@ -178,8 +163,8 @@ void FreeLookModule::onPreTick(void* player) {
     }
 
     const bedrocktools::sdk::Vec2 current = readRotation(player);
-    // Without the applyTurnDelta hook the look input cannot be redirected,
-    // so never engage (the body would just freeze).
+    // Without the applyTurnDelta hook the camera cannot be steered, so never
+    // engage — the body would freeze together with the camera.
     const auto body = m_core.preTick(enabled && m_turnHooked,
                                      freelook::Angles{current.x, current.y});
     if (body) {
@@ -189,9 +174,15 @@ void FreeLookModule::onPreTick(void* player) {
 
 void FreeLookModule::onPostTick(void* player) {
     if (!player || player != m_player) return;
-    const auto view = m_core.postTick();
-    if (view) {
-        writeRotation(player, bedrocktools::sdk::Vec2{view->pitch, view->yaw});
+    const auto outcome = m_core.postTick();
+    // Re-assert the lock after the tick: the tick itself may have written the
+    // rotation, and the player model is rendered from it.
+    if (outcome.body) {
+        writeRotation(player, bedrocktools::sdk::Vec2{outcome.body->pitch, outcome.body->yaw});
+    }
+    // Release animation: walk the camera back onto the body.
+    if (outcome.camera) {
+        sendCameraDelta(player, *outcome.camera);
     }
 }
 
@@ -236,7 +227,19 @@ void FreeLookModule::onDisable() {
     m_toggled = false;
     m_buttonActive = false;
     syncRequestActive();
-    restoreLockedRotation();
+
+    // Snap the camera back onto the body in one step and release the lock;
+    // the tick handlers stop running the return once the module is off.
+    if (m_core.directing()) {
+        const freelook::Turn swing = m_core.swing();
+        if (swing.pitch != 0.0f || swing.yaw != 0.0f) {
+            sendCameraDelta(m_player, freelook::Turn{-swing.pitch, -swing.yaw});
+        }
+        if (m_player) {
+            writeRotation(m_player, bedrocktools::sdk::Vec2{m_core.locked().pitch,
+                                                           m_core.locked().yaw});
+        }
+    }
     m_core.forceInactive();
 }
 
