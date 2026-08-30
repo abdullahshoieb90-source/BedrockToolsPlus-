@@ -31,7 +31,6 @@
 #include "visual/blockoutline.hpp"
 #include "visual/hitbox.hpp"
 #include "visual/zoom.hpp"
-#include "visual/freelook.hpp"
 #include "visual/breadcrumbs.hpp"
 #include "visual/lightoverlay.hpp"
 #include "visual/shulkerpreview.hpp"
@@ -131,7 +130,6 @@ void registerAllModules() {
     registry.emplace<BlockOutlineModule>();
     registry.emplace<HitboxModule>();
     registry.emplace<ZoomModule>();
-    registry.emplace<FreeLookModule>();
     registry.emplace<BreadcrumbsModule>();
     registry.emplace<SkinStealerModule>();
     registry.emplace<CustomCapesModule>();

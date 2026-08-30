@@ -193,14 +193,6 @@ void registerModulesWithLauncher() {
                     if (kLower.find("cps") != std::string::npos) {
                         minVal = 1;
                         maxVal = 30;
-                    } else if (kLower.find("maxyaw") != std::string::npos) {
-                        // Free Look camera yaw swing limit in degrees.
-                        minVal = 15;
-                        maxVal = 180;
-                    } else if (kLower.find("maxpitch") != std::string::npos) {
-                        // Free Look camera pitch swing limit in degrees.
-                        minVal = 15;
-                        maxVal = 90;
                     } else if (kLower.find("time") != std::string::npos) {
                         maxVal = 24000;
                     } else if (kLower.find("red") != std::string::npos ||
