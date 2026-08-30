@@ -61,12 +61,11 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
-        customcapes_patch_test|wings_patch_test|freelook_module_test)
+        customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
             # xmake packages when available and from the host fakes
-            # (tests/fakepl, tests/fakejson) otherwise. Freelook additionally
-            # includes bedrocktools/sdk/input/MoveInput.hpp, which needs entt.
+            # (tests/fakepl, tests/fakejson) otherwise.
             extra+=(-I "${root}/third_party")
             if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
                 extra+=(-I "${json_inc}")
@@ -81,14 +80,6 @@ for source in "${root}"/tests/*_test.cpp; do
             case "${name}" in
                 customcapes_patch_test) extra_src="${root}/src/modules/player/customcapes.cpp" ;;
                 wings_patch_test) extra_src="${root}/src/modules/visual/wings.cpp" ;;
-                freelook_module_test)
-                    if [ -n "${entt_inc}" ] && [ -d "${entt_inc}" ]; then
-                        extra+=(-I "${entt_inc}")
-                    else
-                        skip="entt headers (set ENTT_INCLUDE)"
-                    fi
-                    extra_src="${root}/src/modules/visual/freelook.cpp"
-                    ;;
             esac
             ;;
     esac

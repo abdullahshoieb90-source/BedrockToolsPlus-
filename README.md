@@ -17,7 +17,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Block Outline, Hitbox, Zoom, Free Look, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass
+**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Block Outline, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass
 
 **HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair
 
@@ -50,26 +50,6 @@ The **Wings** module renders animated 3D wings on your back that flap, idle and 
 - **Fairy** — small translucent cyan/pink wings
 
 The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. Each style is drawn as closed, tapered feather prisms with a rest-pose fan, a backwards sweep and per-face shading, so the wings read as real 3D volume. Developers can preview every style offline (and compare against the legacy renderer) with `./scripts/gen_wings_preview.sh`, which writes PNGs to `build/wings-preview/`.
-
-## Free Look
-
-The **Free Look** module decouples the camera from your body: while it is active, dragging the look controls turns only the camera, while your movement, attacks and the rotation other players see stay locked in the direction you were facing when you engaged it. Sprint straight ahead while looking around — like the free look known from Java clients.
-
-How to use it:
-
-- Enable the module, then set its **Keybind**. In the default **Hold Mode** Free Look is active while the key is held; turn **Hold Mode** off to make the key toggle it instead.
-- On touch (or in addition to the key) there is a **Free Look** overlay button you can place anywhere, next to the Zoom button.
-- **Max Yaw / Max Pitch** limit how far the camera may swing away from the locked direction (defaults 180°/90° = effectively unlimited).
-- On release the camera glides back to your body direction (**Smooth Return**, **Return Speed**); turn **Smooth Return** off for an instant snap.
-
-Implementation notes, for anyone extending it. On modern Bedrock the camera and the body are two separate things, and Free Look uses both:
-
-- `LocalPlayer::applyTurnDelta` drives the **camera** (the new camera system); it does not touch the actor rotation. The module hooks it — the same hook Zoom uses, and the two chain, so Zoom's sensitivity scaling still applies — and lets the look input through untouched. It only trims a delta where the camera would swing past **Max Yaw / Max Pitch**, and zeroes it while a release animation owns the camera. The camera angle is tracked by summing the deltas that were allowed through (the argument is `{x = pitch, y = yaw}`, the same layout as the rotation component).
-- The actor rotation component (`Actor::mActorRotationComponent`) is the **body**: the player model, the movement direction and the rotation that is sent to the server. The locked angle is written into it at `LocalPlayerPreTickEvent` (so the tick, the movement and the `MovePlayerPacket` use it) and again at `LocalPlayerTickEvent` (so the player model renders locked).
-- The movement input scheme is forced to the player-relative one for as long as the camera is away from the body. Modern Bedrock interprets W/S/A/D relative to the **camera** (`MoveInputComponent` flags `IsCameraRelativeMovementEnabled` / `IsRotControlledByMoveDirection`), so freezing the rotation alone would leave the player walking wherever the camera looks. Forcing the two flags off keeps the displacement on the locked direction (W/S along the facing, A/D strafe, body never turned by the movement), and the scheme the player had before is restored on release.
-- On release the accumulated swing is undone with compensating deltas sent back through the original `applyTurnDelta` from the post-tick — one full step with **Smooth Return** off, an exponential lerp at **Return Speed** otherwise. The body is unlocked only once the camera has arrived back on it, so the two never separate permanently.
-
-The yaw limit is accumulated incrementally rather than re-derived from the wrapped camera-minus-locked difference: that difference flips sign at 180°, so a flick into the limit would otherwise teleport the camera to the far side of the lock. The module also re-locks automatically on respawn or dimension change, dropping the swing instead of compensating into a camera the game has already reset.
 
 ## System Requirements
 
