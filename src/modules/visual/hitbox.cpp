@@ -1,4 +1,5 @@
 #include "hitbox.hpp"
+#include "hitbox_camera.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/sdk/Memory.hpp>
@@ -145,6 +146,25 @@ static uint32_t forceOpaqueColor(uint32_t color) {
 static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
 
 static void* g_localPlayerPtr = nullptr;
+
+// Options::getPlayerViewPerspective(): 0 = first person, 1 = third person
+// back, 2 = third person front. Jumping in first person interpolates the
+// camera above the tick AABB, so the geometric test alone used to flash
+// the local player's own box. The game value is authoritative; hooks chain
+// with ViewModel's detour on the same target.
+static int (*_getPerspective_orig)(void*) = nullptr;
+static int s_perspective = 0;
+static bool s_perspectiveHooked = false;
+static bool s_perspectiveKnown = false;
+
+static int _getPerspective_hook(void* _this) {
+    int result = 0;
+    if (_getPerspective_orig)
+        result = _getPerspective_orig(_this);
+    s_perspective = result;
+    s_perspectiveKnown = true;
+    return result;
+}
 
 struct AABB {
     bedrocktools::sdk::Vec3 min;
@@ -522,21 +542,16 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         drawLines(lines, color);
     };
 
-    // First-person: the camera sits inside the player's collision box (the
-    // head). Third-person pulls the camera back outside that box. Using the
-    // AABB is more reliable than an eye-height distance check, which breaks
-    // while sneaking, swimming, crawling, or when the camera is pushed in
-    // by a wall.
+    // First-person: never draw the local player's own box (it fills the
+    // view, and jumping interpolates the camera above the tick AABB so a
+    // tight inside-AABB test used to flash it). Combine the game camera
+    // mode with a jump-tolerant geometric test; see hitbox_camera.hpp.
     AABB localAabb = getActorAABB(g_localPlayerPtr);
-    constexpr float kFirstPersonMargin = 0.05f;
-    const bool cameraInsideLocalBox =
-        camX >= localAabb.min.x - kFirstPersonMargin &&
-        camX <= localAabb.max.x + kFirstPersonMargin &&
-        camY >= localAabb.min.y - kFirstPersonMargin &&
-        camY <= localAabb.max.y + kFirstPersonMargin &&
-        camZ >= localAabb.min.z - kFirstPersonMargin &&
-        camZ <= localAabb.max.z + kFirstPersonMargin;
-    bool isThirdPerson = !cameraInsideLocalBox;
+    const bool cameraLooksThirdPerson = hitbox::isThirdPersonCamera(
+        camX, camY, camZ,
+        localAabb.min.x, localAabb.min.y, localAabb.min.z,
+        localAabb.max.x, localAabb.max.y, localAabb.max.z);
+    const bool gameThirdPerson = s_perspectiveKnown ? (s_perspective != 0) : true;
 
     ActorVec actors{};
     if (s_actorFetchNearby) {
@@ -642,7 +657,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         }
     };
 
-    if (g_hitboxMod->show3rdPerson && isThirdPerson) {
+    if (hitbox::shouldDrawLocalHitbox(g_hitboxMod->show3rdPerson, gameThirdPerson, cameraLooksThirdPerson)) {
         renderActor(g_localPlayerPtr, g_hitboxMod->hitboxColor, true);
     }
 
@@ -744,6 +759,14 @@ void HitboxModule::onInit() {
     if (isb) s_isSolidBlockingBlock = (BlockSource_isSolidBlockingBlock_t)isb;
 
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>([](auto& event) { s_hitboxTickCallback(event.player); });
+
+    if (!s_perspectiveHooked) {
+        uintptr_t perspective = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::GetPerspective);
+        if (perspective != 0 &&
+            bedrocktools::hooks::install((void*)perspective, (void*)_getPerspective_hook, (void**)&_getPerspective_orig)) {
+            s_perspectiveHooked = true;
+        }
+    }
 }
 
 void HitboxModule::applyPatch() {
