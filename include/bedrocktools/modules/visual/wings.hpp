@@ -100,38 +100,9 @@ public:
     // eye drops but the camera stays inside the box. Mirrors the Hitbox
     // module's convention of not rendering the player's own geometry in
     // first-person.
-    //
-    // The AABB test is now a defensive secondary check. The primary
-    // first-person guard is the captured perspective id from the
-    // GetPerspective hook (see isFirstPersonPerspective()): the wings hide as
-    // soon as the game reports perspective == 0 (First Person), regardless
-    // of where the camera happens to be. That fixes the original "wings
-    // visible in front of the face / front-facing camera" bug, where the
-    // AABB test alone could miss the front-camera edge case (perspective 2)
-    // or any moment the camera was just outside the box.
     static bool isThirdPersonCamera(float camX, float camY, float camZ,
                                     float aabbMinX, float aabbMinY, float aabbMinZ,
                                     float aabbMaxX, float aabbMaxY, float aabbMaxZ);
-
-    // Returns the last perspective id observed by the GetPerspective hook
-    // (0 = First Person, 1 = Third Person Back, 2 = Third Person Front,
-    // depending on the Bedrock build). The value is refreshed by the
-    // installed hook on the game thread; the render hook reads it from the
-    // render thread under s_perspectiveMutex so it never tears.
-    static int currentPerspectiveId();
-
-    // True when the captured perspective id indicates first-person view.
-    // The render hook uses this to skip the wing pass entirely when the
-    // local player is in first-person, so the wings never render on top of
-    // the player's face / held item.
-    static bool isFirstPersonPerspective();
-
-    // Test-only: drive the perspective id directly. The GetPerspective hook
-    // is the normal source of this value, but the host tests cannot
-    // install a hook on the game's vtable, so the tests set the value
-    // through this helper. Marked as the test surface; the in-game
-    // behaviour is unaffected.
-    static void setPerspectiveIdForTest(int id);
 
     // Advances the wing animation by dtSeconds given the player's current
     // horizontal and vertical speed (blocks/second). This blends the pose
@@ -184,18 +155,6 @@ public:
     static constexpr float kFlapBaseRate = 6.0f;      // rad/s at speed 1.0
     static constexpr float kWingWidth = 0.75f;        // blocks, one wing span
     static constexpr float kWingHeight = 0.5f;        // blocks, feather drop
-
-    // Torso / chest anchor. The wings are children of the player's torso
-    // bone (Bedrock model space: the body root sits at y = 24, which is the
-    // upper chest right below the head). Anchoring at the feet (y = 0)
-    // would put the wing root far below the back, dragging the meshes
-    // through the legs; anchoring at the head (y = 24..32) would push them
-    // up into the camera in first-person and clip the helmet. 0.75 of the
-    // player AABB height hits the upper-chest pivot of a 1.8m player
-    // (~1.35 blocks up from the feet) which is the standard torso anchor
-    // the in-game Cape rendering uses too. The same value works for
-    // sneaking/swimming because it scales with the AABB.
-    static constexpr float kTorsoAnchorRatio = 0.75f; // 0 = feet, 1 = head
 
     // Idle breathing pulse (matches animation.wings.idle).
     static constexpr float kIdleBaseDegrees = 20.0f;
@@ -264,7 +223,6 @@ private:
 
     // Render hook state
     bool m_patched = false;
-    bool m_perspectiveHooked = false;
     void* m_patchTarget = nullptr;
     void* m_tessBeginAddr = nullptr;
     void* m_tessColorAddr = nullptr;
