@@ -6,7 +6,9 @@
 // path (shouldInterceptTurn + onTurnDelta) and the pre/post tick rotation
 // writes. A fake player object carries a real ActorRotationComponent pointer
 // at the offset the module reads, so the test observes exactly what the
-// module writes into the body.
+// module writes into the body — and a real MoveInputComponent in the same
+// entity registry the game uses, so the movement-scheme lock on flags 9/10
+// is observable too.
 //
 // The camera is the game's to own — the module only steers it with deltas
 // through applyTurnDelta — so the camera side is asserted on the deltas the
@@ -15,9 +17,14 @@
 // The fake hook hands back a null trampoline, which is what the real module
 // null-checks before calling the original.
 //
-//     g++ -std=c++20 -I src -I include -I tests/fakepl -I tests/fakejson
-//         tests/freelook_module_test.cpp src/modules/visual/freelook.cpp
-//         -o /tmp/freelook_module_test
+// The module includes bedrocktools/sdk/input/MoveInput.hpp, so the entt
+// headers are needed (xmake normally provides entt; point ENTT_INCLUDE at
+// the package's include dir — the same package effectdisplay_test uses):
+//
+//     ENTT=$(echo ~/.xmake/packages/e/entt/v3.16.0/*/include)
+//     g++ -std=c++20 -I src -I include -I "$ENTT" -I tests/fakepl
+//         -I tests/fakejson tests/freelook_module_test.cpp
+//         src/modules/visual/freelook.cpp -o /tmp/freelook_module_test
 //     /tmp/freelook_module_test
 
 #include "modules/visual/freelook.hpp"
@@ -25,10 +32,12 @@
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Types.hpp>
+#include <bedrocktools/sdk/input/MoveInput.hpp>
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <new>
 #include <string>
 
 // ---------------------------------------------------------------------------
@@ -52,22 +61,43 @@ std::uintptr_t resolve(SignatureId id) {
 
 // ---------------------------------------------------------------------------
 // Fake LocalPlayer: enough storage for the ActorRotationComponent pointer at
-// Actor::mActorRotationComponent (0x218) plus the component itself.
+// Actor::mActorRotationComponent (0x218) plus the component itself, and an
+// embedded EntityContext at Actor::mEntityContext (0x8) backed by a real
+// registry holding a MoveInputComponent — the same shape the game uses.
 // ---------------------------------------------------------------------------
 
 namespace {
 
 constexpr std::size_t kRotationComponentOffset = 0x218;
 
+// One registry shared by every fake player; each fake owns its entity.
+entt::basic_registry<EntityId> g_inputRegistry;
+
 struct FakePlayer {
     alignas(8) unsigned char bytes[kRotationComponentOffset + 8];
     alignas(8) float rotation[4];
+    EntityId entity;
 
     FakePlayer() {
         std::memset(bytes, 0, sizeof(bytes));
         std::memset(rotation, 0, sizeof(rotation));
         const uintptr_t component = reinterpret_cast<std::uintptr_t>(&rotation[0]);
         std::memcpy(bytes + kRotationComponentOffset, &component, sizeof(component));
+
+        // The engine embeds the EntityContext inside the actor (it is not a
+        // pointer), exactly like Actor::entityContext() walks it.
+        entity = g_inputRegistry.create();
+        g_inputRegistry.emplace<MoveInputComponent>(entity);
+        new (bytes + bedrocktools::sdk::offsets::Actor::mEntityContext) EntityContext{
+            *static_cast<EntityRegistry*>(nullptr), g_inputRegistry, entity};
+    }
+
+    ~FakePlayer() {
+        g_inputRegistry.destroy(entity);
+    }
+
+    MoveInputComponent* input() {
+        return bedrocktools::sdk::moveInputComponent(bytes);
     }
 
     bedrocktools::sdk::Vec2 rot() const {
@@ -140,14 +170,27 @@ int main() {
     checkTurn(feedTurn(mod, player, 5.0f, 5.0f), 5.0f, 5.0f, "disabled module passes turns through");
 
     // -----------------------------------------------------------------
-    // Engage: the body locks, the camera keeps receiving the full input.
+    // Engage: the body locks, the camera keeps receiving the full input and
+    // the movement input scheme stops following the camera.
     // -----------------------------------------------------------------
     mod.setMasterEnabled(true);
     check(mod.enabled, "module enabled");
+
+    // Pretend the engine has the camera-relative scheme active (flags 9+10),
+    // plus two unrelated flags the movement lock must leave alone.
+    auto* moveInput = player.input();
+    check(moveInput != nullptr, "fake player exposes a move input component");
+    const std::uint16_t cameraScheme = static_cast<std::uint16_t>((1u << 9) | (1u << 10) | 0x5);
+    moveInput->mFlagValues.value = cameraScheme;
+
     mod.onKeybindEvent("keybind", true);
     mod.onPreTick(&player);
     checkRot(player, 10.0f, 20.0f, "engaging locks at the current rotation");
     check(mod.shouldInterceptTurn(&player), "engaged module intercepts turns");
+    check((moveInput->mFlagValues.value & (freelook::MovementFrameLock::LockMask)) == 0,
+          "engaged free look clears the camera-relative movement scheme");
+    check((moveInput->mFlagValues.value & 0x5) == 0x5,
+          "unrelated input flags survive the movement lock");
 
     // The turn reaches the camera unchanged (Free Look must not reshape the
     // look input) and the body does not follow it.
@@ -218,6 +261,9 @@ int main() {
     checkTurn(mod.cameraSwing(), 0.0f, 0.0f, "no swing left after the return");
     check(!mod.shouldInterceptTurn(&player), "the body is unlocked once the camera arrives");
     checkTurn(feedTurn(mod, player, 7.0f, 7.0f), 7.0f, 7.0f, "turns pass through again");
+    mod.onPreTick(&player); // settled tick: writes nothing, restores the scheme
+    check(moveInput->mFlagValues.value == cameraScheme,
+          "release restores the saved movement scheme");
 
     // Settled: ticks no longer touch the rotation.
     player.setRot(1.0f, 1.0f);

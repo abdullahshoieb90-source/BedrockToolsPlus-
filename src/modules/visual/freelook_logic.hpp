@@ -85,6 +85,73 @@ struct Settings {
 };
 
 // ---------------------------------------------------------------------------
+// Movement frame lock.
+//
+// On modern Bedrock the WASD/stick input is interpreted relative to the
+// camera: `MoveInputComponent` carries the camera-relative scheme in two of
+// its 11 flags (`IsCameraRelativeMovementEnabled` and
+// `IsRotControlledByMoveDirection`), so merely pinning the actor rotation is
+// not enough — swinging the camera would drag the player in the swung
+// direction while the body stays "frozen".
+//
+// The lock therefore also forces the input scheme to the player-relative one
+// for as long as the camera is separated from the body (Active or Returning):
+// W/S then follow the player's facing and A/D strafe, and nothing turns the
+// body with the movement direction. Whatever the two bits were before the
+// engage is remembered and restored once the camera has arrived back on the
+// body, so Free Look leaves the user's control scheme exactly as it was.
+// ---------------------------------------------------------------------------
+
+class MovementFrameLock {
+public:
+    // MoveInputComponent::Flag::IsCameraRelativeMovementEnabled /
+    // IsRotControlledByMoveDirection. Kept as plain bit numbers here so this
+    // header stays free of game dependencies; the SDK enum is defined in
+    // bedrocktools/sdk/input/MoveInput.hpp.
+    static constexpr std::uint16_t CameraRelativeMovement = std::uint16_t{1u << 9};
+    static constexpr std::uint16_t RotControlledByMoveDirection = std::uint16_t{1u << 10};
+    static constexpr std::uint16_t LockMask =
+        CameraRelativeMovement | RotControlledByMoveDirection;
+
+    bool locked() const { return mLocked; }
+
+    // One tick's worth of policy, called around `Core::preTick` with the same
+    // `directing` value: while the camera and body are apart the two
+    // camera-relative bits are cleared and the pre-lock value is captured on
+    // the first forced tick; once they are one again the captured bits are
+    // written back (the rest of the current flag value is left untouched).
+    std::uint16_t tick(bool directing, std::uint16_t current) {
+        if (directing) {
+            if (!mLocked) {
+                mSaved = current;
+                mLocked = true;
+            }
+            return current & ~LockMask;
+        }
+        if (mLocked) {
+            mLocked = false;
+            const std::uint16_t restore = static_cast<std::uint16_t>(
+                (current & ~LockMask) | (mSaved & LockMask));
+            mSaved = 0;
+            return restore;
+        }
+        return current;
+    }
+
+    // Drop the state without a restore write (player replaced, world torn
+    // down): the old actor's component must never be touched again, and the
+    // next engage captures the new player's scheme afresh.
+    void reset() {
+        mLocked = false;
+        mSaved = 0;
+    }
+
+private:
+    std::uint16_t mSaved = 0;
+    bool mLocked = false;
+};
+
+// ---------------------------------------------------------------------------
 // Swing limits.
 // ---------------------------------------------------------------------------
 

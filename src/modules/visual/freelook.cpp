@@ -5,6 +5,7 @@
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/Types.hpp>
+#include <bedrocktools/sdk/input/MoveInput.hpp>
 #include <pl/ModMenu.hpp>
 
 #include <algorithm>
@@ -34,6 +35,12 @@
 //     LocalPlayerPreTickEvent (so the tick, and with it the movement and the
 //     MovePlayerPacket, uses it) and again at LocalPlayerTickEvent (so the
 //     player model renders with it).
+//   * The movement input scheme is forced to the player-relative one for as
+//     long as the camera is away from the body. Modern Bedrock interprets
+//     W/S/A/D relative to the *camera* (MoveInputComponent flags 9 and 10),
+//     so freezing the rotation alone would leave the player walking where the
+//     camera looks; the input scheme change keeps the displacement on the
+//     locked direction instead, and restores the user's scheme on release.
 //   * On release the accumulated swing is undone with compensating deltas
 //     sent through `_applyTurnDelta_orig` from the post-tick — one full step
 //     with Smooth Return off, an exponential lerp otherwise. The body is
@@ -111,8 +118,11 @@ void FreeLookModule::handlePlayerChanged(void* player) {
     // A different local player instance (respawn, dimension change, new
     // world): the previous state is meaningless, the old actor may already be
     // destroyed and the camera has been reset by the game anyway, so drop the
-    // swing without trying to compensate it.
+    // swing without trying to compensate it. The movement-scheme lock is
+    // dropped too — writing the old player's saved scheme into the new one
+    // would restore the wrong flags, and the next engage captures them afresh.
     m_core.forceInactive();
+    m_movementLock.reset();
     m_player = player;
 }
 
@@ -170,6 +180,11 @@ void FreeLookModule::onPreTick(void* player) {
     if (body) {
         writeRotation(player, bedrocktools::sdk::Vec2{body->pitch, body->yaw});
     }
+    // Movement must not follow the swung camera, so the input scheme is
+    // player-relative for however long the camera and body are apart
+    // (including the release animation) and is restored as soon as they are
+    // one again.
+    applyMovementLock(player, m_core.directing());
 }
 
 void FreeLookModule::onPostTick(void* player) {
@@ -239,8 +254,22 @@ void FreeLookModule::onDisable() {
             writeRotation(m_player, bedrocktools::sdk::Vec2{m_core.locked().pitch,
                                                            m_core.locked().yaw});
         }
+        // Restore the movement input scheme the player had before the lock.
+        applyMovementLock(m_player, false);
     }
     m_core.forceInactive();
+    // If the player was already gone the restore write above could not run;
+    // never carry a stale scheme lock into a later tick.
+    m_movementLock.reset();
+}
+
+void FreeLookModule::applyMovementLock(void* player, bool directing) {
+    // Null-safe: host tests and teardown ticks have no move input component.
+    auto* input = bedrocktools::sdk::moveInputComponent(player);
+    if (!input) return;
+    const std::uint16_t current = input->mFlagValues.value;
+    const std::uint16_t next = m_movementLock.tick(directing, current);
+    if (next != current) input->mFlagValues.value = next;
 }
 
 void FreeLookModule::onKeybindEvent(const std::string& key, bool isDown) {

@@ -64,6 +64,11 @@ private:
     void pushSettings();
     // Hands one delta to the game's own applyTurnDelta, bypassing our hook.
     void sendCameraDelta(void* player, const freelook::Turn& delta);
+    // Forces the movement input scheme to the player-relative one while the
+    // camera is decoupled from the body (`directing`), restoring the saved
+    // scheme once it isn't. Null-safe: ticks without a move input component
+    // (host tests, teardown) are simply skipped.
+    void applyMovementLock(void* player, bool directing);
 
     void* m_player = nullptr;
     bool m_keyHeld = false;      // raw keybind down state (hold mode)
@@ -75,4 +80,7 @@ private:
     freelook::Turn m_lastCameraDelta{};
     int m_cameraDeltaCount = 0;
     freelook::Core m_core;
+    // Keeps the movement input player-relative while the camera is being
+    // steered away from the body.
+    freelook::MovementFrameLock m_movementLock;
 };
