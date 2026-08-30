@@ -2,15 +2,32 @@
 
 // Pure state machine and math for the Free Look module.
 //
-// Free Look decouples the camera from the player's body rotation: while it is
-// active the look input still turns the *camera*, but the player's rotation —
-// which drives movement, attacks and the rotation sent to the server — stays
-// locked at the angle it had when Free Look started.
+// How Free Look maps onto modern Bedrock (confirmed by field testing):
+//
+//   * LocalPlayer::applyTurnDelta drives the *camera*. It belongs to the new
+//     camera system and does not touch the actor rotation at all.
+//   * The actor rotation component (Actor::mActorRotationComponent, a Vec2
+//     laid out as { x = pitch, y = yaw }) is the *body*: the player model,
+//     the movement direction and the rotation that goes out in packets.
+//
+// So the module does exactly two things while it is engaged:
+//
+//   * turn deltas keep flowing through to the camera untouched — they are
+//     only trimmed where the camera would swing further than Max Yaw /
+//     Max Pitch away from the locked angle, and zeroed while the release
+//     animation is running, and
+//   * the body rotation is pinned to the angle Free Look started at, around
+//     every tick.
+//
+// The camera angle is never read back from the game: it is tracked by summing
+// the deltas that were allowed through, in the identity layout the function
+// takes ({ x = pitch, y = yaw }). On release the accumulated swing is undone
+// with compensating deltas sent through the original applyTurnDelta, and the
+// body is unlocked only once the camera has arrived back on it.
 //
 // Everything in this header is plain C++ with no game dependencies so the
 // host-side tests (tests/freelook_test.cpp) cover the exact logic the game
-// runs: angle wrapping, the pitch/yaw swing limits, the smooth return, the
-// calibration that decodes how the game applies turn deltas, and the
+// runs: the swing limits, the release animation and the
 // Inactive/Active/Returning phase transitions.
 
 #include <cmath>
@@ -30,6 +47,16 @@ struct Angles {
     friend bool operator==(const Angles&, const Angles&) = default;
 };
 
+// A pitch/yaw pair in degrees. Used for turn deltas (the applyTurnDelta
+// argument, identity layout { x = pitch, y = yaw }) and for the camera's
+// accumulated swing away from the locked body angle.
+struct Turn {
+    float pitch = 0.0f;
+    float yaw = 0.0f;
+
+    friend bool operator==(const Turn&, const Turn&) = default;
+};
+
 // Wrap a degree value into (-180, 180].
 inline float wrapDegrees(float value) {
     while (value > 180.0f) value -= 360.0f;
@@ -37,18 +64,12 @@ inline float wrapDegrees(float value) {
     return value;
 }
 
-// Shortest-arc interpolation between two angles in degrees, so yaw never
-// spins the long way around the +/-180 seam (same trick as the Wings module).
-inline float lerpAngle(float from, float to, float t) {
-    return from + wrapDegrees(to - from) * t;
-}
-
 inline float clampf(float value, float lo, float hi) {
     return value < lo ? lo : (value > hi ? hi : value);
 }
 
 // ---------------------------------------------------------------------------
-// Free camera movement.
+// Settings.
 // ---------------------------------------------------------------------------
 
 struct Settings {
@@ -57,226 +78,198 @@ struct Settings {
     float maxYaw = 180.0f;
     float maxPitch = 90.0f;
 
-    // Animate the camera back to the body angle on release instead of
-    // snapping. `returnLerp` is the per-tick (20 tps) lerp factor.
+    // Animate the camera back onto the body on release instead of snapping.
+    // `returnLerp` is the per-tick (20 tps) share of the remaining swing.
     bool smoothReturn = true;
     float returnLerp = 0.45f;
 };
 
-// Apply one turn delta (in degrees, same sign space as the player rotation)
-// to the free camera, clamped to the swing limits around the locked angle.
-inline Angles applyLookDelta(Angles cam, float deltaPitch, float deltaYaw,
-                             const Angles& locked, const Settings& settings) {
-    // The swing limits accumulate incrementally from the camera's current
-    // swing. Measuring the wrapped total instead would let a flick past the
-    // limit teleport the camera to the far side of the lock.
-    //
-    // Pitch: bound both the swing relative to the locked pitch and the
-    // absolute game range, and clamp the stored value so there is no dead
-    // zone to unwind when a limit lets go.
-    const float pitchSwing =
-        clampf((cam.pitch - locked.pitch) + deltaPitch, -settings.maxPitch, settings.maxPitch);
-    cam.pitch = clampf(locked.pitch + pitchSwing, -90.0f, 90.0f);
+// ---------------------------------------------------------------------------
+// Swing limits.
+// ---------------------------------------------------------------------------
 
-    // Yaw: the swing is wrapped so turning across the +/-180 seam stays
-    // continuous, and the final angle is re-wrapped into (-180, 180].
-    const float yawSwing =
-        clampf(wrapDegrees(cam.yaw - locked.yaw) + deltaYaw, -settings.maxYaw, settings.maxYaw);
-    cam.yaw = wrapDegrees(locked.yaw + yawSwing);
+// Trim one turn delta so the camera stays inside the swing limits. `swing` is
+// the camera's current offset from `locked`; the return value is the part of
+// `delta` that may still be handed to the game.
+inline Turn clipTurn(const Turn& swing, const Angles& locked, const Turn& delta,
+                     const Settings& settings) {
+    // Pitch: the swing limit around the locked pitch *and* the absolute
+    // [-90, 90] range the game itself never leaves. Both are applied to the
+    // resulting camera angle, so a delta that runs into a limit is trimmed
+    // down to whatever is still free instead of being dropped whole — there
+    // is no dead zone to unwind when the limit lets go again.
+    const float maxPitch = clampf(settings.maxPitch, 0.0f, 90.0f);
+    const float camPitch = locked.pitch + swing.pitch;
+    float wantPitch = camPitch + delta.pitch;
+    wantPitch = clampf(wantPitch, locked.pitch - maxPitch, locked.pitch + maxPitch);
+    wantPitch = clampf(wantPitch, -90.0f, 90.0f);
 
-    return cam;
-}
+    // Yaw: the swing is accumulated incrementally and clamped as such. It is
+    // deliberately never re-derived as wrapDegrees(camera - locked): that
+    // difference flips sign at 180 degrees, so a flick into the limit would
+    // hand the next delta a swing of the opposite sign and teleport the
+    // camera to the far side of the lock.
+    const float maxYaw = clampf(settings.maxYaw, 0.0f, 180.0f);
+    const float wantSwing = clampf(swing.yaw + delta.yaw, -maxYaw, maxYaw);
 
-// One 20 tps step of the release animation.
-inline Angles stepReturn(const Angles& cam, const Angles& locked, float lerp) {
-    return Angles{lerpAngle(cam.pitch, locked.pitch, lerp),
-                  lerpAngle(cam.yaw, locked.yaw, lerp)};
-}
-
-inline bool returnSettled(const Angles& cam, const Angles& locked, float epsilon = 0.5f) {
-    return std::fabs(cam.pitch - locked.pitch) <= epsilon &&
-           std::fabs(wrapDegrees(cam.yaw - locked.yaw)) <= epsilon;
+    return Turn{wantPitch - camPitch, wantSwing - swing.yaw};
 }
 
 // ---------------------------------------------------------------------------
-// Turn-delta calibration.
-//
-// The hook intercepts LocalPlayer::applyTurnDelta(Vec2 const&). We never
-// assume the layout of that Vec2: whenever the game applies turns normally we
-// compare the argument with the rotation change it actually produced and
-// learn, at runtime,
-//   * whether the function applies the delta synchronously (it changes the
-//     rotation before returning) or merely queues it for the next tick, and
-//   * which component of the argument drives pitch vs yaw, and with which
-//     sign.
-// While calibrated we redirect the *measured* rotation change into the camera
-// (exact, including the game's own clamping); before that we fall back to the
-// natural {x = pitch, y = yaw} layout.
+// Release animation.
 // ---------------------------------------------------------------------------
 
-struct Calibration {
-    bool syncKnown = false;   // we have seen a turn being applied immediately
-    bool syncApply = false;   // true once synchronous application is proven
-    bool axisXIsPitch = true; // argument.x drives pitch (else it drives yaw)
-    float signX = 1.0f;       // sign of argument.x's contribution
-    float signY = 1.0f;       // sign of argument.y's contribution
-};
-
-// Observe one pass-through call: the argument handed to applyTurnDelta and
-// the rotation change it produced ({0, 0} when it only queued the turn).
-inline void observeTurn(Calibration& cal, float argX, float argY, float dPitch, float dYaw) {
-    constexpr float kEps = 1e-4f;
-
-    const bool argTurned = std::fabs(argX) > kEps || std::fabs(argY) > kEps;
-    const bool rotTurned = std::fabs(dPitch) > kEps || std::fabs(dYaw) > kEps;
-
-    // Only a rotation change proves synchronous application. The reverse is
-    // not evidence of anything: a clamped turn (pitch pinned at +/-90) also
-    // produces zero change from a non-zero argument.
-    if (argTurned && rotTurned) {
-        cal.syncKnown = true;
-        cal.syncApply = true;
-    }
-
-    // Single-axis arguments identify the axis mapping and its sign. Diagonal
-    // turns carry no decisive information, so they are skipped; purely
-    // horizontal and purely vertical drags happen within seconds of play.
-    const bool xOnly = std::fabs(argX) > kEps && std::fabs(argY) <= kEps;
-    const bool yOnly = std::fabs(argY) > kEps && std::fabs(argX) <= kEps;
-    const bool pitchOnly = std::fabs(dPitch) > kEps && std::fabs(dYaw) <= kEps;
-    const bool yawOnly = std::fabs(dYaw) > kEps && std::fabs(dPitch) <= kEps;
-
-    const auto signOf = [](float arg, float applied) {
-        return (arg > 0.0f) == (applied > 0.0f) ? 1.0f : -1.0f;
-    };
-
-    if (xOnly && pitchOnly) {
-        cal.axisXIsPitch = true;
-        cal.signX = signOf(argX, dPitch);
-    } else if (xOnly && yawOnly) {
-        cal.axisXIsPitch = false;
-        cal.signX = signOf(argX, dYaw);
-    } else if (yOnly && pitchOnly) {
-        cal.axisXIsPitch = false;
-        cal.signY = signOf(argY, dPitch);
-    } else if (yOnly && yawOnly) {
-        cal.axisXIsPitch = true;
-        cal.signY = signOf(argY, dYaw);
-    }
+// The compensating delta for one 20 tps step of the release: sent through the
+// original applyTurnDelta, it moves the camera back toward the body.
+// Smooth Return off means one full step — the camera lands this tick.
+inline Turn returnStep(const Turn& swing, const Settings& settings) {
+    // The lerp is floored so a misconfigured 0 cannot leave the body locked
+    // forever.
+    const float t = settings.smoothReturn ? clampf(settings.returnLerp, 0.05f, 1.0f) : 1.0f;
+    return Turn{-swing.pitch * t, -swing.yaw * t};
 }
 
-// Decode a raw applyTurnDelta argument into a rotation delta using whatever
-// the calibration has learned so far (identity layout by default).
-inline void decodeRawDelta(const Calibration& cal, float argX, float argY,
-                           float& dPitch, float& dYaw) {
-    if (cal.axisXIsPitch) {
-        dPitch = argX * cal.signX;
-        dYaw = argY * cal.signY;
-    } else {
-        dPitch = argY * cal.signY;
-        dYaw = argX * cal.signX;
-    }
+// Close enough that the remaining swing can be closed out in one exact step.
+inline bool swingSettled(const Turn& swing, float epsilon = 0.5f) {
+    return std::fabs(swing.pitch) <= epsilon && std::fabs(swing.yaw) <= epsilon;
+}
+
+inline bool swingZero(const Turn& swing) {
+    return swing.pitch == 0.0f && swing.yaw == 0.0f;
 }
 
 // ---------------------------------------------------------------------------
 // Phase machine.
 //
-//   Inactive   - Free Look off; the game turns the player normally.
-//   Active     - look input is redirected into the free camera; the body
-//                rotation is forced to the locked angle for every tick.
-//   Returning  - released, but the camera is still animating back to the
-//                body angle. The body stays locked until it arrives.
+//   Inactive   - Free Look off; turn deltas pass through untouched and the
+//                body is left alone.
+//   Active     - turn deltas are trimmed to the swing limits and accumulated
+//                into the camera swing; the body is pinned to the locked
+//                angle around every tick.
+//   Returning  - released, but the camera is still being walked back onto the
+//                body with compensating deltas. Input stays zeroed and the
+//                body stays locked until the camera arrives.
 //
-// The module calls preTick()/postTick() around LocalPlayer::normalTick and
-// writes whatever they return into the player's rotation component:
-// preTick returns the locked body angle for the tick (movement and the
-// MovePlayerPacket then use it), postTick returns the free camera angle that
-// the frames until the next tick render with.
+// The module calls preTick() before LocalPlayer::normalTick and postTick()
+// after it. Both hand back the body rotation to force into the rotation
+// component (before the tick so movement and the MovePlayerPacket use it,
+// after the tick so the player model renders with it); postTick additionally
+// hands back the compensating camera delta of the release animation.
 // ---------------------------------------------------------------------------
 
 class Core {
 public:
     enum class Phase : std::uint8_t { Inactive, Active, Returning };
 
+    struct TickOutcome {
+        std::optional<Angles> body; // force this rotation on the actor
+        std::optional<Turn> camera; // feed this delta to applyTurnDelta
+    };
+
     Settings settings;
-    Calibration calibration;
 
     Phase phase() const { return mPhase; }
     bool directing() const { return mPhase != Phase::Inactive; }
     bool active() const { return mPhase == Phase::Active; }
-    bool useMeasuredTurns() const { return calibration.syncApply; }
+    bool returning() const { return mPhase == Phase::Returning; }
+
     const Angles& locked() const { return mLocked; }
-    const Angles& camera() const { return mCam; }
+    const Turn& swing() const { return mSwing; }
+
+    // Where the camera points, as tracked from the deltas we let through.
+    Angles camera() const {
+        return Angles{mLocked.pitch + mSwing.pitch, wrapDegrees(mLocked.yaw + mSwing.yaw)};
+    }
 
     void setRequestActive(bool value) { mRequestActive = value; }
     bool requestActive() const { return mRequestActive; }
 
-    // Drop everything without animating (module disabled, player changed,
-    // world left). The caller restores the locked angle if we were directing.
+    // Drop everything without compensating (player replaced, world left).
+    // Only safe when the camera is about to be reset by the game anyway: the
+    // camera is moved with deltas, so letting go mid-swing otherwise would
+    // strand it away from the body.
     void forceInactive() {
         mPhase = Phase::Inactive;
-        mCam = mLocked;
+        mSwing = Turn{};
     }
 
-    // Redirect one turn into the free camera. `dPitch`/`dYaw` are in degrees
-    // in the player rotation's sign space (either measured from the game or
-    // decoded from the raw argument).
-    void applyTurn(float dPitch, float dYaw) {
-        if (mPhase != Phase::Active) return;
-        mCam = applyLookDelta(mCam, dPitch, dYaw, mLocked, settings);
+    // Hook path: returns the part of the delta the game may still apply to
+    // the camera, and books it into the swing.
+    Turn filterTurn(const Turn& delta) {
+        if (mPhase == Phase::Active) {
+            const Turn allowed = clipTurn(mSwing, mLocked, delta, settings);
+            mSwing.pitch += allowed.pitch;
+            mSwing.yaw += allowed.yaw;
+            return allowed;
+        }
+        // Returning: the camera is being steered home, so fresh input is
+        // swallowed until it gets there. Inactive: nothing to do with it.
+        if (mPhase == Phase::Returning) return Turn{};
+        return delta;
     }
 
-    // Run at the top of every LocalPlayer tick. `current` is the player's
-    // rotation right now (game thread). Returns the rotation the body must
-    // have for this tick, or nullopt when Free Look is not involved at all.
+    // Run at the top of every LocalPlayer tick. `current` is the body
+    // rotation right now. Returns the rotation the body must carry through
+    // this tick, or nullopt when Free Look is not involved at all.
     std::optional<Angles> preTick(bool moduleEnabled, const Angles& current) {
         if (mPhase == Phase::Inactive) {
             if (!moduleEnabled || !mRequestActive) return std::nullopt;
-            // Engage: lock the body where it currently faces.
+            // Engage: lock the body where it currently faces. The camera is
+            // on the body at this point, so the swing starts at zero.
             mLocked = current;
-            mCam = current;
+            mSwing = Turn{};
             mPhase = Phase::Active;
             return mLocked;
         }
 
         if (moduleEnabled && mRequestActive) {
-            // Still requested (or re-engaged mid-return): stay active.
+            // Still requested (or re-engaged mid-return): stay active and
+            // keep the swing the camera already has.
             mPhase = Phase::Active;
             return mLocked;
         }
 
-        // Released: either animate the camera home or let go immediately.
-        if (settings.smoothReturn && !returnSettled(mCam, mLocked)) {
-            mPhase = Phase::Returning;
-        } else {
+        // Released. The body stays locked until the camera is back on it.
+        if (swingZero(mSwing)) {
             mPhase = Phase::Inactive;
-            mCam = mLocked;
+        } else {
+            mPhase = Phase::Returning;
         }
         return mLocked;
     }
 
-    // Run right after the LocalPlayer tick. Returns the rotation the frames
-    // until the next tick should render with, or nullopt when the game
-    // should keep whatever it has.
-    std::optional<Angles> postTick() {
-        if (mPhase == Phase::Inactive) return std::nullopt;
+    // Run right after the LocalPlayer tick.
+    TickOutcome postTick() {
+        TickOutcome outcome;
+        if (mPhase == Phase::Inactive) return outcome;
+
+        // Re-assert the lock after the tick so the player model renders with
+        // the locked angle too.
+        outcome.body = mLocked;
 
         if (mPhase == Phase::Returning) {
-            mCam = stepReturn(mCam, mLocked, settings.returnLerp);
-            if (returnSettled(mCam, mLocked)) {
+            Turn step = returnStep(mSwing, settings);
+            Turn rest{mSwing.pitch + step.pitch, mSwing.yaw + step.yaw};
+            if (swingSettled(rest)) {
+                // Last step: close the gap exactly instead of crawling at it.
+                step = Turn{-mSwing.pitch, -mSwing.yaw};
+                rest = Turn{};
+            }
+            mSwing = rest;
+            outcome.camera = step;
+            if (swingZero(mSwing)) {
+                // Camera and body are one again: unlock the body.
                 mPhase = Phase::Inactive;
-                mCam = mLocked;
-                return mLocked; // final restore write
             }
         }
-        return mCam;
+        return outcome;
     }
 
 private:
     Phase mPhase = Phase::Inactive;
     bool mRequestActive = false;
     Angles mLocked;
-    Angles mCam;
+    Turn mSwing;
 };
 
 } // namespace freelook

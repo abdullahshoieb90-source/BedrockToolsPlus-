@@ -62,7 +62,13 @@ How to use it:
 - **Max Yaw / Max Pitch** limit how far the camera may swing away from the locked direction (defaults 180°/90° = effectively unlimited).
 - On release the camera glides back to your body direction (**Smooth Return**, **Return Speed**); turn **Smooth Return** off for an instant snap.
 
-Implementation notes, for anyone extending it: the module hooks `LocalPlayer::applyTurnDelta` (the same hook Zoom uses — they chain, so Zoom's sensitivity scaling still applies), measures the turn the game would have applied, redirects it into a free camera angle, and writes that angle into the player's rotation right after every tick while forcing the locked angle back in before it — which is what keeps movement packets and the server on the locked direction. It calibrates the turn-delta layout at runtime instead of assuming it, and re-locks automatically on respawn or dimension change. In third person your own player model turns with the camera (body and view share one rotation on Bedrock); the direction sent to the server stays locked either way.
+Implementation notes, for anyone extending it. On modern Bedrock the camera and the body are two separate things, and Free Look uses both:
+
+- `LocalPlayer::applyTurnDelta` drives the **camera** (the new camera system); it does not touch the actor rotation. The module hooks it — the same hook Zoom uses, and the two chain, so Zoom's sensitivity scaling still applies — and lets the look input through untouched. It only trims a delta where the camera would swing past **Max Yaw / Max Pitch**, and zeroes it while a release animation owns the camera. The camera angle is tracked by summing the deltas that were allowed through (the argument is `{x = pitch, y = yaw}`, the same layout as the rotation component).
+- The actor rotation component (`Actor::mActorRotationComponent`) is the **body**: the player model, the movement direction and the rotation that is sent to the server. The locked angle is written into it at `LocalPlayerPreTickEvent` (so the tick, the movement and the `MovePlayerPacket` use it) and again at `LocalPlayerTickEvent` (so the player model renders locked).
+- On release the accumulated swing is undone with compensating deltas sent back through the original `applyTurnDelta` from the post-tick — one full step with **Smooth Return** off, an exponential lerp at **Return Speed** otherwise. The body is unlocked only once the camera has arrived back on it, so the two never separate permanently.
+
+The yaw limit is accumulated incrementally rather than re-derived from the wrapped camera-minus-locked difference: that difference flips sign at 180°, so a flick into the limit would otherwise teleport the camera to the far side of the lock. The module also re-locks automatically on respawn or dimension change, dropping the swing instead of compensating into a camera the game has already reset.
 
 ## System Requirements
 
