@@ -37,6 +37,9 @@
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/stb_image_write.h>
+// Decoding only: the stb_image implementation is compiled by
+// src/modules/player/customcapes.cpp in this same binary.
+#include <stb/stb_image.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -392,6 +395,154 @@ int main() {
                     skinSnapshot.data() + off::SerializedSkinImpl::mCapeImage,
                     off::Image::Size),
           "mCapeImage restored after rejoin/disable");
+
+    // ------------------------------------------------------------------
+    // A player who owns no cape at all — the case the module exists for.
+    // Their mCapeImage is a default-constructed mce::Image: every field is
+    // zero (format Unknown, 0x0, depth 0, usage Unknown, no blob). The
+    // engine builds the cape texture from exactly those fields, so the
+    // patch has to fill in all of them; leaving depth/usage/format at 0
+    // hands the texture factory an image whose getSizeInBytes() is
+    // w*h*depth*4 == 0 and no cape is ever drawn (the reported symptom:
+    // the selected PNG never shows up on the player).
+    // ------------------------------------------------------------------
+    std::printf("capeless player gets a render-valid cape image\n");
+    {
+        std::vector<std::uint8_t> bare(off::SerializedSkinImpl::mIsPersonaCapeOnClassicSkin + 32, 0);
+        std::uint8_t* const bareBase = bare.data();
+
+        // The player's own skin texture: 64x64 RGBA8, depth 1, SRGB usage —
+        // an image the engine is already rendering successfully.
+        std::vector<std::uint8_t> bareSkinPixels(64 * 64 * 4, 0x77);
+        writeImage(bareBase + off::SerializedSkinImpl::mSkinImage, 4, 64, 64,
+                   bareSkinPixels.data(), originalDeleter, bareSkinPixels.size());
+        const std::uint32_t skinUsage = 1;
+        std::memcpy(bareBase + off::SerializedSkinImpl::mSkinImage + off::Image::mUsage,
+                    &skinUsage, 4);
+
+        // mCapeImage is left all zero: that is the capeless player.
+        const std::vector<std::uint8_t> bareSnapshot = bare;
+
+        std::vector<std::uint8_t> barePlayer(off::Player::mSkin + sizeof(void*), 0);
+        void* bareSkinSlot = bareBase;
+        void* bareSkinSlotAddress = &bareSkinSlot;
+        std::memcpy(barePlayer.data() + off::Player::mSkin, &bareSkinSlotAddress, sizeof(void*));
+        void* bareLevel = (void*)0x3;
+        std::memcpy(barePlayer.data() + off::Actor::mLevel, &bareLevel, sizeof(void*));
+
+        mod.enabled = true;
+        mod.onLocalPlayerTick(barePlayer.data());
+
+        std::uint8_t* const bareCape = bareBase + off::SerializedSkinImpl::mCapeImage;
+        const std::uint32_t format = readU32(bareCape, off::Image::mImageFormat);
+        const std::uint32_t capeW = readU32(bareCape, off::SkinImage::mWidth);
+        const std::uint32_t capeH = readU32(bareCape, off::SkinImage::mHeight);
+        const std::uint32_t depth = readU32(bareCape, off::Image::mDepth);
+        const std::uint32_t usage = readU32(bareCape, off::Image::mUsage);
+        const std::size_t blobSize = readSize(bareCape, off::Image::mBlobSizeOffset);
+        void* const bareInjected = readPtr(bareCape, off::Image::mBytesOffset);
+
+        check(bareInjected != nullptr, "cape pixels injected into the empty cape image");
+        check(capeW == 64 && capeH == 32, "cape dimensions are 64x32");
+        check(depth == 1,
+              "cape depth is 1 (depth 0 makes the engine reject the texture)");
+        check(format != 0, "cape pixel format is no longer Unknown");
+        check(usage != 0, "cape image usage is no longer Unknown");
+        check(blobSize == static_cast<std::size_t>(capeW) * capeH * depth * 4u,
+              "blob size == width*height*depth*4 (mce::Image::getSizeInBytes)");
+        check(bareInjected != nullptr &&
+                  sameBytes(static_cast<const std::uint8_t*>(bareInjected), expectedCape.data(),
+                            expectedCape.size()),
+              "injected pixels are the resampled cape");
+        check(sameBytes(bareBase + off::SerializedSkinImpl::mSkinImage,
+                        bareSnapshot.data() + off::SerializedSkinImpl::mSkinImage,
+                        off::Image::Size),
+              "mSkinImage untouched for a capeless player too");
+
+        mod.enabled = false;
+        mod.onLocalPlayerTick(barePlayer.data());
+        check(sameBytes(bareCape, bareSnapshot.data() + off::SerializedSkinImpl::mCapeImage,
+                        off::Image::Size),
+              "the all-zero cape image is restored byte-for-byte on disable");
+    }
+
+
+    // ------------------------------------------------------------------
+    // End to end on the module's own sample cape: onInit() creates the
+    // capes folder and writes "Sample Cape.png", the menu radio value
+    // selects it, and a capeless player must end up wearing a fully
+    // opaque, non-empty cape. This is the path reported as "the PNG does
+    // not show on the player".
+    // ------------------------------------------------------------------
+    std::printf("generated Sample Cape.png reaches the player's skin\n");
+    {
+        const std::string sampleRoot = "/tmp/bt-customcapes-sample-test";
+        std::filesystem::remove_all(sampleRoot);
+        std::filesystem::create_directories(sampleRoot);
+        g_testConfigPath = sampleRoot + "/config.json";
+
+        CustomCapesModule sampleMod;
+        sampleMod.onInit(); // creates <configDir>/capes and the sample PNG
+
+        const std::vector<std::string> listed =
+            customcapes::scanCapeFiles(sampleRoot + "/capes");
+        check(listed.size() == 1 && listed[0] == "Sample Cape.png",
+              "onInit() creates a selectable Sample Cape.png");
+
+        // The value the launcher radio picker hands back.
+        nlohmann::json sampleCfg;
+        sampleCfg["m_cape"] = customcapes::makeRadioValue(1, listed);
+        sampleMod.loadConfig(sampleCfg);
+
+        std::vector<std::uint8_t> bare(off::SerializedSkinImpl::mIsPersonaCapeOnClassicSkin + 32, 0);
+        std::uint8_t* const bareBase = bare.data();
+        std::vector<std::uint8_t> bareSkinPixels(64 * 64 * 4, 0x77);
+        writeImage(bareBase + off::SerializedSkinImpl::mSkinImage, 4, 64, 64,
+                   bareSkinPixels.data(), originalDeleter, bareSkinPixels.size());
+
+        std::vector<std::uint8_t> barePlayer(off::Player::mSkin + sizeof(void*), 0);
+        void* bareSkinSlot = bareBase;
+        void* bareSkinSlotAddress = &bareSkinSlot;
+        std::memcpy(barePlayer.data() + off::Player::mSkin, &bareSkinSlotAddress, sizeof(void*));
+        void* bareLevel = (void*)0x4;
+        std::memcpy(barePlayer.data() + off::Actor::mLevel, &bareLevel, sizeof(void*));
+
+        sampleMod.enabled = true;
+        sampleMod.onLocalPlayerTick(barePlayer.data());
+
+        std::uint8_t* const sampleCape = bareBase + off::SerializedSkinImpl::mCapeImage;
+        auto* sampleInjected =
+            static_cast<const std::uint8_t*>(readPtr(sampleCape, off::Image::mBytesOffset));
+        check(sampleInjected != nullptr, "sample cape pixels are injected into the skin");
+        check(readU32(sampleCape, off::Image::mDepth) == 1 &&
+                  readU32(sampleCape, off::SkinImage::mWidth) == 64 &&
+                  readU32(sampleCape, off::SkinImage::mHeight) == 32,
+              "injected sample cape describes a 64x32 depth-1 texture");
+
+        if (sampleInjected != nullptr) {
+            // The visible outer face is x=1..11, y=1..17 of the 64x32 canvas.
+            std::size_t opaque = 0;
+            std::size_t distinct = 0;
+            std::uint64_t seen = 0;
+            for (std::uint32_t y = 1; y <= 16; ++y) {
+                for (std::uint32_t x = 1; x <= 10; ++x) {
+                    const std::uint8_t* px = sampleInjected + (y * 64 + x) * 4;
+                    if (px[3] != 0) ++opaque;
+                    const std::uint32_t key = (px[0] / 16) | ((px[1] / 16) << 4) |
+                                              ((px[2] / 16) << 8);
+                    if (!((seen >> key) & 1u)) {
+                        seen |= 1ull << key;
+                        ++distinct;
+                    }
+                }
+            }
+            check(opaque == 160, "every pixel of the cape's outer face is opaque");
+            check(distinct >= 4, "the outer face carries real artwork, not one flat color");
+        }
+
+        sampleMod.enabled = false;
+        sampleMod.onLocalPlayerTick(barePlayer.data());
+    }
 
     std::printf("\n%s\n", g_failures == 0 ? "all custom capes patch tests passed"
                                           : "SOME PATCH TESTS FAILED");

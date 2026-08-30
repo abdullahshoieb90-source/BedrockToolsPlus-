@@ -35,6 +35,11 @@ void freeBlobDeleter(unsigned char* data) {
 }
 
 constexpr std::uint32_t kCapeImageFormat = 4;
+// mce::Image::mDepth is 1 for every 2D texture. The engine derives the
+// texture description and the pixel-byte count (width * height * depth *
+// bytesPerPixel) from this field, so a cape image left at depth 0 is
+// rejected by the texture factory and never reaches the screen.
+constexpr std::uint32_t kCapeImageDepth = 1;
 constexpr int kLoadRetryTicks = 120;
 constexpr const char* kCapeIdBase = "bedrocktoolsplus";
 constexpr std::size_t kCapeIdBaseLen = 16;
@@ -410,9 +415,28 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
     // when the live skin still points at it; if the game changed skins in
     // place it may already have freed that pointer.
     void* previousBlob = liveUsesOurBlob ? m_injectedBlob : nullptr;
+
+    // Describe a texture the engine can actually upload. It builds the cape
+    // texture from this image's own fields, so every one of them has to say
+    // "64x32 RGBA8, depth 1": a player without any cape carries a
+    // default-constructed mCapeImage whose format/depth/usage are all 0, and
+    // a depth-0 image has a computed size of w*h*0*4 = 0 bytes — the texture
+    // factory drops it and the cape is silently never drawn. Depth is always
+    // 1 for a 2D texture; the image usage is inherited from the player's own
+    // skin texture (an image the engine already renders) whenever the cape
+    // image does not carry one of its own.
+    const std::uint32_t skinUsage =
+        *reinterpret_cast<const uint32_t*>(skinImage + Image::mUsage);
+    const std::uint32_t capeUsage =
+        *reinterpret_cast<const uint32_t*>(capeImage + Image::mUsage);
+
     *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat) = kCapeImageFormat;
     *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth) = customcapes::kCapeWidth;
     *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight) = customcapes::kCapeHeight;
+    *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth) = kCapeImageDepth;
+    if (capeUsage == 0 && skinUsage <= 4) {
+        *reinterpret_cast<uint32_t*>(capeImage + Image::mUsage) = skinUsage;
+    }
     *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) = newBlob;
     *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset) =
         reinterpret_cast<void*>(&freeBlobDeleter);

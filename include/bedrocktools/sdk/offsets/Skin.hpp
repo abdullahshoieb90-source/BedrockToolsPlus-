@@ -8,7 +8,10 @@ namespace bedrocktools::sdk::offsets {
 //   ImageFormat mImageFormat; // 0x00 (RGBA8Unorm = 4)
 //   uint32      mWidth;       // 0x04
 //   uint32      mHeight;      // 0x08
-//   uint32      mDepth;       // 0x0C
+//   uint32      mDepth;       // 0x0C (1 for every 2D image; the engine derives
+//                             //      the texture description and the pixel byte
+//                             //      count w*h*depth*bpp from it, so an image
+//                             //      left at 0 is rejected and never rendered)
 //   ImageUsage  mUsage;       // 0x10 (uchar: Unknown = 0, SRGB = 1)
 //   mce::Blob   mImageBytes;  // 0x18 (size = 0x18: { unique_ptr mBlob; void(*mDeleter)(uchar*); size_t mSize })
 namespace Image {
