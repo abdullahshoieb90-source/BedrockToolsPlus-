@@ -171,6 +171,50 @@ static void testReturnStep() {
     check(!freelook::swingZero({0.0f, 0.01f}), "near-zero swing is not zero");
 }
 
+static void testMovementFrameLock() {
+    std::printf("movement frame lock\n");
+
+    freelook::MovementFrameLock lock;
+    constexpr std::uint16_t kCamera = freelook::MovementFrameLock::CameraRelativeMovement;
+    constexpr std::uint16_t kRot = freelook::MovementFrameLock::RotControlledByMoveDirection;
+    constexpr std::uint16_t kMask = freelook::MovementFrameLock::LockMask;
+
+    // Idle: pass-through, never touches the value or engages.
+    check(!lock.locked(), "lock starts idle");
+    check(lock.tick(false, 0x1AB) == 0x1AB, "idle tick passes the flags through");
+    check(!lock.locked(), "idle tick does not engage");
+
+    // Engaging clears exactly the two camera-relative bits, keeping the rest.
+    const std::uint16_t scheme = static_cast<std::uint16_t>(kCamera | kRot);
+    check(lock.tick(true, scheme) == 0, "engaging clears the camera-relative scheme");
+    check(lock.locked(), "engaging arms the lock");
+    check(lock.tick(true, static_cast<std::uint16_t>(kMask | 0x21)) == 0x21,
+          "other flags survive while the lock is on");
+
+    // Releasing restores the saved bits, preserving whatever else changed.
+    check(lock.tick(false, static_cast<std::uint16_t>(kMask | 0x21)) ==
+              static_cast<std::uint16_t>(scheme | 0x21),
+          "release restores the saved scheme bits");
+    check(!lock.locked(), "release disarms the lock");
+    check(lock.tick(false, 0x9999) == 0x9999, "released lock passes through again");
+
+    // A re-engage captures the then-current scheme, not the old saved one.
+    const std::uint16_t partial = kCamera;  // only strafe-relative remains
+    lock.tick(true, kMask);
+    lock.tick(false, kMask);
+    (void)lock.tick(true, partial);
+    check(lock.tick(false, static_cast<std::uint16_t>(partial | 0x2)) ==
+              static_cast<std::uint16_t>(partial | 0x2),
+          "re-engage restores the newly captured scheme");
+    check(!lock.locked(), "re-engaged lock releases cleanly");
+
+    // Reset drops everything without writing (player replaced / world left).
+    (void)lock.tick(true, kMask);
+    lock.reset();
+    check(!lock.locked(), "reset disarms without a restore write");
+    check(lock.tick(true, 0x104) == 0x104, "after reset the next engage re-captures");
+}
+
 static void testPhaseMachine() {
     std::printf("phase machine\n");
 
@@ -334,6 +378,7 @@ int main() {
     testAngles();
     testTurnClipping();
     testReturnStep();
+    testMovementFrameLock();
     testPhaseMachine();
     testLimitsThroughCore();
 

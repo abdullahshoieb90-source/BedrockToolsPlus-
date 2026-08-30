@@ -71,6 +71,14 @@ struct MoveInputState {
 };
 
 struct MoveInputComponent {
+    // Toggles that select how the movement input is mapped onto the world.
+    // The first nine bits mirror the old bool layout of this component; the
+    // last two choose the *control scheme* (see the Bedrock "Control Schemes"
+    // docs): with IsCameraRelativeMovementEnabled set, W/S/A/D follow the
+    // camera and the body is turned with the movement direction
+    // (IsRotControlledByMoveDirection); with both clear the scheme is the
+    // "locked player relative strafe" one — W/S along the player's facing and
+    // A/D strafe.
     enum class Flag : std::uint8_t {
         Sneaking = 0,
         Sprinting = 1,
@@ -97,6 +105,14 @@ struct MoveInputComponent {
     bedrocktools::sdk::Vec3 mCameraOrientation;
     BedrockBitset<11, std::uint16_t> mFlagValues;
     std::array<bool, 2> mIsPaddling;
+
+    bool test(Flag flag) const {
+        return mFlagValues.test(static_cast<std::size_t>(flag));
+    }
+
+    void set(Flag flag, bool enabled) {
+        mFlagValues.set(static_cast<std::size_t>(flag), enabled);
+    }
 };
 
 enum class EntityId : std::uint32_t {};
