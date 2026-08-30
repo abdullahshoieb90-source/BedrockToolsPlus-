@@ -156,9 +156,9 @@ int main() {
     void* const capeBlob = capePixels.data();
     void* const originalDeleter = reinterpret_cast<void*>(&fakeDeleter);
 
-    writeImage(skinBase + off::SerializedSkinImpl::mSkinImage, 4, 64, 64,
+    writeImage(skinBase + off::SerializedSkinImpl::mSkinImage, 3, 64, 64,
                skinBlob, originalDeleter, skinPixels.size());
-    writeImage(skinBase + off::SerializedSkinImpl::mCapeImage, 4, 64, 32,
+    writeImage(skinBase + off::SerializedSkinImpl::mCapeImage, 3, 64, 32,
                capeBlob, originalDeleter, capePixels.size());
     // mCapeId (336) starts as an empty short std::string (all zero bytes).
 
@@ -192,8 +192,8 @@ int main() {
                     skinSnapshot.data() + off::SerializedSkinImpl::mSkinImage,
                     off::Image::Size),
           "mSkinImage (120) is untouched — skin must not turn into Steve");
-    check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mImageFormat) == 4,
-          "mCapeImage format is RGBA8");
+    check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mImageFormat) == 3,
+          "mCapeImage format is RGBA8Unorm (3)");
     check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::SkinImage::mWidth) == 64 &&
               readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::SkinImage::mHeight) == 32,
           "mCapeImage dimensions are 64x32");
@@ -267,7 +267,7 @@ int main() {
     std::vector<std::uint8_t> changedCapePixels(64 * 32 * 4, 0xEF);
     void* const changedCapeBlob = changedCapePixels.data();
     inPlaceEngineDeleter(static_cast<unsigned char*>(inPlaceOldInjected));
-    writeImage(skinBase + off::SerializedSkinImpl::mCapeImage, 4, 64, 32,
+    writeImage(skinBase + off::SerializedSkinImpl::mCapeImage, 3, 64, 32,
                changedCapeBlob, originalDeleter, changedCapePixels.size());
     std::memset(skinBase + off::SerializedSkinImpl::mCapeId, 0, 24);
 
@@ -321,6 +321,52 @@ int main() {
     check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) == capeBlob,
           "original cape blob still in place");
     mod.enabled = false;
+
+    // ------------------------------------------------------------------
+    // ImageFormat must stay inside the engine enum
+    // {Unknown=0, R8Unorm=1, RGB8Unorm=2, RGBA8Unorm=3}. A cape image whose
+    // format is out of that range is either memory that no longer belongs to
+    // an mce::Image or a value the texture factory rejects (the format 4 bug:
+    // 4 was a naive "4 channels" guess, but the enum tops out at 3, so the
+    // engine never built a cape texture from it). Either way the patch must
+    // refuse to touch it.
+    // ------------------------------------------------------------------
+    std::printf("out-of-range ImageFormat aborts the patch; a real RGBA8 (3) cape is accepted\n");
+    std::memcpy(skin.data(), skinSnapshot.data(), skin.size());
+    const std::uint32_t invalidFormat = 4;
+    std::memcpy(skinBase + off::SerializedSkinImpl::mCapeImage + off::Image::mImageFormat,
+                &invalidFormat, 4);
+    {
+        const std::vector<std::uint8_t> before = skin;
+        mod.enabled = true;
+        mod.onLocalPlayerTick(player.data());
+        check(sameBytes(skinBase, before.data(), skin.size()),
+              "format 4 (out of enum range) -> cape image is not touched");
+        check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) == capeBlob,
+              "format 4 -> original blob left in place");
+        mod.enabled = false;
+        mod.onLocalPlayerTick(player.data());
+    }
+
+    // A player who already owns a vanilla cape: its image is a perfectly valid
+    // RGBA8Unorm (3) texture, and the custom cape must replace it (the module
+    // must not mistake a real owned cape for a corrupt layout).
+    std::memcpy(skin.data(), skinSnapshot.data(), skin.size());
+    {
+        mod.enabled = true;
+        mod.onLocalPlayerTick(player.data());
+        void* ownerInjected = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage,
+                                      off::Image::mBytesOffset);
+        check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mImageFormat) == 3,
+              "owned-cape player: patched image stays RGBA8Unorm (3)");
+        check(ownerInjected != nullptr && ownerInjected != capeBlob,
+              "owned-cape player: custom cape pixels replace the vanilla cape");
+        check(sameBytes(static_cast<const std::uint8_t*>(ownerInjected), expectedCape.data(),
+                        expectedCape.size()),
+              "owned-cape player: injected pixels are the resampled cape");
+        mod.enabled = false;
+        mod.onLocalPlayerTick(player.data());
+    }
 
     // ------------------------------------------------------------------
     // World exit (Leave World): the engine detaches the player from its
@@ -414,7 +460,7 @@ int main() {
         // The player's own skin texture: 64x64 RGBA8, depth 1, SRGB usage —
         // an image the engine is already rendering successfully.
         std::vector<std::uint8_t> bareSkinPixels(64 * 64 * 4, 0x77);
-        writeImage(bareBase + off::SerializedSkinImpl::mSkinImage, 4, 64, 64,
+        writeImage(bareBase + off::SerializedSkinImpl::mSkinImage, 3, 64, 64,
                    bareSkinPixels.data(), originalDeleter, bareSkinPixels.size());
         const std::uint32_t skinUsage = 1;
         std::memcpy(bareBase + off::SerializedSkinImpl::mSkinImage + off::Image::mUsage,
@@ -446,7 +492,9 @@ int main() {
         check(capeW == 64 && capeH == 32, "cape dimensions are 64x32");
         check(depth == 1,
               "cape depth is 1 (depth 0 makes the engine reject the texture)");
-        check(format != 0, "cape pixel format is no longer Unknown");
+        check(format == 3,
+              "cape pixel format is RGBA8Unorm (3) — value 4 is out of the "
+              "engine enum and the texture factory silently drops it");
         check(usage != 0, "cape image usage is no longer Unknown");
         check(blobSize == static_cast<std::size_t>(capeW) * capeH * depth * 4u,
               "blob size == width*height*depth*4 (mce::Image::getSizeInBytes)");
@@ -497,7 +545,7 @@ int main() {
         std::vector<std::uint8_t> bare(off::SerializedSkinImpl::mIsPersonaCapeOnClassicSkin + 32, 0);
         std::uint8_t* const bareBase = bare.data();
         std::vector<std::uint8_t> bareSkinPixels(64 * 64 * 4, 0x77);
-        writeImage(bareBase + off::SerializedSkinImpl::mSkinImage, 4, 64, 64,
+        writeImage(bareBase + off::SerializedSkinImpl::mSkinImage, 3, 64, 64,
                    bareSkinPixels.data(), originalDeleter, bareSkinPixels.size());
 
         std::vector<std::uint8_t> barePlayer(off::Player::mSkin + sizeof(void*), 0);
@@ -514,6 +562,8 @@ int main() {
         auto* sampleInjected =
             static_cast<const std::uint8_t*>(readPtr(sampleCape, off::Image::mBytesOffset));
         check(sampleInjected != nullptr, "sample cape pixels are injected into the skin");
+        check(readU32(sampleCape, off::Image::mImageFormat) == 3,
+              "injected sample cape uses RGBA8Unorm (3), the engine's RGBA format");
         check(readU32(sampleCape, off::Image::mDepth) == 1 &&
                   readU32(sampleCape, off::SkinImage::mWidth) == 64 &&
                   readU32(sampleCape, off::SkinImage::mHeight) == 32,

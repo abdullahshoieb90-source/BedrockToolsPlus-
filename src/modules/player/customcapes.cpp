@@ -34,7 +34,18 @@ void freeBlobDeleter(unsigned char* data) {
     std::free(data);
 }
 
-constexpr std::uint32_t kCapeImageFormat = 4;
+// mce::ImageFormat, exactly as declared in the game binary:
+//     enum class ImageFormat : uint32 {
+//         Unknown = 0, R8Unorm = 1, RGB8Unorm = 2, RGBA8Unorm = 3
+//     };
+// (verified against Reference/mce/ImageFormat.h in the 1.20.51 client symbols
+// and Flarial's 1.21.x SDK — both agree). Skin and cape textures are decoded
+// by the game as RGBA8Unorm == 3. Writing any value >= 4 hands the texture
+// factory an out-of-range format, so texture creation fails and the cape is
+// silently never drawn — the reported "no cape on the player" symptom. The old
+// constant used 4 (a naive "4 channels" guess), which the engine rejected for
+// every cape, even the generated sample.
+constexpr std::uint32_t kCapeImageFormat = 3;
 // mce::Image::mDepth is 1 for every 2D texture. The engine derives the
 // texture description and the pixel-byte count (width * height * depth *
 // bytesPerPixel) from this field, so a cape image left at depth 0 is
@@ -82,10 +93,12 @@ bool isPlausibleCapeImage(uintptr_t capeImage) {
                               (width == customcapes::kCapeWidth * 2 && height == customcapes::kCapeHeight * 2)) &&
                              blob != nullptr && size >= static_cast<std::size_t>(width) * height * 4u;
 
-    // ImageUsage is an enum stored in the low byte. Values above this small
-    // range usually mean the offset is no longer an mce::Image and touching it
-    // would corrupt the skin (observed as a Steve fallback or a skin-change
-    // crash on shifted game layouts).
+    // ImageFormat is the 0..3 enum above. An all-zero (Unknown) image is the
+    // capeless-player case the patch exists to fill in; 3 (RGBA8Unorm) is the
+    // format every real skin/cape image uses. Values >= 4 are out of enum
+    // range and mean the offset no longer points at an mce::Image — touching
+    // it would corrupt the skin (observed as a Steve fallback or a
+    // skin-change crash on shifted game layouts).
     return (emptyCape || classicCape) && (format == 0 || format == kCapeImageFormat) &&
            (depth == 0 || depth == 1) && usage <= 4;
 }
@@ -418,13 +431,15 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
 
     // Describe a texture the engine can actually upload. It builds the cape
     // texture from this image's own fields, so every one of them has to say
-    // "64x32 RGBA8, depth 1": a player without any cape carries a
+    // "64x32 RGBA8Unorm(3), depth 1": a player without any cape carries a
     // default-constructed mCapeImage whose format/depth/usage are all 0, and
     // a depth-0 image has a computed size of w*h*0*4 = 0 bytes — the texture
-    // factory drops it and the cape is silently never drawn. Depth is always
-    // 1 for a 2D texture; the image usage is inherited from the player's own
-    // skin texture (an image the engine already renders) whenever the cape
-    // image does not carry one of its own.
+    // factory drops it and the cape is silently never drawn. The format must
+    // be the enum value 3 (RGBA8Unorm): 4 is past the end of the
+    // {0,1,2,3} enum and the factory rejects it just as silently. Depth is
+    // always 1 for a 2D texture; the image usage is inherited from the
+    // player's own skin texture (an image the engine already renders)
+    // whenever the cape image does not carry one of its own.
     const std::uint32_t skinUsage =
         *reinterpret_cast<const uint32_t*>(skinImage + Image::mUsage);
     const std::uint32_t capeUsage =
