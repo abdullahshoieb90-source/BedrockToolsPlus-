@@ -21,7 +21,14 @@
 // is also mapped onto the tapered Elytra UV area used by both wings. Exact
 // 64x32 inputs keep manually-authored Elytra pixels; if that area is empty,
 // the wing fallback is generated from the cape face. The result is written
-// into the local player's SerializedSkinImpl::mCapeImage each tick. Modern game versions
+// into the local player's SerializedSkinImpl::mCapeImage each tick, together
+// with the image metadata the engine needs to upload it: format, width,
+// height, a depth of 1 (it is a 2D texture) and an image usage. A player
+// who owns no cape at all carries a default-constructed, all-zero
+// mCapeImage, so those fields have to be filled in instead of left alone
+// -- an image claiming 64x32 RGBA pixels at depth 0 has a computed size of
+// zero bytes and the engine drops it without ever drawing a cape.
+// Modern game versions
 // only render the classic cape when SerializedSkinImpl::mCapeId is
 // non-empty, so a synthetic short-string id is written alongside the image
 // and restored together with it. The blob handed to the
