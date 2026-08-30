@@ -244,6 +244,50 @@ int main() {
           "original cape blob pointer restored");
 
     // ------------------------------------------------------------------
+    // Skin change in-place: the game can rebuild the contents of the same
+    // SerializedSkinImpl while keeping its address. It owns/frees the old
+    // injected blob during that rebuild. The next tick must not double-free
+    // that stale pointer, and disabling afterwards must restore the new skin's
+    // cape rather than the pre-change backup.
+    // ------------------------------------------------------------------
+    std::printf("skin change in-place: fresh backup, no stale free\n");
+    mod.enabled = true;
+    mod.onLocalPlayerTick(player.data());
+    void* inPlaceOldInjected = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage,
+                                       off::Image::mBytesOffset);
+    auto* inPlaceEngineDeleter = reinterpret_cast<void (*)(unsigned char*)>(
+        readPtr(skinBase + off::SerializedSkinImpl::mCapeImage,
+                off::Image::mBlobDeleterOffset));
+    check(inPlaceOldInjected != nullptr && inPlaceOldInjected != capeBlob,
+          "patch is in place before in-place skin change");
+
+    std::vector<std::uint8_t> changedCapePixels(64 * 32 * 4, 0xEF);
+    void* const changedCapeBlob = changedCapePixels.data();
+    inPlaceEngineDeleter(static_cast<unsigned char*>(inPlaceOldInjected));
+    writeImage(skinBase + off::SerializedSkinImpl::mCapeImage, 4, 64, 32,
+               changedCapeBlob, originalDeleter, changedCapePixels.size());
+    std::memset(skinBase + off::SerializedSkinImpl::mCapeId, 0, 24);
+
+    mod.onLocalPlayerTick(player.data());
+    void* inPlaceNewInjected = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage,
+                                       off::Image::mBytesOffset);
+    check(inPlaceNewInjected != nullptr && inPlaceNewInjected != changedCapeBlob,
+          "custom cape reapplied after in-place skin rebuild");
+    check(sameBytes(static_cast<const std::uint8_t*>(inPlaceNewInjected), expectedCape.data(),
+                    expectedCape.size()),
+          "reapplied in-place pixels match the resampled cape");
+
+    mod.enabled = false;
+    mod.onLocalPlayerTick(player.data());
+    check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) ==
+              changedCapeBlob,
+          "disable restores the changed skin's own cape blob");
+    check(sameBytes(skinBase + off::SerializedSkinImpl::mCapeId,
+                    skinSnapshot.data() + off::SerializedSkinImpl::mCapeId, 24),
+          "disable clears the synthetic cape id after in-place rebuild");
+    std::memcpy(skin.data(), skinSnapshot.data(), skin.size());
+
+    // ------------------------------------------------------------------
     // Persona skins are never patched.
     // ------------------------------------------------------------------
     std::printf("persona skin is skipped\n");

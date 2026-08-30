@@ -36,10 +36,12 @@
 //     pointer — a previous skin object can never dangle.
 //   * when the skin object is replaced by the game, the old object owns the
 //     blob we injected (freed by the engine through our deleter), so no
-//     cleanup is needed on our side.
+//     cleanup is needed on our side. If the game rebuilds the same skin object
+//     in-place, the module detects that its blob was detached and takes a fresh
+//     backup instead of restoring/freeing stale state.
 //   * the cape offsets are version-specific and derived from the verified
-//     skin offsets (see include/bedrocktools/sdk/offsets/Skin.hpp); a sanity
-//     check on the live skin image aborts the patch if the layout shifts.
+//     skin offsets (see include/bedrocktools/sdk/offsets/Skin.hpp); sanity
+//     checks on the live skin and cape images abort the patch if the layout shifts.
 //   * persona skins go through the persona pipeline (no classic cape image),
 //     so the module leaves them untouched.
 //   * on Leave World the engine detaches the player from its level
@@ -85,6 +87,7 @@ private:
 
     bool applyCustomCape(void* skin);
     void restoreOriginalCape(void* skin);
+    void backupOriginalCape(std::uintptr_t capeImage, std::uintptr_t capeIdAddr);
     void clearPatchState();
 
     std::string m_capesDir;
