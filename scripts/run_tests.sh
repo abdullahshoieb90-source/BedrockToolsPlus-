@@ -35,7 +35,7 @@ for source in "${root}"/tests/*_test.cpp; do
 
     # Per-test requirements (see the header comment of each test).
     extra=()
-    extra_src=""
+    extra_srcs=()
     skip=""
     case "${name}" in
         commandhotkey_test|crosshair_test)
@@ -61,7 +61,24 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
-        wings_patch_test|customcapes_test)
+        customcapes_ui_test)
+            # Builds the real preview-grid UI as a second translation unit;
+            # the preloader/nlohmann_json headers come from the xmake
+            # packages when available and from the host fakes otherwise.
+            extra+=(-I "${root}/third_party")
+            if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
+                extra+=(-I "${json_inc}")
+            else
+                extra+=(-I "${root}/tests/fakejson")
+            fi
+            if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ]; then
+                extra+=(-I "${preloader_inc}")
+            else
+                extra+=(-I "${root}/tests/fakepl")
+            fi
+            extra_srcs+=("${root}/src/modules/player/customcapes_ui.cpp")
+            ;;
+        customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
             # xmake packages when available and from the host fakes
@@ -77,10 +94,12 @@ for source in "${root}"/tests/*_test.cpp; do
             else
                 extra+=(-I "${root}/tests/fakepl")
             fi
-            case "${name}" in
-                wings_patch_test) extra_src="${root}/src/modules/visual/wings.cpp" ;;
-                customcapes_test) extra_src="${root}/src/modules/player/customcapes.cpp" ;;
-            esac
+            if [ "${name}" = "customcapes_patch_test" ]; then
+                extra_srcs+=("${root}/src/modules/player/customcapes.cpp"
+                             "${root}/src/modules/player/customcapes_ui.cpp")
+            else
+                extra_srcs+=("${root}/src/modules/visual/wings.cpp")
+            fi
             ;;
     esac
 
@@ -89,7 +108,7 @@ for source in "${root}"/tests/*_test.cpp; do
         continue
     fi
 
-    if ! "${cxx}" "${flags[@]}" ${extra[@]+"${extra[@]}"} "${source}" ${extra_src:+"${extra_src}"} -o "${outdir}/${name}"; then
+    if ! "${cxx}" "${flags[@]}" ${extra[@]+"${extra[@]}"} "${source}" "${extra_srcs[@]}" -o "${outdir}/${name}"; then
         echo "  FAIL to compile (see above)"
         status=1
         continue

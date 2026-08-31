@@ -1,69 +1,67 @@
 #pragma once
 
 #include "../Module.hpp"
+#include "customcapes_ui.hpp"
+#include <cstdint>
 #include <string>
 #include <vector>
 
-// Custom Capes - client-side cape swapper
+// Custom Capes
 //
-// Lets the user replace the local player's cape with their own PNG files.
-// Drop any number of PNG capes into <config dir>/capes (next to config.json;
-// the folder is created automatically on first init and a small default cape
-// plus a README are written when it is empty). The module then exposes a
-// "Cape" radio selector in the launcher menu; the selected cape is written
-// into SerializedSkinImpl::mCapeImage (an mce::Image) of the local player's
-// SerializedSkin so the engine renders it like a normal cape.
+// Lets the player wear any PNG as a classic cape. The module owns a "capes"
+// directory next to config.json (`<configDir>/capes`, created on first
+// launch together with a sample cape); every .png file in it shows up as an
+// option of the module's radio picker in the launcher mod menu.
 //
-// WHY mCapeId IS ALSO WRITTEN (the actual "cape never shows" gate):
+// Instead of the launcher's text radio picker (which could only show file
+// names like "cape13.png"), the module renders its own in-game picker:
+// CustomCapesUi draws the "None" option plus every cape as a thumbnail card
+// in a centered grid, with a bright gold border around the selected card.
+// Each thumbnail is the UV-cropped outer cape face (x=1..11, y=1..17 of the
+// 64x32 canvas), bilinearly upscaled and registered with the overlay's
+// texture loader (pl::modmenu::registerImage) — the overlay's Image draw
+// command stretches the whole bitmap, so cropping at texture-load time is
+// what keeps the preview from showing the complete atlas. The radio config
+// value ("m_cape") is still (de)serialized for persistence; the launcher
+// menu simply does not register it as a Radio entry anymore (see
+// src/launcher/ModuleMenu.cpp).
 //
-//  Modern game versions (MC 1.26) only render the classic cape when the
-//  skin's SerializedSkinImpl::mCapeId is non-empty. Writing pixels into
-//  mCapeImage alone is not enough — the renderer checks the id (and the
-//  engine caches cape textures keyed by it), so a bare image blob with an
-//  empty id is never drawn. This is the piece the working Custom Capes
-//  build (the one users had before the module was rewritten) carried: it
-//  wrote a synthetic short-string id ("bedrocktoolsplus-N") next to the
-//  image. The id is regenerated every time a cape is (re)loaded so the
-//  engine's texture cache is invalidated on selection changes and the new
-//  pixels show up without leaving the world.
+// The selected file is decoded with stb_image and resampled onto the
+// classic-cape layout of the 64x32 canvas Minecraft uses: the image is
+// painted onto the outer back face only (x=1..11, y=1..17), the inner
+// front face is filled with a flat lining color instead of a repeat of the
+// image, and the top/bottom/side edge strips are continued from the image's
+// edge colors so the 1-voxel-thick cape mesh does not look flat. The design
+// is also mapped onto the tapered Elytra UV area used by both wings. Exact
+// 64x32 inputs keep manually-authored Elytra pixels; if that area is empty,
+// the wing fallback is generated from the cape face. The result is written
+// into the local player's SerializedSkinImpl::mCapeImage each tick. Modern game versions
+// only render the classic cape when SerializedSkinImpl::mCapeId is
+// non-empty, so a synthetic short-string id is written alongside the image
+// and restored together with it. The blob handed to the
+// game is malloc'd and tagged with free() as its deleter, so whatever the
+// engine does with the image afterwards (move, destroy, skin rebuild) is
+// memory-safe. The original cape is restored when the module is disabled or
+// "None" is picked.
 //
-// Notes:
-//  * Classic (non-persona) skins only - persona skins render their cape from
-//    persona pieces, not from mCapeImage, and are left untouched.
-//  * The cape is client-side only: other players still see your real cape.
-//  * The original cape image AND the original 24-byte mCapeId std::string
-//    slot are backed up on first application and restored when the module
-//    is disabled (or on respawn the game rebuilds the skin anyway).
-//
-// WHY THE PATCH ALSO RUNS FROM ClientInstanceUpdateEvent (the "cape never
-// shows" bug and its fix):
-//
-//  The engine builds the cape mesh - and decides whether a cape exists at
-//  all - ONCE from the skin, when the player's renderer data is created at
-//  world entry (uploading the cape texture to its cache then). A patch that
-//  first lands in the per-tick path is one frame too late for that first
-//  build: a player who owned no cape at world entry never gets a cape mesh,
-//  so the pixels in mCapeImage are never drawn no matter how often we
-//  rewrite them.
-//
-//  ClientInstance::update runs once per frame and the level render follows
-//  it in the same frame, so ClientInstanceUpdateEvent fires BEFORE the
-//  render pass. The hook resolves the local player through the ClientInstance
-//  vtable slot (VTable::ClientInstanceGetLocalPlayer, the same dispatch the
-//  Shulker Preview module uses on device) and runs the same guarded apply.
-//  On the very first frame after the local player is created the cape is
-//  therefore already in SerializedSkinImpl when the renderer data is built -
-//  the engine creates a real cape mesh and uploads our texture through its
-//  own pipeline (vanilla cape, with the game's waving animation).
-//
-//  Consequence: the module must be enabled BEFORE entering the world (or the
-//  world must be re-entered after enabling it). Enabling it while already
-//  standing in a world patches the skin, but the mesh was already built, so
-//  the cape shows on the next world entry.
-//
-// The blob we install is owned by the engine once installed: the engine calls
-// the deleter slot (freeCapePixels) when it destroys the mce::Image, so we
-// never free installed pixels ourselves and never touch memory a second time.
+// Memory safety notes:
+//   * all patching happens inside the local-player tick, so the only skin
+//     object ever dereferenced is one freshly resolved from the live player
+//     pointer — a previous skin object can never dangle.
+//   * when the skin object is replaced by the game, the old object owns the
+//     blob we injected (freed by the engine through our deleter), so no
+//     cleanup is needed on our side.
+//   * the cape offsets are version-specific and derived from the verified
+//     skin offsets (see include/bedrocktools/sdk/offsets/Skin.hpp); a sanity
+//     check on the live skin image aborts the patch if the layout shifts.
+//   * persona skins go through the persona pipeline (no classic cape image),
+//     so the module leaves them untouched.
+//   * on Leave World the engine detaches the player from its level
+//     (Actor::mLevel goes null) before the player and skin are freed; the
+//     tick hook bails on a null player or a null level link and detaches
+//     its engine references WITHOUT touching the skin — the engine frees
+//     the injected blob through its deleter tag, so a teardown tick can
+//     never write freed memory or double-free the blob.
 class CustomCapesModule : public Module {
 public:
     CustomCapesModule();
@@ -72,100 +70,82 @@ public:
     void onInit() override;
     void onEnable() override;
     void onDisable() override;
+    void onFrame() override;
+    bool onTouchEvent(float x, float y, bool isDown) override;
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j) override;
 
-    // Called from the LocalPlayerTickEvent subscription (game thread).
+    // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
 
-    // Called from the ClientInstanceUpdateEvent subscription (game thread,
-    // once per frame BEFORE the level render pass). Resolves the local
-    // player through the ClientInstance vtable slot and runs the same
-    // guarded apply as the tick path. This is what makes the cape visible at
-    // all: it lands the patch in SerializedSkinImpl on the first frame after
-    // join, before the engine builds the cape mesh from the skin (see the
-    // "cape never shows" note in the class comment). No-op while disabled -
-    // the tick path owns restore/teardown.
-    void onClientInstanceUpdate(void* clientInstance);
+    // World-exit teardown: drops every engine reference (patched skin,
+    // injected blob, backup) without writing to the skin or freeing the
+    // blob — the engine owns both while it destroys the world. Idempotent;
+    // the loaded cape file stays so the cape re-applies on rejoin.
+    void onWorldExit();
 
-    // --- Host-testable helpers -------------------------------------------------
-
-    // Re-scans <config dir>/capes for *.png files and rebuilds the selectable
-    // cape list (sorted by file name). Creates the folder, writes the README
-    // and, when the folder holds no PNGs, a bundled default cape so the
-    // selector is never empty. Keeps the current selection when it still
-    // exists, otherwise falls back to the first cape.
-    void scanCapesDirectory();
-
-    // Applies the currently selected cape to the player's SerializedSkinImpl
-    // cape image. Returns true when the cape image was (re)installed, false
-    // when there was nothing to do (module disabled, nothing selected, no
-    // player/skin, already applied, or the PNG failed to decode).
-    bool applyCapeToPlayer(void* player);
-
-    // Restores the cape image that existed before the module first touched
-    // it (backup taken from the first skin we modified).
-    void restoreOriginalCape(void* player);
-
-    // Selectable cape ids (file names without the .png extension, sorted).
-    const std::vector<std::string>& capeNames() const { return m_capeNames; }
-    // Directory capes are loaded from (<config dir>/capes).
+    // Directory the module watches; exposed for the menu description.
     const std::string& capesDirectory() const { return m_capesDir; }
-    int selectedIndex() const { return m_selectedIndex; }
-    const std::string& selectedName() const { return m_selectedName; }
-
-    // Deleter installed into the mce::Blob deleter slot for pixels we hand to
-    // the engine (malloc'd buffers, released with free).
-    static void freeCapePixels(unsigned char* pixels);
 
 private:
-    // Parses a config value for the cape selector: a full radio value
-    // ("<index>,<id1>,<id2>,..."), a bare numeric index, or a cape id.
-    void parseCapeValue(const std::string& value);
+    // True when the player pointer and its level link are both usable.
+    // During Leave World the engine nulls Actor::mLevel before the player
+    // and skin objects are freed, so this is the safe early-out for the
+    // tick hook: a null level means the skin must not be touched.
+    static bool playerHasLiveLevel(const void* player);
 
-    // Decodes <id>.png from the capes folder into RGBA (malloc'd by stb,
-    // caller must stbi_image_free it). Returns false when the file is missing
-    // or not a valid image.
-    bool loadCapePixels(const std::string& id, unsigned char** outPixels,
-                        int* outWidth, int* outHeight);
+    void ensureCapesDirectory();
+    void writeSamplePng(const std::string& path) const;
+    void loadSelectedCape();
+    void releaseLoadedCape();
+    void selectCapeIndex(int index);
+    void rebuildPreviewGrid();
+    void refreshGridIfNeeded();
 
-    // Writes the cape image fields (format/width/height/depth/usage + blob)
-    // into SerializedSkinImpl::mCapeImage, freeing the image the engine
-    // currently owns. `pixels` becomes engine-owned (freed via freeCapePixels).
-    void installCapeImage(void* skinImpl, unsigned char* pixels,
-                          int width, int height);
+    bool applyCustomCape(void* skin);
+    void restoreOriginalCape(void* skin);
+    void clearPatchState();
 
-    // Copies the current cape image (header fields + pixel bytes) and the
-    // raw 24-byte mCapeId std::string slot so both can be restored on disable.
-    // Only takes the backup once.
-    void backupOriginalImage(void* skinImpl);
-
-    std::vector<std::string> m_capeNames;   // sorted ids, no extension
-    int m_selectedIndex = -1;               // -1 = none available
-    std::string m_selectedName;             // resolved id, empty = none
     std::string m_capesDir;
+    std::vector<std::string> m_files; // refreshed by saveConfig (menu build / save)
+    int m_selectedIndex = 0;          // 0 = None, i>=1 -> m_files[i-1]
 
-    void* m_lastPlayer = nullptr;           // last ticked player (for restore)
-    void* m_lastInstalledBlob = nullptr;    // blob currently in the game's cape image
-    bool m_needApply = true;                // forces a re-apply even when the blob matches
+    // In-game preview grid ("Cape" picker) — replaces the text radio list.
+    CustomCapesUi m_ui;
+    std::vector<std::string> m_gridFiles; // file list the grid was built from
+    bool m_showPicker = true;             // menu toggle; opens the grid
 
-    // Synthetic mCapeId (libc++ short string, <=22 chars) written next to the
-    // cape image. Regenerated on every load so the engine's cape-texture cache
-    // (keyed by mCapeId) is invalidated and a cape switch shows immediately.
-    std::uint32_t m_capeIdSerial = 0;
-    std::string m_activeCapeId = "bedrocktoolsplus";
+    // Decoded, already resampled cape pixels (module-owned), w*h = 64*32.
+    std::vector<std::uint8_t> m_pixels;
+    bool m_capeLoaded = false;
+    bool m_loadFailed = false;
+    int m_retryTicks = 0;
 
-    // Backup of the original cape image (taken from the first skin modified).
-    unsigned char* m_originalPixels = nullptr;
-    int m_originalWidth = 0;
-    int m_originalHeight = 0;
-    int m_originalSize = 0;
-    std::uint32_t m_originalFormat = 0;
-    std::uint32_t m_originalDepth = 0;
-    unsigned char m_originalUsage = 0;
-    bool m_hasOriginal = false;
-    // Raw 24-byte libc++ std::string slot as it was before we wrote the
-    // synthetic id (may be an empty SSO string or a heap pointer owned by the
-    // engine; only the bytes are stored, never dereferenced).
-    unsigned char m_originalCapeId[24] = {0};
+    // Synthetic cape id that changes on every switch so the engine's texture
+    // cache (keyed by mCapeId) is invalidated and the new pixels show up
+    // without leaving/rejoining the world.
+    uint32_t m_capeIdSerial = 0;
+    std::string m_activeCapeId = "bedrocktools";
+
+    // State of the in-game skin patch.
+    void* m_patchedSkin = nullptr;  // SerializedSkinImpl* currently patched
+    void* m_injectedBlob = nullptr; // pixel buffer currently handed to the game
+    bool m_needsApply = true;
+
+    // Backup of the cape image we overwrote so "None"/disable can restore it.
+    struct CapeBackup {
+        uint32_t format = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t depth = 0;
+        uint32_t usage = 0;
+        void* blob = nullptr;       // original pixel pointer (detached, kept alive)
+        void* deleter = nullptr;    // original mce::Blob deleter
+        size_t size = 0;
+        std::uint8_t capeIdBytes[24] = {};  // raw copy of the original mCapeId std::string
+    };
+    CapeBackup m_backup;
+    bool m_hasBackup = false;
 };
+
+extern CustomCapesModule* g_customCapes;

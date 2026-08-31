@@ -41,17 +41,15 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 
 ## Custom Capes
 
-The **Custom Capes** module lets you swap your character's cape for your own PNG files. Drop any number of PNG capes into the `capes` folder next to `config.json` (the folder is created automatically; on first run it is seeded with a small default cape and a `README.txt` that explains the folder). The module then shows a **Cape** selector in the launcher menu listing every PNG by file name, and a **Refresh Capes** button that re-scans the folder.
+The **Custom Capes** module lets you wear any PNG as a classic cape.
 
-How it works:
+1. Put cape images (`.png`, ideally 64x32 — any other size is scaled automatically) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a sample cape).
+2. (Re)launch the game, open the BedrockTools mod menu and enable **Custom Capes**.
+3. The **Cape picker** opens as an in-game grid of image previews (one thumbnail per cape PNG, plus a `None` card for your vanilla cape). Tap a card to wear that cape — it updates in-game immediately; the active cape is the one with the bright gold border. Tap the **X** to close the picker, and use the module's **Show Cape Picker** toggle to reopen it. Each thumbnail is the UV-cropped visible cape face (not the whole 64x32 texture map), so you see exactly what will be worn.
 
-- While enabled, the selected PNG is decoded and written into `SerializedSkinImpl::mCapeImage` of the local player's skin, so the engine renders it exactly like a vanilla cape (RGBA8Unorm, sRGB, depth 1 — the same image description real capes carry).
-- The module also writes a synthetic non-empty `SerializedSkinImpl::mCapeId` (`bedrocktoolsplus-N`) next to the image. Modern game versions only render the classic cape when that id is non-empty, and the engine caches cape textures keyed by it — this is the piece a bare `mCapeImage` patch was missing. The id is regenerated on every cape (re)load so switching files shows immediately without rejoining; the original id bytes are restored on disable.
-- The engine bakes your cape mesh — and decides whether you have a cape at all — from your skin **once**, when your renderer data is created at world entry. Patching the skin after that moment never rebuilds the mesh, which is why a cape patched only on the per-tick path would never show. The module therefore also runs the patch from `ClientInstanceUpdateEvent`, which fires once per frame *before* the level render pass: on the first frame after you join, the cape is already in the skin when the mesh is built, so the engine creates a real cape mesh with your PNG (vanilla cape, waving included).
-- Because of the above, **enable the module before entering the world** (from the launcher menu) — or re-enter the world after enabling it mid-game — for the cape to appear.
-- The original cape image is backed up on first application and restored when the module is disabled; on respawn the game rebuilds the skin and the module simply re-applies the cape.
-- Capes are **client-side only** (other players still see your original cape) and require a **classic (non-persona) skin** — persona skins render their cape from persona pieces rather than `mCapeImage`.
-- 64x32 or 128x64 PNGs with full alpha work best; the pixel buffer handed to the engine is owned by the game once installed (freed through the image's deleter slot), so nothing is leaked or double-freed across skin rebuilds.
+Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
+
+The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
 
 ## System Requirements
 
