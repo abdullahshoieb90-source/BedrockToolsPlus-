@@ -17,12 +17,7 @@
 // painted onto the outer back face only (x=1..11, y=1..17), the inner
 // front face is filled with a flat lining color instead of a repeat of the
 // image, and the top/bottom/side edge strips are continued from the image's
-// edge colors so the 1-voxel-thick cape mesh does not look flat. Any source
-// resolution is accepted — 22x23 and every other non-standard size included;
-// the module's "Cape Fit" setting decides how the artwork is mapped: Fit
-// (default) uses the whole image with its aspect ratio intact and continues
-// the image's own edge colors into the leftover bands, Fill stretches the
-// whole image over the face, and Crop center-crops it. The design
+// edge colors so the 1-voxel-thick cape mesh does not look flat. The design
 // is also mapped onto the tapered Elytra UV area used by both wings. Exact
 // 64x32 inputs keep manually-authored Elytra pixels; if that area is empty,
 // the wing fallback is generated from the cape face. The result is written
@@ -95,11 +90,6 @@ private:
     std::string m_capesDir;
     std::vector<std::string> m_files; // refreshed by saveConfig (menu build / save)
     int m_selectedIndex = 0;          // 0 = None, i>=1 -> m_files[i-1]
-
-    // How an image that is not 64x32 is mapped onto the cape face: index into
-    // customcapes::kCapeFitLabels (0 = Fit, 1 = Fill, 2 = Crop). Exposed to
-    // the mod menu as the "Cape Fit" radio.
-    int m_capeFit = 0;
 
     // Decoded, already resampled cape pixels (module-owned), w*h = 64*32.
     std::vector<std::uint8_t> m_pixels;

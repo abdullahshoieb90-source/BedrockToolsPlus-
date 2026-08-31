@@ -81,9 +81,7 @@ void* resolvePlayerSkin(void* player) {
 } // namespace
 
 CustomCapesModule::CustomCapesModule()
-    : Module("Custom Capes",
-             "Wear any PNG from the BedrockTools capes folder as your cape (any size: 64x32, "
-             "22x23, HD ...). Local only.") {
+    : Module("Custom Capes", "Wear any PNG from the BedrockTools capes folder as your cape (local only).") {
     g_customCapes = this;
 }
 
@@ -147,7 +145,6 @@ void CustomCapesModule::loadConfig(const nlohmann::json& j) {
 
     if (m_capesDir.empty()) m_capesDir = capeDirectoryForConfig();
     const int previousIndex = m_selectedIndex;
-    const int previousFit = m_capeFit;
 
     if (j.contains("m_cape")) {
         int parsedIndex = m_selectedIndex;
@@ -161,28 +158,10 @@ void CustomCapesModule::loadConfig(const nlohmann::json& j) {
         m_selectedIndex = customcapes::resolveSelectionIndex(parsedIndex, parsedName, m_files);
     }
 
-    if (j.contains("m_capeFit")) {
-        // The launcher reports a radio either as the bare index or as the
-        // full "<index>,<label>,..." value, so both are accepted; a bare
-        // label ("Fill") is matched by name as a last resort.
-        int parsedFit = m_capeFit;
-        std::string parsedFitName;
-        if (j["m_capeFit"].is_string()) {
-            customcapes::parseRadioValue(j["m_capeFit"].get<std::string>(), parsedFit,
-                                         parsedFitName);
-            const int byName = customcapes::capeFitIndexFromLabel(parsedFitName);
-            if (byName >= 0) parsedFit = byName;
-        } else if (j["m_capeFit"].is_number_integer()) {
-            parsedFit = j["m_capeFit"].get<int>();
-        }
-        m_capeFit = customcapes::clampCapeFitIndex(parsedFit);
-    }
-
-    if (m_selectedIndex != previousIndex || m_capeFit != previousFit ||
-        (m_selectedIndex > 0 && !m_capeLoaded)) {
+    if (m_selectedIndex != previousIndex || (m_selectedIndex > 0 && !m_capeLoaded)) {
         releaseLoadedCape();
         if (m_selectedIndex > 0) loadSelectedCape();
-        m_needsApply = true; // the fit mode changed the pixels, so re-patch
+        m_needsApply = true;
     }
 }
 
@@ -192,9 +171,6 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     m_files = customcapes::scanCapeFiles(m_capesDir);
     if (m_selectedIndex > static_cast<int>(m_files.size())) m_selectedIndex = 0;
     j["m_cape"] = customcapes::makeRadioValue(m_selectedIndex, m_files);
-    m_capeFit = customcapes::clampCapeFitIndex(m_capeFit);
-    j["m_capeFit"] = customcapes::makeLabelRadioValue(m_capeFit,
-                                                      customcapes::capeFitLabelList());
 }
 
 void CustomCapesModule::releaseLoadedCape() {
@@ -222,8 +198,7 @@ void CustomCapesModule::loadSelectedCape() {
     }
 
     m_pixels = customcapes::resampleToCape(decoded, static_cast<std::uint32_t>(width),
-                                           static_cast<std::uint32_t>(height),
-                                           customcapes::capeFitModeFromIndex(m_capeFit));
+                                           static_cast<std::uint32_t>(height));
     stbi_image_free(decoded);
     m_capeLoaded = true;
 
