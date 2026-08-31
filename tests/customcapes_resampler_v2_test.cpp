@@ -1,9 +1,12 @@
-// Unit tests for Custom Capes Resampler v2
+// Unit tests for the Custom Capes resampler
 // Requirements:
 //  • Dynamic Resolution Detection: W×H dynamically
 //  • Bilinear Resampling: any weird size -> 64×32 UV Map
-//  • Smart Crop & Aspect Ratio: preserve aspect, avoid stretch, auto-fill edges
+//  • Aspect handling: preserve aspect, avoid stretch, auto-fill edges
 //  • Must support: 22×23, 88×92, 176×184, 704×736, 736×797 and any custom size
+//  • Nothing of the artwork may silently disappear: the default (Fit) mode
+//    maps the WHOLE image onto the cape face, so the leftmost/rightmost and
+//    top/bottom pixels of a 22×23 source all reach the 64×32 canvas.
 //
 // Build: g++ -std=c++20 -I src tests/customcapes_resampler_v2_test.cpp -o /tmp/resampler_v2_test && /tmp/resampler_v2_test
 
@@ -83,7 +86,7 @@ int main(){
         check(smooth, "bilinear smooth vertical gradient for 22x23");
     }
 
-    std::printf("\n=== Resampler v2: Smart Crop & Aspect Ratio ===\n");
+    std::printf("\n=== Resampler: Aspect Handling (explicit Crop mode) ===\n");
     {
         // Source aspect 2.0 (wider) vs target 0.625, should crop width centrally
         // Create image with red left edge, blue right edge, green center
@@ -97,7 +100,7 @@ int main(){
             else { src[i]=0; src[i+1]=255; src[i+2]=0; } // green center
             src[i+3]=255;
         }
-        auto out = cc::resampleToCape(src.data(), W, H);
+        auto out = cc::resampleToCape(src.data(), W, H, cc::CapeFitMode::Crop);
         // Back face should be mostly green (center cropped), not red/blue stretched
         int greenCount=0, redCount=0;
         for(uint32_t y=0;y<cc::kCapeBackHeight;++y) for(uint32_t x=0;x<cc::kCapeBackWidth;++x){
@@ -105,7 +108,7 @@ int main(){
             if(out[i+1]==255 && out[i]==0 && out[i+2]==0) greenCount++;
             if(out[i]==255 && out[i+1]==0) redCount++;
         }
-        check(greenCount> redCount, "smart crop preserves center (green) for wide source, avoids stretch");
+        check(greenCount> redCount, "crop mode preserves center (green) for wide source, avoids stretch");
     }
     {
         // Tall source: aspect 0.2 (taller than target)
@@ -118,13 +121,13 @@ int main(){
             else { src[i]=0; src[i+1]=255; src[i+2]=0; }
             src[i+3]=255;
         }
-        auto out = cc::resampleToCape(src.data(), W, H);
+        auto out = cc::resampleToCape(src.data(), W, H, cc::CapeFitMode::Crop);
         int greenCount=0;
         for(uint32_t y=0;y<cc::kCapeBackHeight;++y) for(uint32_t x=0;x<cc::kCapeBackWidth;++x){
             size_t i=(static_cast<size_t>(cc::kCapeBackY+y)*cc::kCapeWidth+cc::kCapeBackX+x)*4u;
             if(out[i+1]==255) greenCount++;
         }
-        check(greenCount>0, "smart crop preserves center for tall source");
+        check(greenCount>0, "crop mode preserves center for tall source");
     }
 
     std::printf("\n=== Resampler v2: Required Custom Sizes ===\n");
@@ -186,6 +189,138 @@ int main(){
             sideOk &= samePixel(out, cc::kCapeSideLeftX, cc::kCapeSideY+y, cc::kCapeBackX+cc::kCapeBackWidth-1, cc::kCapeBackY+y);
         }
         check(topOk && bottomOk && sideOk, "thickness strips auto-filled from image edge colors");
+    }
+
+    std::printf("\n=== Resampler: Fit keeps ALL of a 22x23 cape (regression) ===\n");
+    {
+        // Regression guard: the resampler used to center-crop every source
+        // that was not exactly 64x32, so a 22x23 cape lost 35% of its pixels
+        // (both side edges) before it ever reached the cape face. The artwork
+        // below carries a marker band on every edge, so a lost edge shows up
+        // directly in the 64x32 canvas.
+        const uint32_t W=22, H=23;
+        std::vector<uint8_t> src(static_cast<size_t>(W)*H*4u);
+        for (uint32_t y=0;y<H;++y) {
+            for (uint32_t x=0;x<W;++x) {
+                uint8_t* p = &src[(static_cast<size_t>(y)*W+x)*4u];
+                if (x < 3)            { p[0]=255; p[1]=0;   p[2]=255; } // magenta left
+                else if (x >= W-3)    { p[0]=0;   p[1]=255; p[2]=255; } // cyan right
+                else if (y == 0)      { p[0]=255; p[1]=255; p[2]=0;   } // yellow top
+                else if (y == H-1)    { p[0]=255; p[1]=128; p[2]=0;   } // orange bottom
+                else                  { p[0]=0;   p[1]=180; p[2]=0;   } // green body
+                p[3]=255;
+            }
+        }
+
+        auto out = cc::resampleToCape(src.data(), W, H); // default mode == Fit
+        auto at = [&out](uint32_t x, uint32_t y) -> const uint8_t* {
+            return &out[(static_cast<size_t>(y)*cc::kCapeWidth + x)*4u];
+        };
+        auto near = [](const uint8_t* p, int r, int g, int b) {
+            return std::abs((int)p[0]-r) <= 24 && std::abs((int)p[1]-g) <= 24 &&
+                   std::abs((int)p[2]-b) <= 24;
+        };
+        const uint32_t midY = cc::kCapeBackY + cc::kCapeBackHeight/2;
+
+        check(near(at(cc::kCapeBackX, midY), 255,0,255),
+              "22x23 Fit: LEFT edge band reaches the cape face");
+        check(near(at(cc::kCapeBackX + cc::kCapeBackWidth - 1, midY), 0,255,255),
+              "22x23 Fit: RIGHT edge band reaches the cape face");
+
+        // Letterbox bands continue the image's own top/bottom edges (both of
+        // which are pure red/green here), never transparent or black bars.
+        check(at(cc::kCapeBackX + 4, cc::kCapeBackY)[2] == 0 &&
+                  at(cc::kCapeBackX + 4, cc::kCapeBackY)[3] == 255,
+              "22x23 Fit: top band continues the image's top edge (opaque, no blue)");
+        check(at(cc::kCapeBackX + 4, cc::kCapeBackY + cc::kCapeBackHeight - 1)[2] == 0 &&
+                  at(cc::kCapeBackX + 4, cc::kCapeBackY + cc::kCapeBackHeight - 1)[3] == 255,
+              "22x23 Fit: bottom band continues the image's bottom edge");
+        check(samePixel(out, cc::kCapeBackX + 4, cc::kCapeBackY,
+                        cc::kCapeBackX + 4, cc::kCapeBackY + 1),
+              "22x23 Fit: letterbox band repeats the edge row (no gradient seam)");
+
+        bool opaque = true;
+        for (uint32_t y=0;y<cc::kCapeBackHeight;++y)
+            for (uint32_t x=0;x<cc::kCapeBackWidth;++x)
+                opaque &= at(cc::kCapeBackX + x, cc::kCapeBackY + y)[3] == 255;
+        check(opaque, "22x23 Fit: the whole cape face is covered (no transparent gaps)");
+
+        // Aspect is preserved: a 22x23 source (nearly square) must not be
+        // stretched over the 10x16 face, so the design keeps a squarer shape
+        // than Fill would give it.
+        auto fill = cc::resampleToCape(src.data(), W, H, cc::CapeFitMode::Fill);
+        check(near(&fill[(static_cast<size_t>(midY)*cc::kCapeWidth + cc::kCapeBackX)*4u], 255,0,255),
+              "22x23 Fill: LEFT edge band reaches the cape face");
+        {
+            // Fill stretches the image over the whole face: the source's top
+            // edge row (yellow) colours the FIRST face row, and there is no
+            // repeated letterbox band.
+            const uint8_t* topRow =
+                &fill[(static_cast<size_t>(cc::kCapeBackY)*cc::kCapeWidth + cc::kCapeBackX + 4)*4u];
+            check(topRow[2] == 0 && topRow[0] >= 150 && topRow[3] == 255,
+                  "22x23 Fill: the image's top edge row is stretched onto the first face row");
+            check(!samePixel(fill, cc::kCapeBackX + 4, cc::kCapeBackY,
+                             cc::kCapeBackX + 4, cc::kCapeBackY + 1),
+                  "22x23 Fill: no letterbox band - the design covers the full face height");
+        }
+
+        // Crop is the mode that legitimately discards the sides — asserted so
+        // the difference between the modes stays visible.
+        auto cropped = cc::resampleToCape(src.data(), W, H, cc::CapeFitMode::Crop);
+        auto cat = [&cropped](uint32_t x, uint32_t y) -> const uint8_t* {
+            return &cropped[(static_cast<size_t>(y)*cc::kCapeWidth + x)*4u];
+        };
+        check(!near(cat(cc::kCapeBackX, midY), 255,0,255),
+              "22x23 Crop: the side bands are cropped away (old behaviour, opt-in only)");
+    }
+
+    std::printf("\n=== Resampler: HD canvas 128x64 is scaled down ===\n");
+    {
+        // A 2:1 source at canvas scale is a scaled-up 64x32 cape layout, not
+        // a logo: it must cover the WHOLE 64x32 canvas, not just the back
+        // face (and definitely not its center crop).
+        const uint32_t W=128, H=64;
+        std::vector<uint8_t> src(static_cast<size_t>(W)*H*4u);
+        for (uint32_t y=0;y<H;++y) {
+            for (uint32_t x=0;x<W;++x) {
+                uint8_t* p = &src[(static_cast<size_t>(y)*W+x)*4u];
+                if (x < W/2) { p[0]=200; p[1]=20;  p[2]=20;  } // left half red
+                else         { p[0]=20;  p[1]=20;  p[2]=200; } // right half blue
+                p[3]=255;
+            }
+        }
+        auto out = cc::resampleToCape(src.data(), W, H);
+        auto at = [&out](uint32_t x, uint32_t y) -> const uint8_t* {
+            return &out[(static_cast<size_t>(y)*cc::kCapeWidth + x)*4u];
+        };
+        check(at(0,0)[0] > 150 && at(0,0)[2] < 80, "128x64: canvas top-left is the source's left half");
+        check(at(cc::kCapeWidth-1, cc::kCapeHeight-1)[2] > 150 &&
+                  at(cc::kCapeWidth-1, cc::kCapeHeight-1)[0] < 80,
+              "128x64: canvas bottom-right is the source's right half");
+        check(at(cc::kCapeBackX + 4, cc::kCapeBackY + 8)[0] > 150,
+              "128x64: the cape back face samples the source's left half (layout kept)");
+        check(at(cc::kElytraBackX + 4, cc::kElytraSideY + 8)[2] > 150,
+              "128x64: the Elytra area samples the source's right half");
+        check(cc::hasElytraArtwork(out), "128x64: authored Elytra pixels are preserved");
+    }
+
+    std::printf("\n=== Resampler: fit mode selection helpers ===\n");
+    check(cc::capeFitModeFromIndex(0) == cc::CapeFitMode::Fit,  "index 0 -> Fit (default)");
+    check(cc::capeFitModeFromIndex(1) == cc::CapeFitMode::Fill, "index 1 -> Fill");
+    check(cc::capeFitModeFromIndex(2) == cc::CapeFitMode::Crop, "index 2 -> Crop");
+    check(cc::capeFitModeFromIndex(42) == cc::CapeFitMode::Fit, "unknown index clamps to Fit");
+    check(cc::capeFitModeFromIndex(-3) == cc::CapeFitMode::Fit, "negative index clamps to Fit");
+    check(cc::capeFitIndexFromLabel("fill") == 1, "label lookup is case-insensitive");
+    check(cc::capeFitIndexFromLabel("Crop") == 2, "label lookup finds Crop");
+    check(cc::capeFitIndexFromLabel("nope") == -1, "unknown label is rejected");
+    check(cc::makeLabelRadioValue(1, cc::capeFitLabelList()) == "1,Fit,Fill,Crop",
+          "radio value for the menu -> \"1,Fit,Fill,Crop\"");
+    {
+        int idx = -1; std::string nm;
+        cc::parseRadioValue("2,Fit,Fill,Crop", idx, nm);
+        check(idx == 2 && nm == "Crop", "radio value round-trips through parseRadioValue");
+        cc::parseRadioValue("1", idx, nm);
+        check(idx == 1 && nm.empty(), "bare index from the menu parses");
     }
 
     std::printf("\n%s\n", g_fail==0?"all resampler v2 tests passed":"SOME TESTS FAILED");

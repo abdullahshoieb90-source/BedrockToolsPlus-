@@ -176,6 +176,25 @@ inline std::string makeRadioValue(int selectedIndex, const std::vector<std::stri
     return value;
 }
 
+// Same radio format for a plain label list, without the implicit "None"
+// entry that makeRadioValue() prepends for file pickers. Used by the Cape
+// Fit mode, whose options are "Fit,Fill,Crop" and whose index 0 is a real
+// choice rather than "nothing selected".
+inline std::string makeLabelRadioValue(int selectedIndex,
+                                       const std::vector<std::string>& labels) {
+    const int optionCount = static_cast<int>(labels.size());
+    if (optionCount == 0) return "0";
+    if (selectedIndex < 0) selectedIndex = 0;
+    if (selectedIndex >= optionCount) selectedIndex = optionCount - 1;
+
+    std::string value = std::to_string(selectedIndex);
+    for (const std::string& label : labels) {
+        value += ',';
+        value += label;
+    }
+    return value;
+}
+
 // Parses a radio value coming from the config file or from the launcher
 // (which reports just the index when the selection changes). Returns the
 // selected index and, when the option list is embedded in the value, the
@@ -311,33 +330,143 @@ inline void paintElytraFromCape(std::vector<std::uint8_t>& canvas) {
 }
 
 // ---------------------------------------------------------------
-// Resampler v2 — Dynamic Resolution + Bilinear + Smart Crop
+// Resampler — Dynamic Resolution + Bilinear + Fit/Fill/Crop
 // ---------------------------------------------------------------
-// Requirements from the task:
-//  • Dynamic Resolution Detection: read W×H dynamically
-//  • Bilinear Resampling: any weird/custom size -> 64×32 UV Map
-//  • Smart Crop & Aspect Ratio: preserve aspect, avoid stretch,
-//    auto-fill edges/thickness from image edge colors.
+// Any source resolution is accepted (22×23, 88×92, 176×184, 704×736,
+// 736×797, 128×64, ...); W×H are read from the decoded image, never assumed.
 //
-// Supported custom sizes (and any other):
-//   22×23, 88×92, 176×184, 704×736, 736×797
+// How the artwork is mapped onto the 10×16 cape face is selectable:
 //
-// Pipeline:
-//   1) Detect source W,H dynamically (parameters width,height)
-//   2) Compute aspect-preserving crop rectangle (cover mode):
-//        targetAspect = 10/16 = 0.625 (cape back face)
-//        if sourceAspect > targetAspect => crop width, keep full height
-//        else => crop height, keep full width
-//      The crop is centered.
-//   3) Bilinear resample the cropped region onto the outer BACK face
-//      (1,1) 10×16 of the 64×32 canvas.
-//   4) Inner FRONT face (12,1) gets a flat lining color (half-bright avg)
-//   5) Thickness strips (top/bottom/side) copy adjacent edge pixels
-//   6) Elytra UV (22,0) generated from the same artwork with tapered mask.
+//   Fit  (default) — the WHOLE image is used, aspect preserved. It is scaled
+//         into the largest centred rectangle that still keeps the source
+//         aspect ratio, and the remaining bands are filled by continuing the
+//         image's own edge colors (no black bars, no transparent gaps).
+//         A 22×23 cape therefore lands as a 10×10 design centred on the
+//         face with three rows of its own edge color above and below —
+//         nothing is cut off and nothing is stretched.
+//   Fill — the WHOLE image is stretched over the entire 10×16 face. No
+//         cropping either, but the aspect ratio is not preserved.
+//   Crop — aspect preserved, centered "cover" crop. No distortion, but the
+//         part of the image that does not fit the 10:16 face is discarded
+//         (35% of the pixels of a 22×23 cape, 69% of a 128×64 one).
 //
-// An exact 64×32 input keeps its manually-authored Elytra pixels.
-// If that UV area is fully transparent, the fallback is generated.
+// Two special cases are handled before any of that:
+//   * an exact 64×32 input is copied pixel-for-pixel (a hand-authored cape
+//     canvas, including its own Elytra pixels);
+//   * an HD cape canvas (2:1 aspect, at least 128 px wide: 128×64, 256×128,
+//     ...) is a scaled-up 64×32 layout rather than a logo, so it is
+//     box-downscaled onto the whole 64×32 canvas instead of being painted
+//     onto the back face only — otherwise its layout would be destroyed.
+//
+// Pipeline for the generic case:
+//   1) Detect source W,H dynamically (parameters width, height).
+//   2) Pick the source rect and the destination rect on the back face
+//      according to the fit mode.
+//   3) Bilinear-resample the source rect into the destination rect.
+//   4) Letterbox bands (Fit) continue the outermost sampled row/column.
+//   5) Inner FRONT face (12,1) gets a flat lining color (half-bright avg).
+//   6) Thickness strips (top/bottom/side) copy adjacent edge pixels.
+//   7) Elytra UV (22,0) generated from the same artwork with tapered mask.
 // ---------------------------------------------------------------
+
+// How an image of arbitrary resolution is placed on the cape face. The
+// numeric values are the menu's radio indices (see kCapeFitLabels).
+enum class CapeFitMode : int {
+    Fit = 0,
+    Fill = 1,
+    Crop = 2,
+};
+
+inline constexpr const char* kCapeFitLabels[] = {"Fit", "Fill", "Crop"};
+inline constexpr int kCapeFitModeCount = 3;
+
+inline int clampCapeFitIndex(int index) {
+    return (index < 0 || index >= kCapeFitModeCount) ? 0 : index;
+}
+
+inline CapeFitMode capeFitModeFromIndex(int index) {
+    switch (clampCapeFitIndex(index)) {
+        case 1:  return CapeFitMode::Fill;
+        case 2:  return CapeFitMode::Crop;
+        default: return CapeFitMode::Fit;
+    }
+}
+
+// Case-insensitive label lookup, so a menu that reports the option's name
+// instead of its index still selects the right mode. Returns -1 when the
+// label is unknown.
+inline int capeFitIndexFromLabel(const std::string& label) {
+    for (int i = 0; i < kCapeFitModeCount; ++i) {
+        const std::string candidate = kCapeFitLabels[i];
+        if (label.size() != candidate.size()) continue;
+        bool same = true;
+        for (std::size_t c = 0; c < label.size(); ++c) {
+            if (std::tolower(static_cast<unsigned char>(label[c])) !=
+                std::tolower(static_cast<unsigned char>(candidate[c]))) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return i;
+    }
+    return -1;
+}
+
+// The radio option list shown in the mod menu ("Fit,Fill,Crop").
+inline std::vector<std::string> capeFitLabelList() {
+    return std::vector<std::string>(kCapeFitLabels, kCapeFitLabels + kCapeFitModeCount);
+}
+
+// True for a scaled-up 64×32 cape canvas (OptiFine-style HD capes): the
+// canvas aspect ratio at a size where it can only be a canvas, not a logo.
+inline bool isHdCapeCanvas(std::uint32_t width, std::uint32_t height) {
+    return height != 0 && width == 2u * height && width >= 2u * kCapeWidth;
+}
+
+// Averages the source block of every destination texel (box filter), which
+// is what an HD canvas needs to be scaled down without aliasing away thin
+// features. RGBA channels are averaged independently.
+inline void boxDownscaleToCanvas(const std::uint8_t* rgba, std::uint32_t width,
+                                 std::uint32_t height, std::vector<std::uint8_t>& out) {
+    const std::size_t expected = static_cast<std::size_t>(kCapeWidth) * kCapeHeight * 4u;
+    if (!rgba || width == 0 || height == 0 || out.size() < expected) return;
+
+    for (std::uint32_t y = 0; y < kCapeHeight; ++y) {
+        const std::uint32_t y0 = static_cast<std::uint32_t>(
+            (static_cast<std::uint64_t>(y) * height) / kCapeHeight);
+        std::uint32_t y1 = static_cast<std::uint32_t>(
+            (static_cast<std::uint64_t>(y + 1) * height) / kCapeHeight);
+        if (y1 <= y0) y1 = y0 + 1;
+        if (y1 > height) y1 = height;
+
+        for (std::uint32_t x = 0; x < kCapeWidth; ++x) {
+            const std::uint32_t x0 = static_cast<std::uint32_t>(
+                (static_cast<std::uint64_t>(x) * width) / kCapeWidth);
+            std::uint32_t x1 = static_cast<std::uint32_t>(
+                (static_cast<std::uint64_t>(x + 1) * width) / kCapeWidth);
+            if (x1 <= x0) x1 = x0 + 1;
+            if (x1 > width) x1 = width;
+
+            std::uint32_t sum[4] = {0, 0, 0, 0};
+            std::uint32_t count = 0;
+            for (std::uint32_t sy = y0; sy < y1; ++sy) {
+                for (std::uint32_t sx = x0; sx < x1; ++sx) {
+                    const std::uint8_t* s = rgba + (static_cast<std::size_t>(sy) * width + sx) * 4u;
+                    for (int c = 0; c < 4; ++c) sum[c] += s[c];
+                    ++count;
+                }
+            }
+            std::uint8_t* d = &out[(static_cast<std::size_t>(y) * kCapeWidth + x) * 4u];
+            if (count == 0) {
+                std::memset(d, 0, 4);
+                continue;
+            }
+            for (int c = 0; c < 4; ++c) {
+                d[c] = static_cast<std::uint8_t>((sum[c] + count / 2u) / count);
+            }
+        }
+    }
+}
 
 inline void bilinearSample(const std::uint8_t* rgba, std::uint32_t W, std::uint32_t H,
                            double fx, double fy, std::uint8_t out[4]) {
@@ -378,7 +507,8 @@ inline void bilinearSample(const std::uint8_t* rgba, std::uint32_t W, std::uint3
 }
 
 inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::uint32_t width,
-                                                std::uint32_t height) {
+                                                std::uint32_t height,
+                                                CapeFitMode mode = CapeFitMode::Fit) {
     std::vector<std::uint8_t> out;
     out.resize(static_cast<std::size_t>(kCapeWidth) * kCapeHeight * 4u, 0);
     if (!rgba || width == 0 || height == 0) return out;
@@ -390,59 +520,100 @@ inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::u
         return out;
     }
 
+    // HD cape canvas (128×64, 256×128, ...): a scaled-up 64×32 layout, so it
+    // is scaled down onto the whole canvas instead of being treated as a
+    // logo that only covers the back face.
+    if (isHdCapeCanvas(width, height)) {
+        boxDownscaleToCanvas(rgba, width, height, out);
+        if (!hasElytraArtwork(out)) paintElytraFromCape(out);
+        return out;
+    }
+
     const auto px = [](std::vector<std::uint8_t>& canvas, std::uint32_t x,
                        std::uint32_t y) -> std::uint8_t* {
         return &canvas[(static_cast<std::size_t>(y) * kCapeWidth + x) * 4u];
     };
 
-    // --- 1) Dynamic Resolution Detection & Smart Crop ---
-    // Target aspect is the cape back face (10×16)
-    const double targetAspect = static_cast<double>(kCapeBackWidth) /
-                                static_cast<double>(kCapeBackHeight); // 0.625
+    // --- 1) Dynamic Resolution Detection ---------------------------------
     const double srcW = static_cast<double>(width);
     const double srcH = static_cast<double>(height);
-    const double srcAspect = srcW / srcH;
 
-    double cropW, cropH, cropX, cropY;
-    if (srcAspect > targetAspect) {
-        // Source wider than target -> crop width, keep full height
-        cropH = srcH;
-        cropW = srcH * targetAspect;
-        cropX = (srcW - cropW) * 0.5;
-        cropY = 0.0;
-    } else {
-        // Source taller than target -> crop height, keep full width
-        cropW = srcW;
-        cropH = srcW / targetAspect;
-        cropX = 0.0;
-        cropY = (srcH - cropH) * 0.5;
+    // Source rectangle that is sampled, and the destination rectangle on the
+    // back face it is drawn into. Defaults describe Fill: the whole image
+    // onto the whole face.
+    double cropX = 0.0, cropY = 0.0, cropW = srcW, cropH = srcH;
+    std::uint32_t dstX = 0, dstY = 0;
+    std::uint32_t dstW = kCapeBackWidth, dstH = kCapeBackHeight;
+
+    const auto roundClamped = [](double value, std::uint32_t minV,
+                                 std::uint32_t maxV) -> std::uint32_t {
+        const double rounded = std::floor(value + 0.5);
+        if (!(rounded > 0.0)) return minV;
+        if (rounded < static_cast<double>(minV)) return minV;
+        if (rounded > static_cast<double>(maxV)) return maxV;
+        return static_cast<std::uint32_t>(rounded);
+    };
+
+    if (mode == CapeFitMode::Crop) {
+        // --- Smart Crop (cover): aspect preserved, centered ---------------
+        // Target aspect is the cape back face (10×16)
+        const double targetAspect = static_cast<double>(kCapeBackWidth) /
+                                    static_cast<double>(kCapeBackHeight); // 0.625
+        const double srcAspect = srcW / srcH;
+        if (srcAspect > targetAspect) {
+            // Source wider than target -> crop width, keep full height
+            cropH = srcH;
+            cropW = srcH * targetAspect;
+            cropX = (srcW - cropW) * 0.5;
+            cropY = 0.0;
+        } else {
+            // Source taller than target -> crop height, keep full width
+            cropW = srcW;
+            cropH = srcW / targetAspect;
+            cropX = 0.0;
+            cropY = (srcH - cropH) * 0.5;
+        }
+        // Guard against degenerate crops (tiny images)
+        if (cropW < 1.0) {
+            cropW = srcW;
+            cropX = 0.0;
+        }
+        if (cropH < 1.0) {
+            cropH = srcH;
+            cropY = 0.0;
+        }
+    } else if (mode == CapeFitMode::Fit) {
+        // --- Fit (contain): whole image, aspect preserved, centered -------
+        // Largest integer rectangle on the 10×16 face with the source aspect.
+        if (srcW * static_cast<double>(kCapeBackHeight) >=
+            srcH * static_cast<double>(kCapeBackWidth)) {
+            dstW = kCapeBackWidth;
+            dstH = roundClamped(srcH * static_cast<double>(kCapeBackWidth) / srcW, 1u,
+                                kCapeBackHeight);
+        } else {
+            dstH = kCapeBackHeight;
+            dstW = roundClamped(srcW * static_cast<double>(kCapeBackHeight) / srcH, 1u,
+                                kCapeBackWidth);
+        }
+        dstX = (kCapeBackWidth - dstW) / 2u;
+        dstY = (kCapeBackHeight - dstH) / 2u;
     }
 
-    // Guard against degenerate crops (tiny images)
-    if (cropW < 1.0) {
-        cropW = srcW;
-        cropX = 0.0;
-    }
-    if (cropH < 1.0) {
-        cropH = srcH;
-        cropY = 0.0;
-    }
-
-    // --- 2) Bilinear Resampling onto outer back face (1,1) 10×16 ---
-    for (std::uint32_t y = 0; y < kCapeBackHeight; ++y) {
-        for (std::uint32_t x = 0; x < kCapeBackWidth; ++x) {
+    // --- 2) Bilinear Resampling into the destination rect -----------------
+    for (std::uint32_t y = 0; y < dstH; ++y) {
+        for (std::uint32_t x = 0; x < dstW; ++x) {
             // Map destination pixel center to source crop space
             // Standard half-pixel center mapping: (dx+0.5)*crop / dst -0.5
             const double srcXf = cropX + (static_cast<double>(x) + 0.5) * cropW /
-                                              static_cast<double>(kCapeBackWidth) -
+                                              static_cast<double>(dstW) -
                                           0.5;
             const double srcYf = cropY + (static_cast<double>(y) + 0.5) * cropH /
-                                              static_cast<double>(kCapeBackHeight) -
+                                              static_cast<double>(dstH) -
                                           0.5;
 
             std::uint8_t sampled[4];
             bilinearSample(rgba, width, height, srcXf, srcYf, sampled);
-            std::uint8_t* dst = px(out, kCapeBackX + x, kCapeBackY + y);
+            std::uint8_t* dst = px(out, kCapeBackX + dstX + x, kCapeBackY + dstY + y);
             dst[0] = sampled[0];
             dst[1] = sampled[1];
             dst[2] = sampled[2];
@@ -450,7 +621,37 @@ inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::u
         }
     }
 
-    // --- 3) Inner front face: flat lining color (half-bright average) ---
+    // --- 3) Letterbox bands (Fit): continue the image's own edge colors ---
+    // Never leave transparent or black bars around the artwork: the bands
+    // repeat the outermost sampled row/column, which is the image's edge.
+    if (dstY > 0 || dstY + dstH < kCapeBackHeight) {
+        for (std::uint32_t x = 0; x < dstW; ++x) {
+            const std::uint32_t column = kCapeBackX + dstX + x;
+            const std::uint8_t* top = px(out, column, kCapeBackY + dstY);
+            const std::uint8_t* bottom = px(out, column, kCapeBackY + dstY + dstH - 1);
+            for (std::uint32_t y = 0; y < dstY; ++y) {
+                std::memcpy(px(out, column, kCapeBackY + y), top, 4);
+            }
+            for (std::uint32_t y = dstY + dstH; y < kCapeBackHeight; ++y) {
+                std::memcpy(px(out, column, kCapeBackY + y), bottom, 4);
+            }
+        }
+    }
+    if (dstX > 0 || dstX + dstW < kCapeBackWidth) {
+        for (std::uint32_t y = 0; y < kCapeBackHeight; ++y) {
+            const std::uint32_t row = kCapeBackY + y;
+            const std::uint8_t* left = px(out, kCapeBackX + dstX, row);
+            const std::uint8_t* right = px(out, kCapeBackX + dstX + dstW - 1, row);
+            for (std::uint32_t x = 0; x < dstX; ++x) {
+                std::memcpy(px(out, kCapeBackX + x, row), left, 4);
+            }
+            for (std::uint32_t x = dstX + dstW; x < kCapeBackWidth; ++x) {
+                std::memcpy(px(out, kCapeBackX + x, row), right, 4);
+            }
+        }
+    }
+
+    // --- 4) Inner front face: flat lining color (half-bright average) ---
     std::uint32_t sum[4] = {0, 0, 0, 0};
     for (std::uint32_t y = 0; y < kCapeBackHeight; ++y) {
         for (std::uint32_t x = 0; x < kCapeBackWidth; ++x) {
@@ -469,7 +670,7 @@ inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::u
         }
     }
 
-    // --- 4) Thickness: edge strips auto-filled from image edge colors ---
+    // --- 5) Thickness: edge strips auto-filled from image edge colors ---
     for (std::uint32_t x = 0; x < kCapeBackWidth; ++x) {
         std::memcpy(px(out, kCapeTopX + x, kCapeTopY),
                     px(out, kCapeBackX + x, kCapeBackY), 4);
@@ -483,7 +684,7 @@ inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::u
                     px(out, kCapeBackX + kCapeBackWidth - 1, kCapeBackY + y), 4);
     }
 
-    // --- 5) Elytra: reuse the cape design with tapered alpha mask ---
+    // --- 6) Elytra: reuse the cape design with tapered alpha mask ---
     paintElytraFromCape(out);
 
     return out;
