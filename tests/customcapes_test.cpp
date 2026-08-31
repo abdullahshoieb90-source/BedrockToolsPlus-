@@ -17,6 +17,9 @@
 //     is released through its deleter, and repeated ticks are no-ops
 //   * switching cape selection forces a re-apply
 //   * a fresh player (respawn with a new skin) gets the cape re-applied
+//   * the ClientInstanceUpdate early patch (the "cape never shows" fix)
+//     lands the cape in a capeless skin on the first frame after join, is
+//     idempotent across frames, and skips a disabled module
 //   * restoreOriginalCape puts the original cape bytes back on disable, but
 //     leaves a skin that the game rebuilt (foreign blob) untouched
 //   * the "Refresh Capes" button reloads newly dropped PNGs
@@ -128,6 +131,14 @@ struct FakePlayer {
 
     unsigned char* capeImage() { return skinImplBuf.data() + off::SerializedSkinImpl::mCapeImage; }
     const unsigned char* capeImage() const { return skinImplBuf.data() + off::SerializedSkinImpl::mCapeImage; }
+
+    // Models a player who owns no cape at world entry: the all-zero
+    // mce::Image the engine gives such players (format 0, 0x0, depth 0,
+    // usage 0, no blob). originalBlob stays allocated and is still released
+    // in the destructor; it is just no longer referenced by the image.
+    void clearCape() {
+        std::memset(capeImage(), 0, off::Image::Size);
+    }
     void* blob() { return *reinterpret_cast<void**>(capeImage() + off::Image::mBytesOffset); }
     std::uint32_t width() { return *reinterpret_cast<const std::uint32_t*>(capeImage() + off::SkinImage::mWidth); }
     std::uint32_t height() { return *reinterpret_cast<const std::uint32_t*>(capeImage() + off::SkinImage::mHeight); }
@@ -366,6 +377,95 @@ void runTestSelectionChangeAndRespawn() {
           "fresh skin carries the selected cape");
 }
 
+// Local player returned by the fake ClientInstance's getLocalPlayer vtable
+// slot (file scope so fakeGetLocalPlayer can return it).
+void* g_clientLocalPlayer = nullptr;
+static void* fakeGetLocalPlayer(void*) { return g_clientLocalPlayer; }
+
+void runTestEarlyPatch() {
+    std::printf("--- early patch (ClientInstanceUpdate) ---\n");
+    const std::string dir = "/tmp/bt-capes-test/early";
+    setupTestDir(dir);
+    writeTestCape(capesDir() + "/red.png", 64, 32);
+
+    CustomCapesModule module;
+    module.onInit();
+    nlohmann::json j;
+    j["m_cape"] = "red";
+    module.loadConfig(j);
+    module.setMasterEnabled(true);
+
+    // Fake ClientInstance: slot 0 = vtable pointer, and
+    // vtable[VTable::ClientInstanceGetLocalPlayer] returns the local player
+    // (g_clientLocalPlayer) - the same dispatch the game performs on device.
+    void* clientVtable[48] = {};
+    clientVtable[off::VTable::ClientInstanceGetLocalPlayer] =
+        reinterpret_cast<void*>(&fakeGetLocalPlayer);
+    void* clientStorage[2] = {clientVtable, nullptr};
+
+    // Capeless player: all-zero mCapeImage - the case the module exists for.
+    // The engine builds the cape mesh (and whether one exists at all) from
+    // this skin at world entry, so the patch must land before the first
+    // render frame - which is exactly what onClientInstanceUpdate does.
+    FakePlayer player;
+    player.clearCape();
+    const std::vector<unsigned char> skinBefore = player.skinImplBuf;
+
+    // No client instance: safe no-op.
+    module.onClientInstanceUpdate(nullptr);
+    check(player.skinImplBuf == skinBefore, "null client instance -> no skin writes");
+
+    // Menus (no local player yet): safe no-op.
+    g_clientLocalPlayer = nullptr;
+    module.onClientInstanceUpdate(clientStorage);
+    check(player.skinImplBuf == skinBefore, "no local player yet -> no skin writes");
+
+    // First frame after join: the patch lands in the skin BEFORE the render
+    // pass builds the cape mesh from it.
+    g_clientLocalPlayer = player.playerBuf.data();
+    module.onClientInstanceUpdate(clientStorage);
+    check(player.format() == 3, "early patch writes RGBA8Unorm (3) into the empty cape image");
+    check(player.width() == 64 && player.height() == 32, "early patch fills 64x32 dimensions");
+    check(player.depth() == 1, "early patch sets depth 1 (renderable texture)");
+    check(player.usage() == 1, "early patch sets sRGB usage");
+    check(player.blob() != nullptr, "early patch injects the cape pixels");
+    check(player.blobSize() == 64u * 32u * 4u, "early patch blob size = width*height*4");
+
+    // The installed bytes must equal the PNG content (writeTestCape pattern).
+    bool pixelsMatch = player.blob() != nullptr;
+    if (pixelsMatch) {
+        const unsigned char* px = static_cast<const unsigned char*>(player.blob());
+        for (int y = 0; y < 32 && pixelsMatch; ++y) {
+            for (int x = 0; x < 64; ++x) {
+                const unsigned char* p = px + (static_cast<std::size_t>(y) * 64 + x) * 4;
+                if (p[0] != static_cast<unsigned char>(x * 3) ||
+                    p[1] != static_cast<unsigned char>(y * 5) ||
+                    p[2] != static_cast<unsigned char>((x ^ (y * 3)) & 0xFF) ||
+                    p[3] != static_cast<unsigned char>(128 + (x + y) % 64)) {
+                    pixelsMatch = false;
+                    break;
+                }
+            }
+        }
+    }
+    check(pixelsMatch, "early patch installs the exact PNG bytes");
+
+    // Second frame: idempotent, no churn.
+    const void* firstBlob = player.blob();
+    module.onClientInstanceUpdate(clientStorage);
+    check(player.blob() == firstBlob, "second frame keeps the same blob (no churn)");
+
+    // Disabling restores the original (empty) cape image.
+    module.setMasterEnabled(false);
+    check(player.skinImplBuf == skinBefore, "disabling restores the original (empty) cape image");
+
+    // A disabled module is skipped by the per-frame hook (no churn).
+    module.onClientInstanceUpdate(clientStorage);
+    check(player.skinImplBuf == skinBefore, "disabled module is skipped by the client hook");
+
+    g_clientLocalPlayer = nullptr;
+}
+
 void runTestRefreshButton() {
     std::printf("--- Refresh Capes button ---\n");
     const std::string dir = "/tmp/bt-capes-test/refresh";
@@ -420,6 +520,7 @@ int main() {
     runTestApplyAndRestore();
     runTestRestoreGuard();
     runTestSelectionChangeAndRespawn();
+    runTestEarlyPatch();
     runTestRefreshButton();
     runTestDisablePath();
 

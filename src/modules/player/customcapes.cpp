@@ -2,6 +2,7 @@
 
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/events/EventBus.hpp>
+#include <bedrocktools/events/ClientInstanceUpdateEvent.hpp>
 #include "../../config/ConfigManager.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -79,7 +80,10 @@ CustomCapesModule::CustomCapesModule()
              "Swap your cape for your own PNG capes. Drop PNG files into the "
              "capes folder next to config.json (created automatically), pick "
              "one in the Cape selector and it replaces your character's cape. "
-             "Classic skins only; the cape is client-side.") {
+             "The engine bakes the cape mesh from your skin at world entry, "
+             "so the cape shows from the first frame after you join - enable "
+             "the module before entering the world (or re-enter the world "
+             "after enabling it). Classic skins only; the cape is client-side.") {
     // The module has no HUD surface of its own; all settings live in the
     // module menu (Cape selector + Refresh Capes button).
     hideInHudEditor = true;
@@ -94,6 +98,21 @@ void CustomCapesModule::onInit() {
     scanCapesDirectory();
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [this](auto& event) { onLocalPlayerTick(event.player); });
+
+    // The per-tick subscription above is one frame too late for the FIRST
+    // cape mesh: the engine builds that mesh (and decides whether a cape
+    // exists at all) from the skin when the player's renderer data is created
+    // at world entry, i.e. during the first render pass after the local
+    // player exists - before the first LocalPlayerTickEvent can reach us.
+    //
+    // ClientInstance::update runs once per frame and the level render
+    // follows it in the same frame, so this hook fires BEFORE the render
+    // pass. On the first frame after join it lands the cape in
+    // SerializedSkinImpl before the renderer data is built from the skin,
+    // and the engine then creates a real cape mesh with our texture
+    // (vanilla cape, waving included).
+    bedrocktools::events::bus().subscribe<bedrocktools::events::ClientInstanceUpdateEvent>(
+        [this](auto& event) { onClientInstanceUpdate(event.clientInstance); });
 }
 
 void CustomCapesModule::onEnable() {
@@ -111,6 +130,32 @@ void CustomCapesModule::onDisable() {
 
 void CustomCapesModule::onLocalPlayerTick(void* player) {
     if (!enabled || !player) return;
+    applyCapeToPlayer(player);
+}
+
+void CustomCapesModule::onClientInstanceUpdate(void* clientInstance) {
+    // Only acts while enabled: the tick path already owns restore/teardown,
+    // this per-frame hook exists purely to land the patch BEFORE the engine
+    // builds the cape mesh from the skin (see the class comment). Gating it
+    // also keeps a disabled module from chasing a local player at all.
+    if (!enabled || !clientInstance) return;
+
+    // Same vtable dispatch the Shulker Preview module uses on device:
+    // vtable[VTable::ClientInstanceGetLocalPlayer] returns the LocalPlayer*
+    // (or null while sitting in menus). No signature scan needed - the slot
+    // index is the stable, verified offset in offsets/Core.hpp.
+    void** vtable = *reinterpret_cast<void***>(clientInstance);
+    if (!vtable) return;
+    void* (*getLocalPlayer)(void*) =
+        reinterpret_cast<void* (*)(void*)>(vtable[VTable::ClientInstanceGetLocalPlayer]);
+    if (!getLocalPlayer) return;
+
+    void* player = getLocalPlayer(clientInstance);
+    if (!player) return;
+
+    // Same guarded apply as the tick path: no-ops when our blob is already
+    // installed, re-applies after the engine rebuilt the skin (respawn,
+    // server skin update) and after every selection change.
     applyCapeToPlayer(player);
 }
 
