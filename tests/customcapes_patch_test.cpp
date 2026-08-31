@@ -701,6 +701,92 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    // Overlay pose publishing crash fix:
+    //   * The pose (AABB + body yaw) is read ONLY while the overlay is
+    //     actually drawing (enabled + a cape selected + Overlay/Both). A
+    //     disabled module on world entry must never touch Actor::mStateVector
+    //     (0x208) / +0x210 / 0x218.
+    //   * When it is read, it uses the Wings/Hitbox/Breadcrumbs layout:
+    //     the AABB-component pointer comes from actor+0x210 and the rotation
+    //     from actor+0x218, not by dereferencing 0x208.
+    // ------------------------------------------------------------------
+    std::printf("overlay pose is gated and uses the Wings actor layout\n");
+    {
+        std::vector<std::uint8_t> overlaySkin(off::SerializedSkinImpl::mIsPersonaCapeOnClassicSkin + 32, 0);
+        std::uint8_t* const overlayBase = overlaySkin.data();
+        std::vector<std::uint8_t> overlaySkinPixels(64 * 64 * 4, 0x44);
+        writeImage(overlayBase + off::SerializedSkinImpl::mSkinImage, 3, 64, 64,
+                   overlaySkinPixels.data(), originalDeleter, overlaySkinPixels.size());
+        const std::uint32_t overlaySkinUsage = 1;
+        std::memcpy(overlayBase + off::SerializedSkinImpl::mSkinImage + off::Image::mUsage,
+                    &overlaySkinUsage, 4);
+        // mCapeImage all zero = the capeless case (like the early-patch test).
+
+        // Fake LocalPlayer positioned past both the skin pointer (Player::mSkin)
+        // and the actor layout offsets used by readActorPose.
+        const std::size_t playerSize = 0x220 + 32;
+        std::vector<std::uint8_t> overlayPlayer(playerSize, 0);
+        void* overlaySkinSlot = overlayBase;
+        void* overlaySkinSlotAddress = &overlaySkinSlot;
+        std::memcpy(overlayPlayer.data() + off::Player::mSkin, &overlaySkinSlotAddress,
+                    sizeof(void*));
+        void* overlayLevel = (void*)0x7;
+        std::memcpy(overlayPlayer.data() + off::Actor::mLevel, &overlayLevel, sizeof(void*));
+
+        // 0x210 deliberately points at invalid low memory. With the module
+        // disabled the tick must not even look there; the old code read the
+        // pose unconditionally on every tick and crashed at world entry.
+        void* const invalidAabbPtr = (void*)0x1;
+        const std::uintptr_t builtInValue = 0x12345678u;  // distinct from invalid memory
+        std::memcpy(overlayPlayer.data() + off::Actor::mStateVectorComponent,
+                    &builtInValue, sizeof(std::uintptr_t));
+        std::memcpy(overlayPlayer.data() + off::Actor::mStateVectorComponent +
+                        off::BuiltInActorComponents::mAABBShapeComponent,
+                    &invalidAabbPtr, sizeof(void*));
+
+        CustomCapesModule overlayMod;
+        overlayMod.enabled = false;
+        overlayMod.onLocalPlayerTick(overlayPlayer.data());
+        check(true, "disabled module on world entry does not dereference actor offsets");
+
+        // Now give it a correct Wings-style layout and drive the real overlay
+        // path: AABB at actor+0x210, rotation at actor+0x218.
+        float aabb[6] = {1.0f, 2.0f, 3.0f, 2.0f, 4.0f, 4.0f};
+        float rot[2] = {0.0f, 90.0f};  // {pitch, yaw}
+        void* aabbPtr = aabb;
+        void* rotPtr = rot;
+        std::memcpy(overlayPlayer.data() + off::Actor::mStateVectorComponent +
+                        off::BuiltInActorComponents::mAABBShapeComponent,
+                    &aabbPtr, sizeof(void*));
+        std::memcpy(overlayPlayer.data() + off::Actor::mActorRotationComponent,
+                    &rotPtr, sizeof(void*));
+
+        const std::string overlayRoot = "/tmp/bt-customcapes-overlay-pose-test";
+        std::filesystem::remove_all(overlayRoot);
+        std::filesystem::create_directories(overlayRoot + "/capes");
+        g_testConfigPath = overlayRoot + "/config.json";
+        stbi_write_png((overlayRoot + "/capes/Pose.png").c_str(), kSrcW, kSrcH, 4,
+                       red.data(), kSrcW * 4);
+
+        nlohmann::json overlayCfg;
+        overlayCfg["m_cape"] = 1;
+        overlayCfg["m_capeRenderMode"] = std::string("1,Engine mesh,Overlay,Both");
+        overlayMod.loadConfig(overlayCfg);
+        check(overlayMod.renderMode() == CustomCapesModule::RenderModeOverlay,
+              "overlay-pose module selected Overlay mode");
+        overlayMod.enabled = true;
+        overlayMod.onLocalPlayerTick(overlayPlayer.data());
+
+        // Disabled/restore path still works after the overlay tick.
+        overlayMod.enabled = false;
+        overlayMod.onLocalPlayerTick(overlayPlayer.data());
+        check(sameBytes(overlayBase + off::SerializedSkinImpl::mCapeImage,
+                        overlaySkin.data() + off::SerializedSkinImpl::mCapeImage,
+                        off::Image::Size),
+              "overlay mode leaves the cape image untouched after pose tick");
+    }
+
+    // ------------------------------------------------------------------
     // Render mode config: "0,Engine mesh,Overlay,Both" radio.
     //   * RenderMode Overlay (1) must leave the skin untouched while the
     //     self-rendered cape draws in the RenderLevel hook.

@@ -287,8 +287,12 @@ bool readActorPose(void* player, CapePose& out) {
     const std::uintptr_t builtIn = *reinterpret_cast<std::uintptr_t*>(
         actorAddr + Actor::mStateVectorComponent);
     if (builtIn < 0x1000) return false;
+    // Wings/Hitbox/Breadcrumbs layout: the AABB-component pointer is at
+    // actor+0x210 (mStateVectorComponent + 8), NOT at *(actor+0x208)+8.
+    // 0x208 is not a usable pointer on the live layout; dereferencing it
+    // read garbage and crashed on world entry even when the module was off.
     const std::uintptr_t aabbComp = *reinterpret_cast<std::uintptr_t*>(
-        builtIn + BuiltInActorComponents::mAABBShapeComponent);
+        actorAddr + Actor::mStateVectorComponent + BuiltInActorComponents::mAABBShapeComponent);
     if (aabbComp < 0x1000) return false;
     const float* aabb = reinterpret_cast<const float*>(aabbComp + AABBShapeComponent::mAABB);
 
@@ -513,6 +517,7 @@ void CustomCapesModule::onInit() {
 }
 
 void CustomCapesModule::onEnable() {
+    std::lock_guard<std::mutex> patchLock(m_patchMutex);
     if (m_selectedIndex > 0 && !m_capeLoaded && !m_loadFailed) loadSelectedCape();
     m_needsApply = true;
     publishOverlayCape();
@@ -520,6 +525,7 @@ void CustomCapesModule::onEnable() {
 }
 
 void CustomCapesModule::onDisable() {
+    std::lock_guard<std::mutex> patchLock(m_patchMutex);
     {
         std::lock_guard<std::mutex> lock(g_renderMutex);
         g_pose = CapePose{};
@@ -560,7 +566,14 @@ void CustomCapesModule::writeSamplePng(const std::string& path) const {
 }
 
 void CustomCapesModule::loadConfig(const nlohmann::json& j) {
+    // Module::loadConfig() may dispatch into onEnable()/onDisable() through
+    // updateEnabledState(), so it must run outside m_patchMutex (those entry
+    // points take the lock themselves). Every cape/config switch below runs
+    // under m_patchMutex so it cannot race a tick/update frame that is
+    // currently applying or restoring the skin patch.
     Module::loadConfig(j);
+
+    std::lock_guard<std::mutex> patchLock(m_patchMutex);
 
     if (m_capesDir.empty()) m_capesDir = capeDirectoryForConfig();
     const int previousIndex = m_selectedIndex;
@@ -703,6 +716,7 @@ bool CustomCapesModule::playerHasLiveLevel(const void* player) {
 }
 
 void CustomCapesModule::onWorldExit() {
+    std::lock_guard<std::mutex> patchLock(m_patchMutex);
     // The level is gone, so the player and its skin are gone or on their
     // way out. Two hard rules:
     //   1. Never write to the skin here. Restoring the vanilla cape into a
@@ -739,12 +753,24 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
         return;
     }
 
-    // Publish the player pose + cape pixels for the overlay render thread.
+    // Serialize the whole patch path: both ClientInstanceUpdateEvent
+    // (update thread) and LocalPlayerTickEvent (tick thread) can call into
+    // this logic in the same frame. Lock order is m_patchMutex -> g_renderMutex.
+    std::lock_guard<std::mutex> patchLock(m_patchMutex);
+
+    // Publish the player pose + cape pixels for the overlay render thread,
+    // but ONLY while the overlay is actually drawing (module enabled + a
+    // cape selected + Overlay/Both). The old code published the pose on
+    // every tick — including with the module disabled — and that
+    // unconditional read of the actor's live offsets is what crashed on
+    // world entry.
+    const bool overlayActive = enabled && m_selectedIndex > 0 && m_capeLoaded &&
+                               m_renderMode != RenderModeEngine;
     {
         std::lock_guard<std::mutex> lock(g_renderMutex);
         g_pose = CapePose{};  // readActorPose leaves .valid untouched on failure
-        readActorPose(player, g_pose);
-        if (m_capeLoaded && m_capeIdSerial != g_capeRevision) {
+        if (overlayActive) readActorPose(player, g_pose);
+        if (overlayActive && m_capeIdSerial != g_capeRevision) {
             g_capePixels = m_pixels;
             g_capeRevision = m_capeIdSerial;
             g_hasCapePixels = !g_capePixels.empty();
@@ -939,7 +965,10 @@ void CustomCapesModule::onClientInstanceUpdate(void* clientInstance) {
     // exists purely to land the patch BEFORE the engine builds the cape mesh
     // on the first frame after join. Gating it also keeps it from chasing a
     // stale LocalPlayer pointer while sitting in menus.
-    if (!enabled || m_selectedIndex <= 0 || !m_capeLoaded) return;
+    {
+        std::lock_guard<std::mutex> patchLock(m_patchMutex);
+        if (!enabled || m_selectedIndex <= 0 || !m_capeLoaded) return;
+    }
 
     // Same vtable dispatch shulkerpreview uses on-device:
     // vtable[ClientInstanceGetLocalPlayer] returns the LocalPlayer*. This

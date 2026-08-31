@@ -2,6 +2,7 @@
 
 #include "../Module.hpp"
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -180,6 +181,16 @@ private:
     // Render mode for the fix (see the RenderMode enum above): 0 = engine
     // mesh only (default), 1 = self-rendered overlay only, 2 = both.
     int m_renderMode = RenderModeEngine;
+
+    // Serializes the in-game skin patch and any cape/config switch that
+    // touches the patch state. ClientInstanceUpdateEvent (update thread) and
+    // LocalPlayerTickEvent (tick thread) may both reach the patch logic in
+    // the same frame; without this mutex they could restore/apply the skin
+    // concurrently (free a blob while the other path is still reading it).
+    // Lock order is always m_patchMutex -> g_renderMutex, which keeps the
+    // skin state, the pose snapshot and the overlay pixel snapshot coherent
+    // without introducing a render/tick lock inversion.
+    std::mutex m_patchMutex;
 
     // State of the in-game skin patch.
     void* m_patchedSkin = nullptr;  // SerializedSkinImpl* currently patched
