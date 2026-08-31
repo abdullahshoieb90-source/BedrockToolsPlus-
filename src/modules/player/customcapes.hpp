@@ -1,0 +1,111 @@
+#pragma once
+
+#include "../Module.hpp"
+#include <string>
+#include <vector>
+
+// Custom Capes - client-side cape swapper
+//
+// Lets the user replace the local player's cape with their own PNG files.
+// Drop any number of PNG capes into <config dir>/capes (next to config.json;
+// the folder is created automatically on first init and a small default cape
+// plus a README are written when it is empty). The module then exposes a
+// "Cape" radio selector in the launcher menu; the selected cape is written
+// into SerializedSkinImpl::mCapeImage (an mce::Image) of the local player's
+// SerializedSkin so the engine renders it like a normal cape.
+//
+// Notes:
+//  * Classic (non-persona) skins only - persona skins render their cape from
+//    persona pieces, not from mCapeImage.
+//  * The cape is client-side only: other players still see your real cape.
+//  * The original cape image is backed up on first application and restored
+//    when the module is disabled (or on respawn the game rebuilds the skin
+//    anyway).
+//
+// The blob we install is owned by the engine once installed: the engine calls
+// the deleter slot (freeCapePixels) when it destroys the mce::Image, so we
+// never free installed pixels ourselves and never touch memory a second time.
+class CustomCapesModule : public Module {
+public:
+    CustomCapesModule();
+    ~CustomCapesModule() override;
+
+    void onInit() override;
+    void onEnable() override;
+    void onDisable() override;
+    void loadConfig(const nlohmann::json& j) override;
+    void saveConfig(nlohmann::json& j) override;
+
+    // Called from the LocalPlayerTickEvent subscription (game thread).
+    void onLocalPlayerTick(void* player);
+
+    // --- Host-testable helpers -------------------------------------------------
+
+    // Re-scans <config dir>/capes for *.png files and rebuilds the selectable
+    // cape list (sorted by file name). Creates the folder, writes the README
+    // and, when the folder holds no PNGs, a bundled default cape so the
+    // selector is never empty. Keeps the current selection when it still
+    // exists, otherwise falls back to the first cape.
+    void scanCapesDirectory();
+
+    // Applies the currently selected cape to the player's SerializedSkinImpl
+    // cape image. Returns true when the cape image was (re)installed, false
+    // when there was nothing to do (module disabled, nothing selected, no
+    // player/skin, already applied, or the PNG failed to decode).
+    bool applyCapeToPlayer(void* player);
+
+    // Restores the cape image that existed before the module first touched
+    // it (backup taken from the first skin we modified).
+    void restoreOriginalCape(void* player);
+
+    // Selectable cape ids (file names without the .png extension, sorted).
+    const std::vector<std::string>& capeNames() const { return m_capeNames; }
+    // Directory capes are loaded from (<config dir>/capes).
+    const std::string& capesDirectory() const { return m_capesDir; }
+    int selectedIndex() const { return m_selectedIndex; }
+    const std::string& selectedName() const { return m_selectedName; }
+
+    // Deleter installed into the mce::Blob deleter slot for pixels we hand to
+    // the engine (malloc'd buffers, released with free).
+    static void freeCapePixels(unsigned char* pixels);
+
+private:
+    // Parses a config value for the cape selector: a full radio value
+    // ("<index>,<id1>,<id2>,..."), a bare numeric index, or a cape id.
+    void parseCapeValue(const std::string& value);
+
+    // Decodes <id>.png from the capes folder into RGBA (malloc'd by stb,
+    // caller must stbi_image_free it). Returns false when the file is missing
+    // or not a valid image.
+    bool loadCapePixels(const std::string& id, unsigned char** outPixels,
+                        int* outWidth, int* outHeight);
+
+    // Writes the cape image fields (format/width/height/depth/usage + blob)
+    // into SerializedSkinImpl::mCapeImage, freeing the image the engine
+    // currently owns. `pixels` becomes engine-owned (freed via freeCapePixels).
+    void installCapeImage(void* skinImpl, unsigned char* pixels,
+                          int width, int height);
+
+    // Copies the current cape image (header fields + pixel bytes) so it can
+    // be restored on disable. Only takes the backup once.
+    void backupOriginalImage(void* skinImpl);
+
+    std::vector<std::string> m_capeNames;   // sorted ids, no extension
+    int m_selectedIndex = -1;               // -1 = none available
+    std::string m_selectedName;             // resolved id, empty = none
+    std::string m_capesDir;
+
+    void* m_lastPlayer = nullptr;           // last ticked player (for restore)
+    void* m_lastInstalledBlob = nullptr;    // blob currently in the game's cape image
+    bool m_needApply = true;                // forces a re-apply even when the blob matches
+
+    // Backup of the original cape image (taken from the first skin modified).
+    unsigned char* m_originalPixels = nullptr;
+    int m_originalWidth = 0;
+    int m_originalHeight = 0;
+    int m_originalSize = 0;
+    std::uint32_t m_originalFormat = 0;
+    std::uint32_t m_originalDepth = 0;
+    unsigned char m_originalUsage = 0;
+    bool m_hasOriginal = false;
+};
