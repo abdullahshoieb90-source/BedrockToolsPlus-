@@ -61,23 +61,6 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
-        customcapes_ui_test)
-            # Builds the real preview-grid UI as a second translation unit;
-            # the preloader/nlohmann_json headers come from the xmake
-            # packages when available and from the host fakes otherwise.
-            extra+=(-I "${root}/third_party")
-            if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
-                extra+=(-I "${json_inc}")
-            else
-                extra+=(-I "${root}/tests/fakejson")
-            fi
-            if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ]; then
-                extra+=(-I "${preloader_inc}")
-            else
-                extra+=(-I "${root}/tests/fakepl")
-            fi
-            extra_srcs+=("${root}/src/modules/player/customcapes_ui.cpp")
-            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
@@ -95,8 +78,7 @@ for source in "${root}"/tests/*_test.cpp; do
                 extra+=(-I "${root}/tests/fakepl")
             fi
             if [ "${name}" = "customcapes_patch_test" ]; then
-                extra_srcs+=("${root}/src/modules/player/customcapes.cpp"
-                             "${root}/src/modules/player/customcapes_ui.cpp")
+                extra_srcs+=("${root}/src/modules/player/customcapes.cpp")
             else
                 extra_srcs+=("${root}/src/modules/visual/wings.cpp")
             fi

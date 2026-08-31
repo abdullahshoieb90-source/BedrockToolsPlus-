@@ -18,7 +18,6 @@
 #include <stb/stb_image.h>
 #include <stb/stb_image_write.h>
 
-#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -59,7 +58,7 @@ std::string capeDirectoryForConfig() {
     const std::string configPath = bedrocktools::config::ConfigManager::get().getConfigPath();
     const std::size_t lastSlash = configPath.find_last_of('/');
     std::string dir = (lastSlash != std::string::npos) ? configPath.substr(0, lastSlash)
-                                                       : "/sdcard/games/BedrockTools";
+                                                       : "/sdcard/games/BedrockToolsPlus";
     return dir + "/capes";
 }
 
@@ -82,12 +81,7 @@ void* resolvePlayerSkin(void* player) {
 } // namespace
 
 CustomCapesModule::CustomCapesModule()
-    : Module("Custom Capes",
-             "Wear any PNG from the BedrockTools capes folder as your cape — pick one "
-             "from the in-game preview grid (local only).") {
-    // The cape picker is a centered dialog, not a draggable HUD element, so
-    // it must not appear in the launcher's HUD editor.
-    hideInHudEditor = true;
+    : Module("Custom Capes", "Wear any PNG from the BedrockTools capes folder as your cape (local only).") {
     g_customCapes = this;
 }
 
@@ -99,7 +93,6 @@ void CustomCapesModule::onInit() {
     m_capesDir = capeDirectoryForConfig();
     ensureCapesDirectory();
     m_files = customcapes::scanCapeFiles(m_capesDir);
-    rebuildPreviewGrid();
 
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [](auto& event) {
@@ -108,46 +101,11 @@ void CustomCapesModule::onInit() {
 }
 
 void CustomCapesModule::onEnable() {
-    // New PNGs may have been dropped into the capes folder while the module
-    // was off; rebuild the preview grid so they show up.
-    refreshGridIfNeeded();
     if (m_selectedIndex > 0 && !m_capeLoaded && !m_loadFailed) loadSelectedCape();
     m_needsApply = true;
-    m_ui.setVisible(m_showPicker && !m_ui.empty());
 }
 
 void CustomCapesModule::onDisable() {
-    // onFrame stops running for disabled modules, so this is the only chance
-    // to remove the picker from the overlay.
-    m_ui.setVisible(false);
-    submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
-}
-
-void CustomCapesModule::onFrame() {
-    if (!enabled || !m_ui.visible() || m_ui.empty()) {
-        submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
-        return;
-    }
-
-    std::vector<PLModMenu_DrawCommand> cmds;
-    m_ui.buildDrawCommands(cmds, m_selectedIndex);
-    submitDrawCommands(moduleId, cmds);
-}
-
-bool CustomCapesModule::onTouchEvent(float x, float y, bool isDown) {
-    if (!enabled || !m_ui.visible() || !isDown) return false;
-
-    const int hit = m_ui.hitTest(x, y);
-    if (hit == CustomCapesUi::kHitOutside) return false; // let the game use it
-
-    if (hit == CustomCapesUi::kHitClose) {
-        m_ui.setVisible(false);
-        submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
-        return true;
-    }
-
-    selectCapeIndex(hit);
-    return true;
 }
 
 void CustomCapesModule::ensureCapesDirectory() {
@@ -205,20 +163,6 @@ void CustomCapesModule::loadConfig(const nlohmann::json& j) {
         if (m_selectedIndex > 0) loadSelectedCape();
         m_needsApply = true;
     }
-
-    const bool showPickerBefore = m_showPicker;
-    if (j.contains("m_showPicker") && j["m_showPicker"].is_boolean()) {
-        m_showPicker = j["m_showPicker"].get<bool>();
-    }
-
-    // The grid follows the file list; rebuild after a config change. Only
-    // the "Show Cape Picker" toggle itself changes visibility, so closing
-    // the picker with X is not undone by unrelated config changes (a
-    // disabled module re-opens it from onEnable() instead).
-    refreshGridIfNeeded();
-    if (m_showPicker != showPickerBefore) {
-        m_ui.setVisible(enabled && m_showPicker && !m_ui.empty());
-    }
 }
 
 void CustomCapesModule::saveConfig(nlohmann::json& j) {
@@ -226,11 +170,7 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     if (m_capesDir.empty()) m_capesDir = capeDirectoryForConfig();
     m_files = customcapes::scanCapeFiles(m_capesDir);
     if (m_selectedIndex > static_cast<int>(m_files.size())) m_selectedIndex = 0;
-    // Still persisted for backward compatibility and for programmatic
-    // selection; the launcher menu no longer renders it as a Radio row
-    // (the in-game thumbnail grid is the picker now).
     j["m_cape"] = customcapes::makeRadioValue(m_selectedIndex, m_files);
-    j["m_showPicker"] = m_showPicker;
 }
 
 void CustomCapesModule::releaseLoadedCape() {
@@ -268,66 +208,6 @@ void CustomCapesModule::loadSelectedCape() {
         m_activeCapeId = std::string(kCapeIdBase) + "-" + std::to_string(m_capeIdSerial % 1000000);
         if (m_activeCapeId.size() > 22) m_activeCapeId.resize(22);
     }
-}
-
-void CustomCapesModule::selectCapeIndex(int index) {
-    if (index < 0) return;
-    if (index == m_selectedIndex) {
-        m_needsApply = true; // re-apply in case the patch was lost
-        return;
-    }
-
-    m_selectedIndex = index;
-    releaseLoadedCape();
-    if (index > 0) loadSelectedCape();
-
-    // Persist right away so the choice survives a restart; saveConfig() also
-    // re-scans the capes folder, keeping the stored file indexes in sync.
-    bedrocktools::config::ConfigManager::get().save();
-    m_needsApply = true;
-}
-
-void CustomCapesModule::rebuildPreviewGrid() {
-    m_ui.clear();
-    m_gridFiles = m_files;
-
-    // Entry 0 is always the "None" (vanilla cape) card so the custom cape
-    // can be cleared even when the capes folder is empty; keep the grid
-    // bounded beyond that.
-    m_ui.addEntry(customcapes::kNoneLabel, {});
-
-    constexpr std::size_t kMaxGridCapes = 63;
-    const std::size_t count = std::min(m_files.size(), kMaxGridCapes);
-    for (std::size_t i = 0; i < count; ++i) {
-        const std::string path = m_capesDir + "/" + m_files[i];
-
-        // Decode with the same loader the module uses for the skin patch, so
-        // the thumbnail always matches what will actually be worn.
-        int width = 0, height = 0, channels = 0;
-        stbi_uc* decoded = stbi_load(path.c_str(), &width, &height, &channels, 4);
-        if (!decoded || width <= 0 || height <= 0 ||
-            width > static_cast<int>(customcapes::kMaxSourceDimension) ||
-            height > static_cast<int>(customcapes::kMaxSourceDimension)) {
-            if (decoded) stbi_image_free(decoded);
-            // Skip broken files instead of dropping the whole grid.
-            continue;
-        }
-
-        const std::vector<std::uint8_t> canvas = customcapes::resampleToCape(
-            decoded, static_cast<std::uint32_t>(width),
-            static_cast<std::uint32_t>(height));
-        stbi_image_free(decoded);
-
-        // Adds the UV-cropped thumbnail (outer cape face) to the overlay's
-        // texture registry and appends the grid card.
-        m_ui.addCapeEntry(m_files[i], canvas.data());
-    }
-}
-
-void CustomCapesModule::refreshGridIfNeeded() {
-    if (m_capesDir.empty()) return;
-    if (m_gridFiles == m_files && !m_ui.empty()) return;
-    rebuildPreviewGrid();
 }
 
 void CustomCapesModule::clearPatchState() {
