@@ -38,6 +38,7 @@
 #include "player/skinstealer.hpp"
 #include "player/autogg.hpp"
 #include "player/autoreq.hpp"
+#include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
 #include "misc/commandhotkey.hpp"
 #include "hud/crosshair.hpp"
@@ -144,4 +145,5 @@ void registerAllModules() {
     registry.emplace<SwingModifierModule>();
     registry.emplace<WingsModule>();
     registry.emplace<AutoSprintModule>();
+    registry.emplace<CustomCapesModule>();
 }

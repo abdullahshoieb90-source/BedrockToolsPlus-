@@ -21,7 +21,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair
 
-**Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ
+**Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ, Custom Capes
 
 **Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter
 
@@ -38,6 +38,17 @@ The **Wings** module renders animated 3D wings on your back that flap, idle and 
 - **Fairy** — small translucent cyan/pink wings
 
 The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. Each style is drawn as closed, tapered feather prisms with a rest-pose fan, a backwards sweep and per-face shading, so the wings read as real 3D volume. Developers can preview every style offline (and compare against the legacy renderer) with `./scripts/gen_wings_preview.sh`, which writes PNGs to `build/wings-preview/`.
+
+## Custom Capes
+
+The **Custom Capes** module lets you swap your character's cape for your own PNG files. Drop any number of PNG capes into the `capes` folder next to `config.json` (the folder is created automatically; on first run it is seeded with a small default cape and a `README.txt` that explains the folder). The module then shows a **Cape** selector in the launcher menu listing every PNG by file name, and a **Refresh Capes** button that re-scans the folder.
+
+How it works:
+
+- While enabled, the selected PNG is decoded and written into `SerializedSkinImpl::mCapeImage` of the local player's skin, so the engine renders it exactly like a vanilla cape (RGBA8Unorm, sRGB, depth 1 — the same image description real capes carry).
+- The original cape image is backed up on first application and restored when the module is disabled; on respawn the game rebuilds the skin and the module simply re-applies the cape.
+- Capes are **client-side only** (other players still see your original cape) and require a **classic (non-persona) skin** — persona skins render their cape from persona pieces rather than `mCapeImage`.
+- 64x32 or 128x64 PNGs with full alpha work best; the pixel buffer handed to the engine is owned by the game once installed (freed through the image's deleter slot), so nothing is leaked or double-freed across skin rebuilds.
 
 ## System Requirements
 

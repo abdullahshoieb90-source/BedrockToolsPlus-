@@ -61,7 +61,7 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
-        wings_patch_test)
+        wings_patch_test|customcapes_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
             # xmake packages when available and from the host fakes
@@ -79,6 +79,7 @@ for source in "${root}"/tests/*_test.cpp; do
             fi
             case "${name}" in
                 wings_patch_test) extra_src="${root}/src/modules/visual/wings.cpp" ;;
+                customcapes_test) extra_src="${root}/src/modules/player/customcapes.cpp" ;;
             esac
             ;;
     esac
