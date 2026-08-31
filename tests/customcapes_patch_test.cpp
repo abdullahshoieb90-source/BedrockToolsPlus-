@@ -34,6 +34,7 @@
 #include "config/ConfigManager.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/events/EventBus.hpp>
+#include <bedrocktools/memory/Signatures.hpp>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/stb_image_write.h>
@@ -65,6 +66,10 @@ void check(bool condition, const std::string& what) {
 
 std::string g_testConfigPath;
 
+// Local player returned by the fake ClientInstance's getLocalPlayer vtable
+// slot (file-scope so the capture-less stub lambda can see it).
+void* g_clientPlayer = nullptr;
+
 // Link stubs for the config backend the module queries for its folder.
 } // namespace
 
@@ -81,6 +86,14 @@ EventBus& bus() {
     return instance;
 }
 } // namespace bedrocktools::events
+
+namespace bedrocktools::memory {
+// Link stub: the module resolves the render-hook signatures in onInit().
+// The host never has libminecraftpe.so, so every signature resolves to 0 and
+// the overlay renderer stays inert — exactly like the Wings patch test.
+std::uintptr_t resolve(SignatureId) { return 0; }
+bool resolveAll(std::string_view) { return false; }
+} // namespace bedrocktools::memory
 
 namespace {
 
@@ -592,6 +605,171 @@ int main() {
 
         sampleMod.enabled = false;
         sampleMod.onLocalPlayerTick(barePlayer.data());
+    }
+
+    // ------------------------------------------------------------------
+    // Early patch via ClientInstanceUpdateEvent (the KNOWN LIMITATION fix).
+    // ClientInstance::update runs once per frame BEFORE the level render
+    // pass; on the first frame after the local player is created this hook
+    // patches the cape into SerializedSkinImpl before ActorRendererData is
+    // built from the skin, so the engine creates a real cape mesh. The hook
+    // is just a vtable dispatch to the local player followed by the same
+    // guarded tick logic — this test drives the fake client through it.
+    // ------------------------------------------------------------------
+    std::printf("ClientInstanceUpdate early patch reaches the skin\n");
+    {
+        // Fake ClientInstance: object[0] holds the vtable pointer;
+        // vtable[VTable::ClientInstanceGetLocalPlayer] returns the player.
+        void* clientVtable[64] = {};
+        clientVtable[off::VTable::ClientInstanceGetLocalPlayer] =
+            reinterpret_cast<void*>(+[](void*) -> void* { return g_clientPlayer; });
+        void* clientStorage[2] = {nullptr, nullptr};
+        clientStorage[0] = clientVtable;
+
+        // Capeless player, exactly like the standalone capeless test above.
+        std::vector<std::uint8_t> earlySkin(off::SerializedSkinImpl::mIsPersonaCapeOnClassicSkin + 32, 0);
+        std::uint8_t* const earlyBase = earlySkin.data();
+        std::vector<std::uint8_t> earlySkinPixels(64 * 64 * 4, 0x66);
+        writeImage(earlyBase + off::SerializedSkinImpl::mSkinImage, 3, 64, 64,
+                   earlySkinPixels.data(), originalDeleter, earlySkinPixels.size());
+        const std::uint32_t earlySkinUsage = 1;
+        std::memcpy(earlyBase + off::SerializedSkinImpl::mSkinImage + off::Image::mUsage,
+                    &earlySkinUsage, 4);
+        // mCapeImage all zero = the capeless case.
+        const std::vector<std::uint8_t> earlySnapshot = earlySkin;
+
+        std::vector<std::uint8_t> earlyPlayer(off::Player::mSkin + sizeof(void*), 0);
+        void* earlySkinSlot = earlyBase;
+        void* earlySkinSlotAddress = &earlySkinSlot;
+        std::memcpy(earlyPlayer.data() + off::Player::mSkin, &earlySkinSlotAddress, sizeof(void*));
+        void* earlyLevel = (void*)0x5;
+        std::memcpy(earlyPlayer.data() + off::Actor::mLevel, &earlyLevel, sizeof(void*));
+
+        CustomCapesModule earlyMod;
+        nlohmann::json earlyCfg;
+        earlyCfg["m_cape"] = 1;
+        earlyMod.loadConfig(earlyCfg);
+        earlyMod.enabled = true;
+
+        // No player yet (menus): the hook must be a safe no-op.
+        g_clientPlayer = nullptr;
+        earlyMod.onClientInstanceUpdate((void*)clientStorage);
+        check(sameBytes(earlyBase, earlySnapshot.data(), earlySkin.size()),
+              "client update with no local player -> no skin writes");
+
+        // First frame with the player: patch lands before the render pass.
+        g_clientPlayer = earlyPlayer.data();
+        earlyMod.onClientInstanceUpdate((void*)clientStorage);
+
+        std::uint8_t* const earlyCape = earlyBase + off::SerializedSkinImpl::mCapeImage;
+        check(readU32(earlyCape, off::Image::mImageFormat) == 3,
+              "client update patch writes RGBA8Unorm (3) into the empty cape image");
+        check(readU32(earlyCape, off::SkinImage::mWidth) == 64 &&
+                  readU32(earlyCape, off::SkinImage::mHeight) == 32,
+              "client update patch fills 64x32 dimensions");
+        check(readU32(earlyCape, off::Image::mDepth) == 1,
+              "client update patch sets depth 1 (renderable texture)");
+        check(readPtr(earlyCape, off::Image::mBytesOffset) != nullptr,
+              "client update patch injects cape pixels");
+        check(sameBytes(earlyBase + off::SerializedSkinImpl::mSkinImage,
+                        earlySnapshot.data() + off::SerializedSkinImpl::mSkinImage,
+                        off::Image::Size),
+              "client update patch never touches mSkinImage");
+
+        // Second frame: idempotent, no churn.
+        void* const earlyInjected = readPtr(earlyCape, off::Image::mBytesOffset);
+        earlyMod.onClientInstanceUpdate((void*)clientStorage);
+        check(readPtr(earlyCape, off::Image::mBytesOffset) == earlyInjected,
+              "client update second frame keeps the same blob (no churn)");
+
+        // A null client instance is a safe no-op too.
+        earlyMod.onClientInstanceUpdate(nullptr);
+        check(readPtr(earlyCape, off::Image::mBytesOffset) == earlyInjected,
+              "null client instance -> patch stays intact");
+
+        // Disabled modules are skipped by the per-frame client hook (it only
+        // exists to land the patch before the mesh is built); the per-tick
+        // hook still restores the vanilla cape on the next tick.
+        earlyMod.enabled = false;
+        earlyMod.onClientInstanceUpdate((void*)clientStorage);
+        check(readPtr(earlyCape, off::Image::mBytesOffset) == earlyInjected,
+              "disabled module is skipped by the client hook (no churn)");
+        earlyMod.onLocalPlayerTick(earlyPlayer.data());
+        check(sameBytes(earlyCape, earlySnapshot.data() + off::SerializedSkinImpl::mCapeImage,
+                        off::Image::Size),
+              "disabling restores the vanilla cape on the next tick");
+    }
+
+    // ------------------------------------------------------------------
+    // Render mode config: "0,Engine mesh,Overlay,Both" radio.
+    //   * RenderMode Overlay (1) must leave the skin untouched while the
+    //     self-rendered cape draws in the RenderLevel hook.
+    //   * Switching back to Engine mesh (0) re-applies the skin patch.
+    //   * saveConfig round-trips the radio value.
+    // ------------------------------------------------------------------
+    std::printf("render mode config (radio) drives the skin patch\n");
+    {
+        std::vector<std::uint8_t> modeSkin(off::SerializedSkinImpl::mIsPersonaCapeOnClassicSkin + 32, 0);
+        std::uint8_t* const modeBase = modeSkin.data();
+        std::vector<std::uint8_t> modeSkinPixels(64 * 64 * 4, 0x55);
+        writeImage(modeBase + off::SerializedSkinImpl::mSkinImage, 3, 64, 64,
+                   modeSkinPixels.data(), originalDeleter, modeSkinPixels.size());
+        const std::uint32_t modeSkinUsage = 1;
+        std::memcpy(modeBase + off::SerializedSkinImpl::mSkinImage + off::Image::mUsage,
+                    &modeSkinUsage, 4);
+        const std::vector<std::uint8_t> modeSnapshot = modeSkin;
+
+        std::vector<std::uint8_t> modePlayer(off::Player::mSkin + sizeof(void*), 0);
+        void* modeSkinSlot = modeBase;
+        void* modeSkinSlotAddress = &modeSkinSlot;
+        std::memcpy(modePlayer.data() + off::Player::mSkin, &modeSkinSlotAddress, sizeof(void*));
+        void* modeLevel = (void*)0x6;
+        std::memcpy(modePlayer.data() + off::Actor::mLevel, &modeLevel, sizeof(void*));
+
+        CustomCapesModule modeMod;
+        nlohmann::json modeCfg;
+        modeCfg["m_cape"] = 1;
+        modeCfg["m_capeRenderMode"] = std::string("1,Engine mesh,Overlay,Both");
+        modeMod.loadConfig(modeCfg);
+        check(modeMod.renderMode() == CustomCapesModule::RenderModeOverlay,
+              "radio value 1 selects Overlay render mode");
+
+        modeMod.enabled = true;
+        modeMod.onLocalPlayerTick(modePlayer.data());
+        check(sameBytes(modeBase + off::SerializedSkinImpl::mCapeImage,
+                        modeSnapshot.data() + off::SerializedSkinImpl::mCapeImage,
+                        off::Image::Size),
+              "Overlay mode leaves mCapeImage untouched (skin stays vanilla)");
+        check(sameBytes(modeBase + off::SerializedSkinImpl::mCapeId,
+                        modeSnapshot.data() + off::SerializedSkinImpl::mCapeId, 24),
+              "Overlay mode leaves mCapeId untouched");
+
+        // A plain integer value (older configs) is accepted and clamped.
+        modeCfg["m_capeRenderMode"] = 7;
+        modeMod.loadConfig(modeCfg);
+        check(modeMod.renderMode() == CustomCapesModule::RenderModeEngine,
+              "out-of-range integer render mode falls back to Engine mesh");
+
+        // Engine mesh re-applies the skin patch.
+        modeMod.onLocalPlayerTick(modePlayer.data());
+        std::uint8_t* const modeCape = modeBase + off::SerializedSkinImpl::mCapeImage;
+        check(readU32(modeCape, off::Image::mImageFormat) == 3,
+              "Engine mode re-applies the cape patch after Overlay");
+        check(readPtr(modeCape, off::Image::mBytesOffset) != nullptr,
+              "Engine mode injects cape pixels again");
+
+        // Radio round-trip via saveConfig.
+        nlohmann::json saved;
+        modeMod.saveConfig(saved);
+        const std::string radio = saved["m_capeRenderMode"].get<std::string>();
+        int parsedIndex = -1;
+        std::string parsedName;
+        customcapes::parseRadioValue(radio, parsedIndex, parsedName);
+        check(parsedIndex == 0 && parsedName == "Engine mesh",
+              "saveConfig writes \"0,Engine mesh,Overlay,Both\" (default mode)");
+
+        modeMod.enabled = false;
+        modeMod.onLocalPlayerTick(modePlayer.data());
     }
 
     std::printf("\n%s\n", g_failures == 0 ? "all custom capes patch tests passed"

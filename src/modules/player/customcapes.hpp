@@ -60,6 +60,30 @@
 //     its engine references WITHOUT touching the skin — the engine frees
 //     the injected blob through its deleter tag, so a teardown tick can
 //     never write freed memory or double-free the blob.
+//
+// KNOWN LIMITATION (the bug this module used to have) and its fix:
+//
+//   Patching mCapeImage/mCapeId every tick writes the right pixels into the
+//   right place, but the engine builds the cape mesh — and decides whether a
+//   cape exists at all — ONCE from the skin when the player's ActorRendererData
+//   is created at world entry, uploading the cape texture to its cache then.
+//   A later memory patch never rebuilds that mesh, so a player who owned no
+//   cape at world entry never gets a cape mesh and nothing shows.
+//
+//   The fix runs the same patch from ClientInstanceUpdateEvent, which fires
+//   once per frame BEFORE the level render pass. On the first frame after the
+//   local player is created, the patch therefore lands in SerializedSkinImpl
+//   before ActorRendererData is built from the skin during that frame's
+//   render — the engine then creates the cape mesh and uploads our texture
+//   through its own pipeline (real cape, with the game's waving animation).
+//
+//   As a second, independent path (RenderMode Overlay/Both, config
+//   "m_capeRenderMode"), the module can draw the cape itself in the
+//   RenderLevel hook as a textured rectangle on the player's back — a GLES
+//   texture built from the same 64x32 pixels, tessellated through the engine
+//   like the Wings module. This works even when the mesh was already built
+//   (e.g. the module was enabled mid-world), at the cost of not being the
+//   engine's own animated cape.
 class CustomCapesModule : public Module {
 public:
     CustomCapesModule();
@@ -74,14 +98,45 @@ public:
     // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
 
+    // Called from the ClientInstanceUpdateEvent subscription. ClientInstance
+    // updates once per frame BEFORE the level render pass, so on the very
+    // first frame after the local player is created this hook patches the
+    // cape into SerializedSkinImpl before ActorRendererData is built from the
+    // skin during that frame's render — the engine then creates a real cape
+    // mesh and uploads our texture to the cape cache (the thing the per-tick
+    // patch alone can never trigger for a player who owned no cape at world
+    // entry; see the KNOWN LIMITATION note in the class comment below).
+    // Falls back to the exact same guarded tick logic as onLocalPlayerTick.
+    void onClientInstanceUpdate(void* clientInstance);
+
     // World-exit teardown: drops every engine reference (patched skin,
     // injected blob, backup) without writing to the skin or freeing the
     // blob — the engine owns both while it destroys the world. Idempotent;
     // the loaded cape file stays so the cape re-applies on rejoin.
     void onWorldExit();
 
+    // How the cape is shown once the module is enabled:
+    //   0 = Engine mesh — patch SerializedSkinImpl only; the game builds the
+    //       cape mesh from the patched skin (requires the patch to land
+    //       before ActorRendererData is built — the ClientInstanceUpdate
+    //       early hook above does that on the first post-join frame).
+    //   1 = Overlay     — self-rendered textured cape in the RenderLevel
+    //       hook (GL texture + tessellator); the skin is left untouched.
+    //   2 = Both        — patch the skin AND draw the overlay (diagnostic:
+    //       two capes means both paths work, one means that path fails).
+    enum RenderMode : int {
+        RenderModeEngine = 0,
+        RenderModeOverlay = 1,
+        RenderModeBoth = 2,
+    };
+    static constexpr const char* kRenderModeRadioLabels[3] = {"Engine mesh", "Overlay", "Both"};
+    static constexpr int kRenderModeRadioCount = 3;
+
     // Directory the module watches; exposed for the menu description.
     const std::string& capesDirectory() const { return m_capesDir; }
+
+    // Current render mode (see RenderMode enum); read by the render hook.
+    int renderMode() const { return m_renderMode; }
 
 private:
     // True when the player pointer and its level link are both usable.
@@ -100,6 +155,12 @@ private:
     void backupOriginalCape(std::uintptr_t capeImage, std::uintptr_t capeIdAddr);
     void clearPatchState();
 
+    // Overlay renderer (RenderMode Overlay/Both). The hook itself lives in
+    // the .cpp translation unit together with its shared render state; the
+    // module only publishes the config, the cape pixels and the player pose.
+    void syncOverlayHook();  // installs/removes the RenderLevel hook on mode change
+    void publishOverlayCape();  // copies the resampled cape for the render thread
+
     std::string m_capesDir;
     std::vector<std::string> m_files; // refreshed by saveConfig (menu build / save)
     int m_selectedIndex = 0;          // 0 = None, i>=1 -> m_files[i-1]
@@ -115,6 +176,10 @@ private:
     // without leaving/rejoining the world.
     uint32_t m_capeIdSerial = 0;
     std::string m_activeCapeId = "bedrocktoolsplus";
+
+    // Render mode for the fix (see the RenderMode enum above): 0 = engine
+    // mesh only (default), 1 = self-rendered overlay only, 2 = both.
+    int m_renderMode = RenderModeEngine;
 
     // State of the in-game skin patch.
     void* m_patchedSkin = nullptr;  // SerializedSkinImpl* currently patched

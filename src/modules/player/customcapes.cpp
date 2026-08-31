@@ -1,9 +1,13 @@
 #include "customcapes.hpp"
 #include "customcapes_files.hpp"
+#include "customcapes_render_math.hpp"
 
 #include "modules/ModuleRegistry.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/events/EventBus.hpp>
+#include <bedrocktools/events/ClientInstanceUpdateEvent.hpp>
+#include <bedrocktools/memory/Signatures.hpp>
+#include "core/memory/Hooks.hpp"
 #include "../../config/ConfigManager.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -18,11 +22,23 @@
 #include <stb/stb_image.h>
 #include <stb/stb_image_write.h>
 
+#include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <mutex>
 #include <system_error>
 #include <vector>
+
+#if defined(__ANDROID__)
+// The self-rendered cape overlay uploads its 64x32 PNG through the GLES
+// context directly (the game's render context is current inside the
+// RenderLevel hook). All of this is compiled out on the host so the unit
+// tests never need EGL/GLES headers.
+#include <EGL/egl.h>
+#include <GLES3/gl3.h>
+#endif
 
 CustomCapesModule* g_customCapes = nullptr;
 
@@ -129,8 +145,320 @@ void* resolvePlayerSkin(void* player) {
 
 } // namespace
 
+namespace {
+
+// ---------------------------------------------------------------------------
+// Self-rendered cape overlay (RenderMode Overlay / Both)
+//
+// Draws the selected cape as a textured rectangle on the local player's back
+// in the RenderLevel hook, reusing the exact plumbing the Wings module proves
+// on-device (tessellator + renderMeshImmediately + render-material group).
+// The texture is our own GLES texture built from the same resampled 64x32
+// pixels the skin patch hands the engine, so the overlay does not depend on
+// the engine's cape mesh at all — it is the fallback for the case where the
+// ActorRendererData was built before the early patch could land.
+// ---------------------------------------------------------------------------
+
+using namespace bedrocktools::sdk::offsets;
+
+typedef void (*Tessellator_begin_t)(void*, void*, int, int, int);
+typedef void (*Tessellator_color_t)(void*, float, float, float, float);
+typedef void (*Tessellator_vertex_t)(void*, float, float, float);
+typedef void (*MeshHelpers_renderMeshImmediately_t)(void*, void*, void*, char*);
+
+struct RenderMaterialPtr {
+    void* sharedPtrData[2]{nullptr, nullptr};
+    explicit operator bool() const { return sharedPtrData[0] != nullptr; }
+};
+
+// Render-thread shared state (written on the game thread from the tick /
+// update hooks, read on the render thread inside the RenderLevel hook).
+std::mutex g_renderMutex;
+
+struct CapePose {
+    bool valid = false;
+    float minX = 0.0f, minY = 0.0f, minZ = 0.0f;
+    float maxX = 0.0f, maxY = 0.0f, maxZ = 0.0f;
+    float yaw = 0.0f;
+};
+CapePose g_pose;
+
+// Snapshot of the resampled 64x32 RGBA cape pixels for the render thread.
+// g_capeRevision mirrors the module's m_capeIdSerial so the render thread can
+// tell when a new cape was selected and re-upload the texture.
+std::vector<std::uint8_t> g_capePixels;
+std::uint64_t g_capeRevision = 0;
+bool g_hasCapePixels = false;
+
+// Engine functions resolved from the signature table (0 when unavailable).
+Tessellator_begin_t g_tessBegin = nullptr;
+Tessellator_color_t g_tessColor = nullptr;
+Tessellator_vertex_t g_tessVertex = nullptr;
+MeshHelpers_renderMeshImmediately_t g_renderMesh = nullptr;
+std::uintptr_t g_renderMaterialGroup = 0;
+RenderMaterialPtr g_matTextured;  // ui_textured_and_glcolor (samples a texture)
+RenderMaterialPtr g_matFallback;  // selection_box / ui_fill_color / debug_filled_box
+void (*g_renderLevelOrig)(void*, void*, void*) = nullptr;
+bedrocktools::hooks::Handle g_renderLevelHook = nullptr;
+
+#if defined(__ANDROID__)
+GLuint g_capeTexId = 0;
+std::uint64_t g_capeTexUploadedRevision = 0;
+#endif
+
+// The RenderMaterialGroupCommon signature resolves to an ADRP+ADD pair that
+// materializes the render-material-group singleton pointer; copied from the
+// Wings module (same engine mechanism, verified on-device there).
+std::uintptr_t resolveADRP(std::uint32_t* insns, std::size_t count, std::uint32_t targetReg) {
+    for (std::size_t i = 0; i < count; i++) {
+        std::uint32_t insn = insns[i];
+        if ((insn & 0x1F) != targetReg) continue;
+        if ((insn & 0x9F000000) == 0x90000000) {
+            std::uintptr_t page = ((std::uintptr_t)&insns[i] & ~0xFFFULL)
+                + ((int64_t)((uint64_t)((insn >> 3) & 0x1FFFFC | (insn >> 29) & 3) << 43) >> 31);
+            for (std::size_t j = i + 1; j < count; j++) {
+                std::uint32_t add = insns[j];
+                if ((add & 0xFF000000) == 0x91000000 &&
+                    ((add >> 5) & 0x1F) == targetReg && (add & 0x1F) == targetReg) {
+                    std::uint32_t imm12 = (add >> 10) & 0xFFF;
+                    if (add & 0x400000) imm12 <<= 12;
+                    return page + imm12;
+                }
+                if ((add & 0x1F) == targetReg) break;
+            }
+        }
+        if ((insn & 0x9F000000) == 0x10000000) {
+            int64_t imm = (int64_t)((uint64_t)((insn >> 3) & 0x1FFFFC | (insn >> 29)) << 43) >> 43;
+            return (std::uintptr_t)&insns[i] + imm;
+        }
+    }
+    return 0;
+}
+
+struct RenderHashedString {
+    std::uint64_t mStrHash;
+    std::string mStr;
+    mutable const RenderHashedString* mLastMatch;
+    RenderHashedString() : mStrHash(0), mStr(), mLastMatch(nullptr) {}
+    explicit RenderHashedString(const char* str) : mLastMatch(nullptr) {
+        mStr = str ? str : "";
+        mStrHash = computeHash(mStr);
+    }
+
+private:
+    static std::uint64_t computeHash(const std::string& s) {
+        if (s.empty()) return 0;
+        constexpr std::uint64_t kOffset = 0xCBF29CE484222325ULL;
+        constexpr std::uint64_t kPrime = 0x100000001B3ULL;
+        std::uint64_t h = kOffset;
+        for (char ch : s) h = static_cast<std::uint64_t>(static_cast<unsigned char>(ch)) ^ (kPrime * h);
+        return h;
+    }
+};
+
+RenderMaterialPtr getRenderMaterial(const char* name) {
+    if (!g_renderMaterialGroup) return {};
+    RenderHashedString hs(name);
+    void** vtable = *reinterpret_cast<void***>(g_renderMaterialGroup);
+    if (!vtable || !vtable[VTable::RenderMaterialGroup_getMaterial]) return {};
+    using getMat_t = RenderMaterialPtr (*)(void*, const RenderHashedString*);
+    return reinterpret_cast<getMat_t>(vtable[VTable::RenderMaterialGroup_getMaterial])((void*)g_renderMaterialGroup, &hs);
+}
+
+void ensureRenderMaterials() {
+    if (!g_renderMaterialGroup) return;
+    if (!g_matTextured) g_matTextured = getRenderMaterial("ui_textured_and_glcolor");
+    if (!g_matFallback) {
+        static const char* kNames[] = {"selection_box", "ui_fill_color", "debug_filled_box"};
+        for (const char* n : kNames) {
+            g_matFallback = getRenderMaterial(n);
+            if (g_matFallback) break;
+        }
+    }
+}
+
+// The actor pose (collision box + body yaw) published by the tick/update
+// hooks, exactly like the Wings module reads it.
+bool readActorPose(void* player, CapePose& out) {
+    if (!player) return false;
+    const std::uintptr_t actorAddr = reinterpret_cast<std::uintptr_t>(player);
+    if (actorAddr < 0x1000) return false;
+
+    const std::uintptr_t builtIn = *reinterpret_cast<std::uintptr_t*>(
+        actorAddr + Actor::mStateVectorComponent);
+    if (builtIn < 0x1000) return false;
+    const std::uintptr_t aabbComp = *reinterpret_cast<std::uintptr_t*>(
+        builtIn + BuiltInActorComponents::mAABBShapeComponent);
+    if (aabbComp < 0x1000) return false;
+    const float* aabb = reinterpret_cast<const float*>(aabbComp + AABBShapeComponent::mAABB);
+
+    const std::uintptr_t rotComp = *reinterpret_cast<std::uintptr_t*>(
+        actorAddr + Actor::mActorRotationComponent);
+    if (rotComp < 0x1000) return false;
+    const float* rot = reinterpret_cast<const float*>(rotComp);
+
+    out.minX = aabb[0]; out.minY = aabb[1]; out.minZ = aabb[2];
+    out.maxX = aabb[3]; out.maxY = aabb[4]; out.maxZ = aabb[5];
+    out.yaw = rot[1];  // ActorRotationComponent is {pitch, yaw} like wings reads
+    const float dx = out.maxX - out.minX;
+    const float dy = out.maxY - out.minY;
+    const float dz = out.maxZ - out.minZ;
+    out.valid = std::isfinite(dx) && std::isfinite(dy) && std::isfinite(dz) &&
+                dx > 0.0f && dx < 16.0f && dy > 0.0f && dy < 16.0f && dz > 0.0f && dz < 16.0f;
+    return out.valid;
+}
+
+void setTessUv(void* tess, float u, float v) {
+    *reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(tess) + Tessellator::mTextureU) = u;
+    *reinterpret_cast<float*>(reinterpret_cast<std::uintptr_t>(tess) + Tessellator::mTextureV) = v;
+}
+
+void emitCapeVertex(void* tess, const customcapes::render::CapeVertex& v,
+                    float camX, float camY, float camZ) {
+    g_tessColor(tess, 1.0f, 1.0f, 1.0f, 1.0f);
+    setTessUv(tess, v.u, v.v);
+    g_tessVertex(tess, v.pos.x - camX, v.pos.y - camY, v.pos.z - camZ);
+}
+
+// Emits one quad (4 corners) twice — once per winding — so back-face culling
+// can never eat the cape.
+void emitCapeQuad(void* tess, const customcapes::render::CapeVertex corners[4],
+                  float camX, float camY, float camZ) {
+    for (int i = 0; i < 4; ++i) emitCapeVertex(tess, corners[i], camX, camY, camZ);
+    for (int i = 3; i >= 0; --i) emitCapeVertex(tess, corners[i], camX, camY, camZ);
+}
+
+#if defined(__ANDROID__)
+// Uploads (or refreshes) the GLES texture from a render-thread snapshot of
+// the cape pixels. `pixels` is the copy taken under the mutex, so the upload
+// is atomic with the size check even if the user switches capes mid-frame.
+void ensureCapeTexture(std::uint64_t revision, const std::vector<std::uint8_t>& pixels) {
+    if (g_capeTexId == 0) glGenTextures(1, &g_capeTexId);
+    glBindTexture(GL_TEXTURE_2D, g_capeTexId);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                 static_cast<GLsizei>(customcapes::kCapeWidth),
+                 static_cast<GLsizei>(customcapes::kCapeHeight), 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    g_capeTexUploadedRevision = revision;
+}
+#endif
+
+void renderCapeOverlay(void* levelRenderer, void* screenContext) {
+    if (!screenContext || (std::uintptr_t)screenContext < 0x1000) return;
+    if (!levelRenderer || (std::uintptr_t)levelRenderer < 0x1000) return;
+    if (!g_tessBegin || !g_tessColor || !g_tessVertex || !g_renderMesh) return;
+    if (!g_customCapes || !g_customCapes->enabled) return;
+    if (g_customCapes->renderMode() == CustomCapesModule::RenderModeEngine) return;
+
+    CapePose pose;
+    std::vector<std::uint8_t> pixels;
+    [[maybe_unused]] std::uint64_t revision = 0;  // used by the GLES upload (Android)
+    bool hasCape = false;
+    {
+        std::lock_guard<std::mutex> lock(g_renderMutex);
+        pose = g_pose;
+        hasCape = g_hasCapePixels;
+        pixels = g_capePixels;
+        revision = g_capeRevision;
+    }
+    if (!pose.valid || !hasCape || pixels.size() !=
+            static_cast<std::size_t>(customcapes::kCapeWidth) * customcapes::kCapeHeight * 4u) {
+        return;
+    }
+
+    const std::uintptr_t lrpPtr = *(std::uintptr_t*)((std::uintptr_t)levelRenderer + LevelRenderer::mLevelRendererPlayer);
+    if (!lrpPtr || lrpPtr < 0x1000) return;
+    const float camX = *(float*)(lrpPtr + LevelRendererPlayer::mCamPos);
+    const float camY = *(float*)(lrpPtr + LevelRendererPlayer::mCamPos + 4);
+    const float camZ = *(float*)(lrpPtr + LevelRendererPlayer::mCamPos + 8);
+
+    // First-person: the camera sits inside the player's head (inside the
+    // AABB), so the back-mounted cape would clip the view — same convention
+    // as the Wings and Hitbox modules.
+    if (!customcapes::render::isThirdPersonCamera(
+            camX, camY, camZ, pose.minX, pose.minY, pose.minZ,
+            pose.maxX, pose.maxY, pose.maxZ)) {
+        return;
+    }
+
+    const std::uintptr_t tessPtr = *(std::uintptr_t*)((std::uintptr_t)screenContext + ScreenContext::mTessellator);
+    if (!tessPtr || tessPtr < 0x1000) return;
+    void* tess = (void*)tessPtr;
+
+    ensureRenderMaterials();
+    void* overlayMat = (void*)(lrpPtr + LevelRendererPlayer::mSelectionOverlayMaterial);
+    void* mat = g_matTextured ? (void*)&g_matTextured
+                              : (g_matFallback ? (void*)&g_matFallback : overlayMat);
+    if (!mat) return;
+
+    std::uintptr_t colorHolderPtr = *(std::uintptr_t*)((std::uintptr_t)screenContext + ScreenContext::mColorHolder);
+    if (!colorHolderPtr || colorHolderPtr < 0x1000) return;
+    float* colorHolder = (float*)colorHolderPtr;
+    const float savedColor[4] = {colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3]};
+    colorHolder[0] = 1.0f; colorHolder[1] = 1.0f; colorHolder[2] = 1.0f; colorHolder[3] = 1.0f;
+
+#if defined(__ANDROID__)
+    // Bind our cape texture on unit 0 and let the textured material sample it.
+    if (revision != g_capeTexUploadedRevision) ensureCapeTexture(revision, pixels);
+    if (g_capeTexId == 0) {
+        colorHolder[0] = savedColor[0]; colorHolder[1] = savedColor[1];
+        colorHolder[2] = savedColor[2]; colorHolder[3] = savedColor[3];
+        return;
+    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g_capeTexId);
+#endif
+
+    // Feet center + body yaw -> cape corners with a time-based hem sway.
+    const float feetX = (pose.minX + pose.maxX) * 0.5f;
+    const float feetY = pose.minY;
+    const float feetZ = (pose.minZ + pose.maxZ) * 0.5f;
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    const float swayPhase = std::chrono::duration<float>(now).count() *
+                            customcapes::render::kCapeSwaySpeed;
+
+    customcapes::render::CapeVertex corners[6];
+    customcapes::render::buildCapeQuad(feetX, feetY, feetZ, pose.yaw, swayPhase, corners);
+
+    const int vertexCount = 2 /* segments */ * 4 /* quad */ * 2 /* windings */;
+    g_tessBegin(tess, nullptr, 1, vertexCount, 0);  // 1 = quads
+
+    const customcapes::render::CapeVertex upper[4] = {corners[0], corners[1], corners[2], corners[3]};
+    const customcapes::render::CapeVertex lower[4] = {corners[3], corners[2], corners[5], corners[4]};
+    emitCapeQuad(tess, upper, camX, camY, camZ);
+    emitCapeQuad(tess, lower, camX, camY, camZ);
+
+    char pad[0x58];
+    std::memset(pad, 0, sizeof(pad));
+    g_renderMesh(screenContext, tess, mat, pad);
+
+#if defined(__ANDROID__)
+    glBindTexture(GL_TEXTURE_2D, 0);
+#endif
+    colorHolder[0] = savedColor[0];
+    colorHolder[1] = savedColor[1];
+    colorHolder[2] = savedColor[2];
+    colorHolder[3] = savedColor[3];
+}
+
+void renderLevelHook(void* _this, void* screenContext, void* a3) {
+    if (g_renderLevelOrig) g_renderLevelOrig(_this, screenContext, a3);
+    if (!g_customCapes || !g_customCapes->enabled) return;
+    renderCapeOverlay(_this, screenContext);
+}
+
+} // namespace
+
 CustomCapesModule::CustomCapesModule()
-    : Module("Custom Capes", "Wear any PNG from the BedrockToolsPlus capes folder as your cape (local only).") {
+    : Module("Custom Capes",
+            "Wear any PNG from the BedrockToolsPlus capes folder as your cape (local only). "
+            "Render mode: Engine mesh patches the skin before the cape mesh is built (apply at world join); "
+            "Overlay draws the cape itself (works mid-game); Both is diagnostic.") {
     g_customCapes = this;
 }
 
@@ -147,14 +475,56 @@ void CustomCapesModule::onInit() {
         [](auto& event) {
             if (g_customCapes) g_customCapes->onLocalPlayerTick(event.player);
         });
+
+    // Every-frame, before-the-render-pass hook: this is what fixes the
+    // KNOWN LIMITATION. ClientInstance::update runs once per frame and the
+    // level render follows it in the same frame, so the first update after
+    // the local player is created patches the cape into SerializedSkinImpl
+    // before ActorRendererData is built from the skin — the engine then
+    // creates the cape mesh and uploads our texture itself.
+    bedrocktools::events::bus().subscribe<bedrocktools::events::ClientInstanceUpdateEvent>(
+        [](auto& event) {
+            if (g_customCapes) g_customCapes->onClientInstanceUpdate(event.clientInstance);
+        });
+
+    // Resolve the render-side functions for the Overlay/Both render modes
+    // (RenderLevel hook + tessellator + material group). These are the same
+    // signatures the Wings module uses; resolving returns 0 harmlessly on
+    // hosts or on builds where a signature shifted, in which case the
+    // overlay simply never draws.
+    const std::uintptr_t tb = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorBegin);
+    if (tb) g_tessBegin = reinterpret_cast<Tessellator_begin_t>(tb);
+    const std::uintptr_t tc = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorColor);
+    if (tc) g_tessColor = reinterpret_cast<Tessellator_color_t>(tc);
+    const std::uintptr_t tv = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorVertex);
+    if (tv) g_tessVertex = reinterpret_cast<Tessellator_vertex_t>(tv);
+    const std::uintptr_t rm = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MeshHelpersRenderMeshImmediately2);
+    if (rm) {
+        g_renderMesh = reinterpret_cast<MeshHelpers_renderMeshImmediately_t>(rm);
+    } else {
+        const std::uintptr_t rm5 = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MeshHelpersRenderMeshImmediately);
+        if (rm5) g_renderMesh = reinterpret_cast<MeshHelpers_renderMeshImmediately_t>(rm5);
+    }
+    const std::uintptr_t rmg = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderMaterialGroupCommon);
+    if (rmg) {
+        const std::uintptr_t groupAddr = resolveADRP(reinterpret_cast<std::uint32_t*>(rmg), 2, 0);
+        if (groupAddr) g_renderMaterialGroup = groupAddr + MaterialGroup::mRenderMaterialGroupOffset;
+    }
 }
 
 void CustomCapesModule::onEnable() {
     if (m_selectedIndex > 0 && !m_capeLoaded && !m_loadFailed) loadSelectedCape();
     m_needsApply = true;
+    publishOverlayCape();
+    syncOverlayHook();
 }
 
 void CustomCapesModule::onDisable() {
+    {
+        std::lock_guard<std::mutex> lock(g_renderMutex);
+        g_pose = CapePose{};
+    }
+    syncOverlayHook();
 }
 
 void CustomCapesModule::ensureCapesDirectory() {
@@ -207,11 +577,33 @@ void CustomCapesModule::loadConfig(const nlohmann::json& j) {
         m_selectedIndex = customcapes::resolveSelectionIndex(parsedIndex, parsedName, m_files);
     }
 
+    if (j.contains("m_capeRenderMode")) {
+        int parsedMode = m_renderMode;
+        std::string parsedLabel;
+        if (j["m_capeRenderMode"].is_string()) {
+            customcapes::parseRadioValue(j["m_capeRenderMode"].get<std::string>(),
+                                         parsedMode, parsedLabel);
+        } else if (j["m_capeRenderMode"].is_number_integer()) {
+            parsedMode = j["m_capeRenderMode"].get<int>();
+        }
+        // The radio labels are the authoritative option list; a plain index
+        // read from an older config is clamped instead.
+        if (!parsedLabel.empty()) {
+            for (int i = 0; i < kRenderModeRadioCount; ++i) {
+                if (parsedLabel == kRenderModeRadioLabels[i]) { parsedMode = i; break; }
+            }
+        }
+        if (parsedMode < 0 || parsedMode >= kRenderModeRadioCount) parsedMode = RenderModeEngine;
+        m_renderMode = parsedMode;
+    }
+
     if (m_selectedIndex != previousIndex || (m_selectedIndex > 0 && !m_capeLoaded)) {
         releaseLoadedCape();
         if (m_selectedIndex > 0) loadSelectedCape();
         m_needsApply = true;
+        publishOverlayCape();
     }
+    syncOverlayHook();
 }
 
 void CustomCapesModule::saveConfig(nlohmann::json& j) {
@@ -220,6 +612,16 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     m_files = customcapes::scanCapeFiles(m_capesDir);
     if (m_selectedIndex > static_cast<int>(m_files.size())) m_selectedIndex = 0;
     j["m_cape"] = customcapes::makeRadioValue(m_selectedIndex, m_files);
+
+    // "0,Engine mesh,Overlay,Both" — the launcher renders any comma-separated
+    // string value as a radio picker (see ModuleMenu.cpp), and
+    // parseRadioValue() maps the chosen label back to the enum.
+    std::string renderRadio = std::to_string(m_renderMode);
+    for (int i = 0; i < kRenderModeRadioCount; ++i) {
+        renderRadio += ',';
+        renderRadio += kRenderModeRadioLabels[i];
+    }
+    j["m_capeRenderMode"] = renderRadio;
 }
 
 void CustomCapesModule::releaseLoadedCape() {
@@ -318,6 +720,10 @@ void CustomCapesModule::onWorldExit() {
     m_hasBackup = false;
     m_backup = CapeBackup{};
     m_needsApply = true; // next live skin must be (re)patched from scratch
+
+    // The player is gone, so the overlay has nothing to anchor to.
+    std::lock_guard<std::mutex> lock(g_renderMutex);
+    g_pose = CapePose{};
 }
 
 void CustomCapesModule::onLocalPlayerTick(void* player) {
@@ -333,6 +739,18 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
         return;
     }
 
+    // Publish the player pose + cape pixels for the overlay render thread.
+    {
+        std::lock_guard<std::mutex> lock(g_renderMutex);
+        g_pose = CapePose{};  // readActorPose leaves .valid untouched on failure
+        readActorPose(player, g_pose);
+        if (m_capeLoaded && m_capeIdSerial != g_capeRevision) {
+            g_capePixels = m_pixels;
+            g_capeRevision = m_capeIdSerial;
+            g_hasCapePixels = !g_capePixels.empty();
+        }
+    }
+
     if (m_selectedIndex > 0 && !m_capeLoaded && enabled) {
         if (m_retryTicks <= 0) {
             loadSelectedCape();
@@ -344,7 +762,10 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
 
     void* skin = resolvePlayerSkin(player);
 
-    if (!enabled || m_selectedIndex <= 0 || !m_capeLoaded || !skin) {
+    // RenderMode Overlay keeps the skin untouched (pure self-rendered cape);
+    // any earlier patch from a previous mode is undone first.
+    if (!enabled || m_selectedIndex <= 0 || !m_capeLoaded || !skin ||
+        m_renderMode == RenderModeOverlay) {
         restoreOriginalCape(skin);
         return;
     }
@@ -509,5 +930,53 @@ void CustomCapesModule::restoreOriginalCape(void* skin) {
     }
 
     clearPatchState();
+}
+
+void CustomCapesModule::onClientInstanceUpdate(void* clientInstance) {
+    if (!clientInstance) return;
+    // Only act when a cape is actually selected and the module is on. The
+    // per-tick hook alone covers restores/teardown, so this per-frame hook
+    // exists purely to land the patch BEFORE the engine builds the cape mesh
+    // on the first frame after join. Gating it also keeps it from chasing a
+    // stale LocalPlayer pointer while sitting in menus.
+    if (!enabled || m_selectedIndex <= 0 || !m_capeLoaded) return;
+
+    // Same vtable dispatch shulkerpreview uses on-device:
+    // vtable[ClientInstanceGetLocalPlayer] returns the LocalPlayer*. This
+    // runs once per frame, before the level render pass, so on the first
+    // frame after joining a world the cape patch lands in SerializedSkinImpl
+    // before ActorRendererData is built from the skin.
+    void** vtable = *reinterpret_cast<void***>(clientInstance);
+    if (!vtable) return;
+    const auto localPlayerFn = reinterpret_cast<void* (*)(void*)>(
+        vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetLocalPlayer]);
+    if (!localPlayerFn) return;
+    void* player = localPlayerFn(clientInstance);
+    if (player) onLocalPlayerTick(player);
+}
+
+void CustomCapesModule::syncOverlayHook() {
+    const bool needsHook = enabled && m_renderMode != RenderModeEngine;
+    if (needsHook && !g_renderLevelHook) {
+        const std::uintptr_t addr = bedrocktools::memory::resolve(
+            bedrocktools::memory::SignatureId::RenderLevel);
+        if (!addr) return;
+        g_renderLevelHook = bedrocktools::hooks::install(
+            reinterpret_cast<void*>(addr),
+            reinterpret_cast<void*>(&renderLevelHook),
+            reinterpret_cast<void**>(&g_renderLevelOrig));
+    } else if (!needsHook && g_renderLevelHook) {
+        bedrocktools::hooks::remove(g_renderLevelHook);
+        g_renderLevelHook = nullptr;
+        g_renderLevelOrig = nullptr;
+    }
+}
+
+void CustomCapesModule::publishOverlayCape() {
+    if (!m_capeLoaded) return;
+    std::lock_guard<std::mutex> lock(g_renderMutex);
+    g_capePixels = m_pixels;
+    g_capeRevision = m_capeIdSerial;
+    g_hasCapePixels = !g_capePixels.empty();
 }
 
