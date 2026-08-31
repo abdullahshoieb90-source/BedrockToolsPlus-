@@ -14,13 +14,26 @@
 // into SerializedSkinImpl::mCapeImage (an mce::Image) of the local player's
 // SerializedSkin so the engine renders it like a normal cape.
 //
+// WHY mCapeId IS ALSO WRITTEN (the actual "cape never shows" gate):
+//
+//  Modern game versions (MC 1.26) only render the classic cape when the
+//  skin's SerializedSkinImpl::mCapeId is non-empty. Writing pixels into
+//  mCapeImage alone is not enough — the renderer checks the id (and the
+//  engine caches cape textures keyed by it), so a bare image blob with an
+//  empty id is never drawn. This is the piece the working Custom Capes
+//  build (the one users had before the module was rewritten) carried: it
+//  wrote a synthetic short-string id ("bedrocktoolsplus-N") next to the
+//  image. The id is regenerated every time a cape is (re)loaded so the
+//  engine's texture cache is invalidated on selection changes and the new
+//  pixels show up without leaving the world.
+//
 // Notes:
 //  * Classic (non-persona) skins only - persona skins render their cape from
-//    persona pieces, not from mCapeImage.
+//    persona pieces, not from mCapeImage, and are left untouched.
 //  * The cape is client-side only: other players still see your real cape.
-//  * The original cape image is backed up on first application and restored
-//    when the module is disabled (or on respawn the game rebuilds the skin
-//    anyway).
+//  * The original cape image AND the original 24-byte mCapeId std::string
+//    slot are backed up on first application and restored when the module
+//    is disabled (or on respawn the game rebuilds the skin anyway).
 //
 // WHY THE PATCH ALSO RUNS FROM ClientInstanceUpdateEvent (the "cape never
 // shows" bug and its fix):
@@ -122,8 +135,9 @@ private:
     void installCapeImage(void* skinImpl, unsigned char* pixels,
                           int width, int height);
 
-    // Copies the current cape image (header fields + pixel bytes) so it can
-    // be restored on disable. Only takes the backup once.
+    // Copies the current cape image (header fields + pixel bytes) and the
+    // raw 24-byte mCapeId std::string slot so both can be restored on disable.
+    // Only takes the backup once.
     void backupOriginalImage(void* skinImpl);
 
     std::vector<std::string> m_capeNames;   // sorted ids, no extension
@@ -135,6 +149,12 @@ private:
     void* m_lastInstalledBlob = nullptr;    // blob currently in the game's cape image
     bool m_needApply = true;                // forces a re-apply even when the blob matches
 
+    // Synthetic mCapeId (libc++ short string, <=22 chars) written next to the
+    // cape image. Regenerated on every load so the engine's cape-texture cache
+    // (keyed by mCapeId) is invalidated and a cape switch shows immediately.
+    std::uint32_t m_capeIdSerial = 0;
+    std::string m_activeCapeId = "bedrocktoolsplus";
+
     // Backup of the original cape image (taken from the first skin modified).
     unsigned char* m_originalPixels = nullptr;
     int m_originalWidth = 0;
@@ -144,4 +164,8 @@ private:
     std::uint32_t m_originalDepth = 0;
     unsigned char m_originalUsage = 0;
     bool m_hasOriginal = false;
+    // Raw 24-byte libc++ std::string slot as it was before we wrote the
+    // synthetic id (may be an empty SSO string or a heap pointer owned by the
+    // engine; only the bytes are stored, never dereferenced).
+    unsigned char m_originalCapeId[24] = {0};
 };

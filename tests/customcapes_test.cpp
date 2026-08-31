@@ -149,6 +149,14 @@ struct FakePlayer {
     void (*&deleter())(unsigned char*) {
         return *reinterpret_cast<void (**)(unsigned char*)>(capeImage() + off::Image::mBlobDeleterOffset);
     }
+
+    // Reads the 24-byte libc++ std::string slot as an SSO string (the fake
+    // skin starts with an all-zero slot = empty string).
+    std::string capeId() const {
+        const unsigned char* p = skinImplBuf.data() + off::SerializedSkinImpl::mCapeId;
+        if ((p[0] & 1u) != 0) return "<long-string>";
+        return std::string(reinterpret_cast<const char*>(p + 1), p[0] >> 1);
+    }
 };
 
 // Writes a deterministic RGBA PNG (each pixel = x ^ (y * 3) pattern) so the
@@ -282,6 +290,11 @@ void runTestApplyAndRestore() {
     check(player.usage() == 1, "image usage is sRGB (1)");
     check(player.width() == 64 && player.height() == 32, "cape dimensions match the PNG");
     check(player.blobSize() == 64u * 32u * 4u, "blob size matches width*height*4");
+    // Modern game versions only render the classic cape when mCapeId is
+    // non-empty (and the engine caches textures keyed by it) - the module must
+    // write a synthetic id next to the image, exactly like the working build.
+    check(player.capeId().rfind("bedrocktoolsplus-", 0) == 0 && player.capeId().size() <= 22,
+          "a synthetic non-empty mCapeId was written next to the image");
 
     // The installed bytes must equal the PNG content.
     bool pixelsMatch = true;
@@ -313,6 +326,67 @@ void runTestApplyAndRestore() {
     check(restored, "restored pixels equal the original cape");
     check(player.format() == 3 && player.depth() == 1 && player.usage() == 1,
           "restored image header keeps the original values");
+    check(player.capeId().empty(), "restore puts the original (empty) mCapeId back");
+}
+
+void runTestCapeIdCacheBusting() {
+    std::printf("--- mCapeId cache invalidation ---\n");
+    const std::string dir = "/tmp/bt-capes-test/capeid";
+    setupTestDir(dir);
+    writeTestCape(capesDir() + "/red.png", 64, 32);
+    writeTestCape(capesDir() + "/blue.png", 64, 32);
+
+    CustomCapesModule module;
+    module.onInit();
+    nlohmann::json j;
+    j["m_cape"] = "red";
+    module.loadConfig(j);
+
+    FakePlayer player(64, 32);
+    check(module.applyCapeToPlayer(player.playerBuf.data()) == true, "first cape applied");
+    const std::string firstId = player.capeId();
+    check(firstId.rfind("bedrocktoolsplus-", 0) == 0, "first install writes a synthetic id");
+
+    // Idempotent ticks keep the same id.
+    check(module.applyCapeToPlayer(player.playerBuf.data()) == false, "repeat tick is a no-op");
+    check(player.capeId() == firstId, "no-op tick leaves the mCapeId stable");
+
+    // Switching capes must regenerate the id so the engine's texture cache
+    // (keyed by mCapeId) is invalidated and the new pixels appear at once.
+    j["m_cape"] = "blue";
+    module.loadConfig(j);
+    check(module.applyCapeToPlayer(player.playerBuf.data()) == true, "cape switch re-applies");
+    check(player.capeId() != firstId && player.capeId().rfind("bedrocktoolsplus-", 0) == 0,
+          "cape switch generates a fresh mCapeId (cache busted)");
+
+    // If the engine cleared our id but kept our blob, the next tick must
+    // restore it (otherwise the cape would silently stop rendering).
+    std::memset(player.skinImplBuf.data() + off::SerializedSkinImpl::mCapeId, 0, 24);
+    check(module.applyCapeToPlayer(player.playerBuf.data()) == true,
+          "a cleared mCapeId triggers a re-apply");
+    check(player.capeId() != firstId && player.capeId().rfind("bedrocktoolsplus-", 0) == 0,
+          "re-apply re-writes a synthetic mCapeId");
+}
+
+void runTestPersonaSkipped() {
+    std::printf("--- persona skins are left untouched ---\n");
+    const std::string dir = "/tmp/bt-capes-test/persona";
+    setupTestDir(dir);
+    writeTestCape(capesDir() + "/red.png", 64, 32);
+
+    CustomCapesModule module;
+    module.onInit();
+    nlohmann::json j;
+    j["m_cape"] = "red";
+    module.loadConfig(j);
+
+    FakePlayer player(64, 32);
+    *reinterpret_cast<unsigned char*>(player.skinImplBuf.data() + off::SerializedSkinImpl::mIsPersona) = 1;
+
+    const std::vector<unsigned char> before = player.skinImplBuf;
+    check(module.applyCapeToPlayer(player.playerBuf.data()) == false,
+          "persona skins are not patched");
+    check(player.skinImplBuf == before, "persona skin is byte-for-byte untouched");
 }
 
 void runTestRestoreGuard() {
@@ -430,6 +504,8 @@ void runTestEarlyPatch() {
     check(player.usage() == 1, "early patch sets sRGB usage");
     check(player.blob() != nullptr, "early patch injects the cape pixels");
     check(player.blobSize() == 64u * 32u * 4u, "early patch blob size = width*height*4");
+    check(player.capeId().rfind("bedrocktoolsplus-", 0) == 0,
+          "early patch also writes the non-empty mCapeId the renderer gates on");
 
     // The installed bytes must equal the PNG content (writeTestCape pattern).
     bool pixelsMatch = player.blob() != nullptr;
@@ -518,6 +594,8 @@ int main() {
     runTestScan();
     runTestConfigRoundtrip();
     runTestApplyAndRestore();
+    runTestCapeIdCacheBusting();
+    runTestPersonaSkipped();
     runTestRestoreGuard();
     runTestSelectionChangeAndRespawn();
     runTestEarlyPatch();
