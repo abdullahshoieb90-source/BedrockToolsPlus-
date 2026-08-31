@@ -46,6 +46,8 @@ The **Custom Capes** module lets you swap your character's cape for your own PNG
 How it works:
 
 - While enabled, the selected PNG is decoded and written into `SerializedSkinImpl::mCapeImage` of the local player's skin, so the engine renders it exactly like a vanilla cape (RGBA8Unorm, sRGB, depth 1 — the same image description real capes carry).
+- The engine bakes your cape mesh — and decides whether you have a cape at all — from your skin **once**, when your renderer data is created at world entry. Patching the skin after that moment never rebuilds the mesh, which is why a cape patched only on the per-tick path would never show. The module therefore also runs the patch from `ClientInstanceUpdateEvent`, which fires once per frame *before* the level render pass: on the first frame after you join, the cape is already in the skin when the mesh is built, so the engine creates a real cape mesh with your PNG (vanilla cape, waving included).
+- Because of the above, **enable the module before entering the world** (from the launcher menu) — or re-enter the world after enabling it mid-game — for the cape to appear.
 - The original cape image is backed up on first application and restored when the module is disabled; on respawn the game rebuilds the skin and the module simply re-applies the cape.
 - Capes are **client-side only** (other players still see your original cape) and require a **classic (non-persona) skin** — persona skins render their cape from persona pieces rather than `mCapeImage`.
 - 64x32 or 128x64 PNGs with full alpha work best; the pixel buffer handed to the engine is owned by the game once installed (freed through the image's deleter slot), so nothing is leaked or double-freed across skin rebuilds.

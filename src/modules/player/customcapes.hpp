@@ -22,6 +22,32 @@
 //    when the module is disabled (or on respawn the game rebuilds the skin
 //    anyway).
 //
+// WHY THE PATCH ALSO RUNS FROM ClientInstanceUpdateEvent (the "cape never
+// shows" bug and its fix):
+//
+//  The engine builds the cape mesh - and decides whether a cape exists at
+//  all - ONCE from the skin, when the player's renderer data is created at
+//  world entry (uploading the cape texture to its cache then). A patch that
+//  first lands in the per-tick path is one frame too late for that first
+//  build: a player who owned no cape at world entry never gets a cape mesh,
+//  so the pixels in mCapeImage are never drawn no matter how often we
+//  rewrite them.
+//
+//  ClientInstance::update runs once per frame and the level render follows
+//  it in the same frame, so ClientInstanceUpdateEvent fires BEFORE the
+//  render pass. The hook resolves the local player through the ClientInstance
+//  vtable slot (VTable::ClientInstanceGetLocalPlayer, the same dispatch the
+//  Shulker Preview module uses on device) and runs the same guarded apply.
+//  On the very first frame after the local player is created the cape is
+//  therefore already in SerializedSkinImpl when the renderer data is built -
+//  the engine creates a real cape mesh and uploads our texture through its
+//  own pipeline (vanilla cape, with the game's waving animation).
+//
+//  Consequence: the module must be enabled BEFORE entering the world (or the
+//  world must be re-entered after enabling it). Enabling it while already
+//  standing in a world patches the skin, but the mesh was already built, so
+//  the cape shows on the next world entry.
+//
 // The blob we install is owned by the engine once installed: the engine calls
 // the deleter slot (freeCapePixels) when it destroys the mce::Image, so we
 // never free installed pixels ourselves and never touch memory a second time.
@@ -38,6 +64,16 @@ public:
 
     // Called from the LocalPlayerTickEvent subscription (game thread).
     void onLocalPlayerTick(void* player);
+
+    // Called from the ClientInstanceUpdateEvent subscription (game thread,
+    // once per frame BEFORE the level render pass). Resolves the local
+    // player through the ClientInstance vtable slot and runs the same
+    // guarded apply as the tick path. This is what makes the cape visible at
+    // all: it lands the patch in SerializedSkinImpl on the first frame after
+    // join, before the engine builds the cape mesh from the skin (see the
+    // "cape never shows" note in the class comment). No-op while disabled -
+    // the tick path owns restore/teardown.
+    void onClientInstanceUpdate(void* clientInstance);
 
     // --- Host-testable helpers -------------------------------------------------
 
