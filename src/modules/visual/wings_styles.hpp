@@ -293,7 +293,7 @@ inline int wingStyleIndexForId(const std::string& id) {
 }
 
 // Serializes the picker value in the launcher's radio format:
-// "<selectedIndex>,<id1>,<id2>,..." (same convention as Custom Capes).
+// "<selectedIndex>,<id1>,<id2>,...".
 inline std::string wingStyleRadioValue(int index) {
     if (index < 0 || index >= kWingStyleCount) index = 0;
     std::string value = std::to_string(index);
