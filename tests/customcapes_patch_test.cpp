@@ -349,6 +349,92 @@ int main() {
                     off::Image::Size),
           "mCapeImage restored after rejoin/disable");
 
+    // ------------------------------------------------------------------
+    // A 22x23 cape plus the "Cape Fit" setting, driven through the real
+    // module config path (loadConfig -> loadSelectedCape -> resampleToCape).
+    // ------------------------------------------------------------------
+    std::printf("22x23 cape + Cape Fit setting through the real module\n");
+    {
+        constexpr std::uint32_t kW = 22, kH = 23;
+        std::vector<std::uint8_t> marker(static_cast<std::size_t>(kW) * kH * 4u);
+        for (std::uint32_t y = 0; y < kH; ++y) {
+            for (std::uint32_t x = 0; x < kW; ++x) {
+                std::uint8_t* p = &marker[(static_cast<std::size_t>(y) * kW + x) * 4u];
+                if (x < 3)          { p[0] = 255; p[1] = 0;   p[2] = 255; } // magenta left
+                else if (x >= kW-3) { p[0] = 0;   p[1] = 255; p[2] = 255; } // cyan right
+                else if (y == 0)    { p[0] = 255; p[1] = 255; p[2] = 0;   } // yellow top
+                else if (y == kH-1) { p[0] = 255; p[1] = 128; p[2] = 0;   } // orange bottom
+                else                { p[0] = 0;   p[1] = 180; p[2] = 0;   } // green body
+                p[3] = 255;
+            }
+        }
+        // Sorts after "Red.png", so it becomes option 2 of the picker.
+        stbi_write_png((root + "/capes/Zz Marker.png").c_str(), kW, kH, 4, marker.data(), kW * 4);
+
+        const std::vector<std::uint8_t> fitPixels =
+            customcapes::resampleToCape(marker.data(), kW, kH, customcapes::CapeFitMode::Fit);
+        const std::vector<std::uint8_t> fillPixels =
+            customcapes::resampleToCape(marker.data(), kW, kH, customcapes::CapeFitMode::Fill);
+        check(fitPixels != fillPixels, "Fit and Fill produce different canvases for 22x23");
+
+        nlohmann::json cfg22;
+        cfg22["m_cape"] = 2;
+        cfg22["m_capeFit"] = 0; // Fit
+        mod.loadConfig(cfg22);
+        mod.enabled = true;
+        mod.onLocalPlayerTick(player.data());
+        void* fit22 = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset);
+        check(fit22 != nullptr &&
+                  sameBytes(static_cast<const std::uint8_t*>(fit22), fitPixels.data(),
+                            fitPixels.size()),
+              "22x23 cape: Fit pixels are injected into mCapeImage");
+        // The left marker band of the source must survive into the cape face.
+        const std::uint8_t* leftEdge =
+            static_cast<const std::uint8_t*>(fit22) +
+            (static_cast<std::size_t>(customcapes::kCapeBackY + 8) * customcapes::kCapeWidth +
+             customcapes::kCapeBackX) * 4u;
+        check(leftEdge[0] > 200 && leftEdge[2] > 200 && leftEdge[1] < 60,
+              "22x23 cape: the source's left edge band is on the cape face (nothing cropped)");
+
+        // Switching the mode in the menu re-resamples and re-patches the skin.
+        nlohmann::json cfgFill = cfg22;
+        cfgFill["m_capeFit"] = 1; // Fill
+        mod.loadConfig(cfgFill);
+        mod.onLocalPlayerTick(player.data());
+        void* fill22 = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset);
+        check(fill22 != nullptr && fill22 != fit22,
+              "Cape Fit change allocates a fresh blob");
+        check(fill22 != nullptr &&
+                  sameBytes(static_cast<const std::uint8_t*>(fill22), fillPixels.data(),
+                            fillPixels.size()),
+              "Cape Fit = Fill injects the Fill-resampled cape");
+
+        // The launcher may report the option's label instead of its index.
+        nlohmann::json cfgLabel = cfg22;
+        cfgLabel["m_capeFit"] = "Fill";
+        mod.loadConfig(cfgLabel);
+        mod.onLocalPlayerTick(player.data());
+        void* label22 = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset);
+        check(label22 != nullptr &&
+                  sameBytes(static_cast<const std::uint8_t*>(label22), fillPixels.data(),
+                            fillPixels.size()),
+              "Cape Fit reported by label (\"Fill\") selects the same mode");
+
+        // saveConfig must publish the setting in the menu's radio format.
+        nlohmann::json saved;
+        mod.saveConfig(saved);
+        check(saved.contains("m_capeFit") && saved["m_capeFit"].is_string() &&
+                  saved["m_capeFit"].get<std::string>().rfind(",Fit,Fill,Crop") != std::string::npos,
+              "saveConfig writes the Cape Fit radio (\"<index>,Fit,Fill,Crop\")");
+
+        mod.enabled = false;
+        mod.onLocalPlayerTick(player.data());
+        check(sameBytes(skinBase + off::SerializedSkinImpl::mCapeImage,
+                        skinSnapshot.data() + off::SerializedSkinImpl::mCapeImage,
+                        off::Image::Size),
+              "mCapeImage restored after the Cape Fit switches");
+    }
+
     std::printf("\n%s\n", g_failures == 0 ? "all custom capes patch tests passed"
                                           : "SOME PATCH TESTS FAILED");
     return g_failures == 0 ? 0 : 1;
