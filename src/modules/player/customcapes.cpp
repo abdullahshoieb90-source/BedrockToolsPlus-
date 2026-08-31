@@ -35,6 +35,57 @@ void capePixelsDeleter(unsigned char* pixels) {
     std::free(pixels);
 }
 
+// ---------------------------------------------------------------------------
+// mCapeId handling
+//
+// Modern game versions (MC 1.26) only render the classic cape when
+// SerializedSkinImpl::mCapeId is non-empty, and the engine caches cape
+// textures keyed by that id. So writing mCapeImage alone is not enough: we
+// must also install a synthetic id next to it, and change that id whenever a
+// different cape is (re)loaded so the texture cache is invalidated. This is
+// what the pre-rewrite Custom Capes build did and why its cape showed.
+//
+// mCapeId is a libc++ std::string (24 bytes). We only ever write short
+// strings (<=22 chars) straight into its SSO layout: byte 0 = len << 1 (low
+// bit clear), payload at byte 1.., no heap allocation, no capacity
+// bookkeeping. The original 24 bytes are backed up byte-for-byte and restored
+// on disable (they may describe a heap string owned by the engine - we never
+// dereference or free them, we just put the bytes back).
+// ---------------------------------------------------------------------------
+
+constexpr const char* kCapeIdBase = "bedrocktoolsplus";
+constexpr std::size_t kCapeIdBaseLen = 16; // strlen("bedrocktoolsplus")
+constexpr std::size_t kCapeIdMaxLen = 22;  // libc++ short-string capacity inside 24 bytes
+
+// Writes a short (SSO) std::string into a libc++ string slot (24 bytes) that
+// the engine already owns. len must be <= kCapeIdMaxLen.
+void writeShortStdString(std::uintptr_t addr, const char* text, std::size_t len) {
+    unsigned char* p = reinterpret_cast<unsigned char*>(addr);
+    std::memset(p, 0, 24);
+    p[0] = static_cast<unsigned char>(len << 1);
+    std::memcpy(p + 1, text, len);
+}
+
+// True when the SSO string at `addr` holds exactly `text` (len <= 22).
+bool shortStdStringEquals(std::uintptr_t addr, const char* text, std::size_t len) {
+    if (len > kCapeIdMaxLen) return false;
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(addr);
+    return p[0] == static_cast<unsigned char>(len << 1) &&
+           std::memcmp(p + 1, text, len) == 0;
+}
+
+// Builds the next synthetic cape id ("bedrocktoolsplus-N"), always short
+// enough to stay inside the SSO layout.
+std::string makeNextCapeId(std::uint32_t& serial) {
+    ++serial;
+    std::string id = std::string(kCapeIdBase) + "-" + std::to_string(serial);
+    if (id.size() > kCapeIdMaxLen) {
+        id = std::string(kCapeIdBase) + "-" + std::to_string(serial % 1000000u);
+        if (id.size() > kCapeIdMaxLen) id.resize(kCapeIdMaxLen);
+    }
+    return id;
+}
+
 // Simple two-tone default cape (64x32) written into an empty capes folder so
 // the selector always has at least one entry. Users can delete it.
 void writeDefaultCape(const std::string& path) {
@@ -316,6 +367,15 @@ void CustomCapesModule::backupOriginalImage(void* skinImpl) {
     m_originalDepth = *reinterpret_cast<std::uint32_t*>(image + Image::mDepth);
     m_originalUsage = *reinterpret_cast<unsigned char*>(image + Image::mUsage);
 
+    // The cape id next to the image gates rendering, so it must be restored
+    // together with the image. Store the raw std::string slot bytes (24) -
+    // exactly what the engine had, including a possible heap-string pointer we
+    // must treat as opaque.
+    std::memcpy(m_originalCapeId,
+                reinterpret_cast<const void*>(
+                    reinterpret_cast<std::uintptr_t>(skinImpl) + SerializedSkinImpl::mCapeId),
+                sizeof(m_originalCapeId));
+
     if (blob && size > 0) {
         m_originalPixels = static_cast<unsigned char*>(std::malloc(size));
         if (m_originalPixels) std::memcpy(m_originalPixels, blob, size);
@@ -358,13 +418,28 @@ bool CustomCapesModule::applyCapeToPlayer(void* player) {
         reinterpret_cast<std::uintptr_t>(skinRef) + SerializedSkinRef::mSkinImpl);
     if (!skinImpl) return false;
 
+    // Persona skins render their cape from persona pieces, not from
+    // mCapeImage/mCapeId - patching them is pointless (and the id write would
+    // be meaningless), so leave them alone.
+    if (*reinterpret_cast<const bool*>(
+            reinterpret_cast<std::uintptr_t>(skinImpl) + SerializedSkinImpl::mIsPersona)) {
+        return false;
+    }
+
     const std::uintptr_t image =
         reinterpret_cast<std::uintptr_t>(skinImpl) + SerializedSkinImpl::mCapeImage;
+    const std::uintptr_t capeIdAddr =
+        reinterpret_cast<std::uintptr_t>(skinImpl) + SerializedSkinImpl::mCapeId;
     void* currentBlob = *reinterpret_cast<void**>(image + Image::mBytesOffset);
-    // Fast path: our cape is already installed on this skin and nothing
-    // changed (covers every respawn tick; the engine only replaces the blob
-    // when the skin itself is rebuilt).
-    if (!m_needApply && currentBlob == m_lastInstalledBlob) return false;
+    // Fast path: our cape image AND our synthetic mCapeId are already in
+    // place and nothing changed (covers every respawn tick; the engine only
+    // replaces the blob when the skin itself is rebuilt). The id check
+    // matters: if the engine cleared our id (but kept the blob), the cape
+    // would stop rendering and we must re-apply to restore it.
+    if (!m_needApply && currentBlob == m_lastInstalledBlob &&
+        shortStdStringEquals(capeIdAddr, m_activeCapeId.c_str(), m_activeCapeId.size())) {
+        return false;
+    }
 
     unsigned char* pixels = nullptr;
     int width = 0;
@@ -374,6 +449,11 @@ bool CustomCapesModule::applyCapeToPlayer(void* player) {
         if (pixels) stbi_image_free(pixels);
         return false;
     }
+
+    // A fresh synthetic cape id busts the engine's texture cache (keyed by
+    // mCapeId) so a reselection/re-apply shows immediately instead of the
+    // previously cached cape.
+    m_activeCapeId = makeNextCapeId(m_capeIdSerial);
 
     // Back up the original cape before the engine's blob is released.
     if (!m_hasOriginal) backupOriginalImage(skinImpl);
@@ -388,6 +468,9 @@ bool CustomCapesModule::applyCapeToPlayer(void* player) {
     stbi_image_free(pixels);
 
     installCapeImage(skinImpl, owned, width, height);
+    // The non-empty id is what makes the engine render the classic cape at
+    // all (see the mCapeId note at the top of this file).
+    writeShortStdString(capeIdAddr, m_activeCapeId.c_str(), m_activeCapeId.size());
     m_lastInstalledBlob = owned;
     m_needApply = false;
     return true;
@@ -405,6 +488,8 @@ void CustomCapesModule::restoreOriginalCape(void* player) {
 
     const std::uintptr_t image =
         reinterpret_cast<std::uintptr_t>(skinImpl) + SerializedSkinImpl::mCapeImage;
+    const std::uintptr_t capeIdAddr =
+        reinterpret_cast<std::uintptr_t>(skinImpl) + SerializedSkinImpl::mCapeId;
 
     void* oldBlob = *reinterpret_cast<void**>(image + Image::mBytesOffset);
     // Safety: if the skin no longer holds the blob we installed (the game
@@ -431,6 +516,11 @@ void CustomCapesModule::restoreOriginalCape(void* player) {
         pixels ? &capePixelsDeleter : nullptr;
     *reinterpret_cast<std::size_t*>(image + Image::mBlobSizeOffset) =
         pixels ? static_cast<std::size_t>(m_originalSize) : 0;
+
+    // Restore the original mCapeId bytes (byte-for-byte, including the
+    // original SSO/empty id the skin had before we touched it).
+    std::memcpy(reinterpret_cast<void*>(capeIdAddr), m_originalCapeId,
+                sizeof(m_originalCapeId));
 
     m_lastInstalledBlob = nullptr;
 }
