@@ -32,6 +32,10 @@
 #include "config/ConfigManager.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
+// This test binary is standalone (customcapes.cpp no longer defines
+// stbi_write_*), so the write implementation is provided here, mirroring
+// tests/wings_patch_test.cpp.
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/stb_image_write.h>
 
 #include <algorithm>

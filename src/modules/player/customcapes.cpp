@@ -6,7 +6,10 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// stb_image_write's implementation is provided by the Skin Stealer module
+// (src/modules/player/skinstealer.cpp), the same arrangement Wings uses:
+// only one translation unit in the shared object may define it, otherwise
+// the linker fails with multiple-definition errors on stbi_write_* symbols.
 #include <stb/stb_image_write.h>
 
 #include <algorithm>
