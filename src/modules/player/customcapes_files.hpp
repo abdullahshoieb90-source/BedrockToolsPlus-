@@ -4,8 +4,8 @@
 //
 // Everything in this header is plain C++ with no Minecraft, launcher or
 // mod-menu dependencies so it can be unit-tested on the host (see
-// tests/customcapes_patch_test.cpp and tests/customcapes_ui_test.cpp). It
-// covers the three "dumb data" problems of the module:
+// tests/customcapes_test.cpp). It covers the three "dumb data" problems of
+// the module:
 //
 //   * scanning the capes directory for usable PNG files
 //   * (de)serializing the launcher "radio" config value used for the picker
@@ -486,57 +486,6 @@ inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::u
     // --- 5) Elytra: reuse the cape design with tapered alpha mask ---
     paintElytraFromCape(out);
 
-    return out;
-}
-
-// ---------------------------------------------------------------
-// Cape-face preview ("UV crop") for the in-game picker grid.
-// ---------------------------------------------------------------
-// The mod-menu overlay's Image draw command has no UV rectangle: whatever
-// bitmap was registered with pl::modmenu::registerImage is stretched into
-// the card rect. Registering the whole 64x32 canvas would therefore show
-// the complete texture atlas (lining, edge strips, Elytra UV area) instead
-// of the cape design. To keep the preview honest the visible outer cape
-// face is cut out before the pixels are handed to the texture loader:
-// every preview texel is bilinearly sampled from the back-face region
-// (x=1..10, y=1..16 of the canvas) with half-pixel-center mapping and the
-// sample clamped into the region, so no adjacent atlas texel (front face,
-// side strips, Elytra) can bleed into the thumbnail.
-inline constexpr std::uint32_t kCapePreviewScale = 8;
-inline constexpr std::uint32_t kCapePreviewWidth = kCapeBackWidth * kCapePreviewScale;   // 80
-inline constexpr std::uint32_t kCapePreviewHeight = kCapeBackHeight * kCapePreviewScale; // 128
-
-inline std::vector<std::uint8_t> makeCapeFacePreview(const std::uint8_t* canvas,
-                                                     std::uint32_t scale = kCapePreviewScale) {
-    std::vector<std::uint8_t> out;
-    if (!canvas || scale == 0) return out;
-
-    const std::uint32_t outW = kCapeBackWidth * scale;
-    const std::uint32_t outH = kCapeBackHeight * scale;
-    out.resize(static_cast<std::size_t>(outW) * static_cast<std::size_t>(outH) * 4u, 0);
-
-    const double faceMaxX = static_cast<double>(kCapeBackX + kCapeBackWidth - 1);
-    const double faceMaxY = static_cast<double>(kCapeBackY + kCapeBackHeight - 1);
-
-    for (std::uint32_t y = 0; y < outH; ++y) {
-        for (std::uint32_t x = 0; x < outW; ++x) {
-            // Destination pixel center -> source canvas coordinate. The
-            // -0.5 is the standard half-pixel offset (texel centers sit at
-            // integer coordinates in bilinearSample's convention).
-            double srcX = kCapeBackX + (static_cast<double>(x) + 0.5) *
-                                           kCapeBackWidth / static_cast<double>(outW) - 0.5;
-            double srcY = kCapeBackY + (static_cast<double>(y) + 0.5) *
-                                           kCapeBackHeight / static_cast<double>(outH) - 0.5;
-            if (srcX < kCapeBackX) srcX = kCapeBackX;
-            if (srcX > faceMaxX) srcX = faceMaxX;
-            if (srcY < kCapeBackY) srcY = kCapeBackY;
-            if (srcY > faceMaxY) srcY = faceMaxY;
-
-            std::uint8_t sampled[4];
-            bilinearSample(canvas, kCapeWidth, kCapeHeight, srcX, srcY, sampled);
-            std::memcpy(&out[(static_cast<std::size_t>(y) * outW + x) * 4u], sampled, 4);
-        }
-    }
     return out;
 }
 
