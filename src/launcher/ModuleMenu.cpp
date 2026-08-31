@@ -43,6 +43,16 @@ static const char* explicitParentFor(const std::string& key) {
     return nullptr;
 }
 
+// Settings replaced by a custom in-game UI. The launcher menu can only
+// render text radio rows, so the Custom Capes "Cape" picker — a grid of
+// image cards — is drawn by the module itself (CustomCapesUi) and its text
+// configuration row is not registered here. The value is still written to
+// config.json by CustomCapesModule::saveConfig() for persistence.
+static bool hasCustomUiInsteadOfMenuRow(std::string_view moduleId,
+                                         std::string_view key) {
+    return moduleId == "bedrocktoolsplus.Custom Capes" && key == "m_cape";
+}
+
 static void onModuleToggle(std::string_view module_id, bool enabled) {
     auto* mod = ModuleRegistry::get().find(module_id);
     if (!mod) return;
@@ -143,6 +153,7 @@ void registerModulesWithLauncher() {
                 if (k == bk) { isBase = true; break; }
             }
             if (isBase) continue;
+            if (hasCustomUiInsteadOfMenuRow(mod->moduleId, k)) continue;
 
             std::string displayName;
             std::string sourceKey = k;
