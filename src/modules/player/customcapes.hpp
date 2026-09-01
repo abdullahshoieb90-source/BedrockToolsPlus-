@@ -76,18 +76,6 @@ public:
     // Directory the module watches; exposed for the menu description.
     const std::string& capesDirectory() const { return m_capesDir; }
 
-    // Cape Physics coordination: while the Cape Physics module hides the
-    // game's classic cape mesh (it clears SerializedSkinImpl::mCapeId), this
-    // module must keep patching the cape PIXELS (the physics cape renders
-    // them) but must not write its synthetic cape id back into the skin —
-    // otherwise the two modules would fight over mCapeId every tick and the
-    // id would flicker between empty and "bedrocktools-N". When suppression
-    // is lifted the next tick notices the id is no longer intact and
-    // re-applies it, so lifting the suppression needs no extra handling
-    // here. Runtime-only state, never serialized.
-    void setCapeMeshSuppressed(bool suppressed) { m_capeMeshSuppressed = suppressed; }
-    bool capeMeshSuppressed() const { return m_capeMeshSuppressed; }
-
 private:
     // True when the player pointer and its level link are both usable.
     // During Leave World the engine nulls Actor::mLevel before the player
@@ -144,10 +132,6 @@ private:
     };
     CapeBackup m_backup;
     bool m_hasBackup = false;
-
-    // Set by the Cape Physics module while it hides the game's cape mesh
-    // (see setCapeMeshSuppressed).
-    bool m_capeMeshSuppressed = false;
 };
 
 extern CustomCapesModule* g_customCapes;

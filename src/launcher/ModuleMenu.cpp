@@ -256,18 +256,6 @@ void registerModulesWithLauncher() {
                     // Wings flap speed multiplier (Wings module).
                     minVal = 0.1f;
                     maxVal = 10.0f;
-                } else if (kLower.find("windstrength") != std::string::npos) {
-                    // Cape Physics gust intensity (0 = dead calm, 2 = storm).
-                    minVal = 0.0f;
-                    maxVal = 2.0f;
-                } else if (kLower.find("gravity") != std::string::npos) {
-                    // Cape Physics cloth gravity multiplier (1 = default).
-                    minVal = 0.0f;
-                    maxVal = 2.0f;
-                } else if (kLower.find("stiffness") != std::string::npos) {
-                    // Cape Physics cloth rigidity (1 = stiff sheet).
-                    minVal = 0.05f;
-                    maxVal = 1.0f;
                 } else if (kLower.find("speed") != std::string::npos || kLower.find("strength") != std::string::npos) {
                     minVal = 0.05f;
                     maxVal = 1.0f;
