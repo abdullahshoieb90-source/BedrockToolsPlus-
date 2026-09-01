@@ -9,7 +9,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 46 configurable modules
+- 45 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -17,7 +17,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Block Outline, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Cape Physics
+**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Block Outline, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass
 
 **HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair
 
@@ -57,18 +57,6 @@ Images that are not exactly 64x32 are resampled (bilinear) onto the cape's outer
 - **Crop** — the image is scaled to cover the face and the part that does not fit is cropped away from the center (35% of a 22x23 cape). No distortion, but the edges of the artwork are lost.
 
 The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
-
-## Cape Physics
-
-The **Cape Physics** module replaces the flat, rigid cape with a real cloth simulation — the cape hangs, sways, flutters while you run, streams behind you while falling or elytra-gliding and sweeps around your body when you turn.
-
-1. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Cape Physics**.
-2. Pick where the cloth's colors come from in the module's **Cape** selector: **Worn Cape** (default — whatever cape the game currently renders: vanilla, marketplace, or the pixels the Custom Capes module patched in) or any PNG from the shared `capes` folder.
-3. Tune the feel with **Wind** (gust intensity), **Gravity**, **Stiffness** (cloth rigidity) and **Detail** (**Native** = a 10x16 cloth, one cell per cape pixel — pixel-identical to the cape texture; **Fine** = a denser 14x22 grid with softer folds).
-
-Every cape size is supported: source images of **any** size (22x23, 64x32, HD 128x64, 176x184, 704x736, ...) are mapped through the same proportional sampler the Custom Capes module uses, and each cloth cell box-filters exactly the texels it covers. A 704x736 PNG and a 64x32 PNG of the same design render identically.
-
-The simulation runs client-side as a world-space overlay (`RenderLevel` hook + tessellator, the same pattern as Wings): a Verlet particle sheet pinned to your shoulder line, pushed by gravity, a wind field and the relative wind of your own movement, held together by distance constraints and kept out of your body by an elliptic collision cylinder. While the module is enabled it hides the game's own flat cape mesh (clearing `mCapeId` — the same field Custom Capes writes, in reverse) and restores it on disable; the two modules coordinate so they never fight over the field. The overlay is third-person only and, like Custom Capes, purely visual and local. Developers can preview the cape offline with `./scripts/gen_capephysics_preview.sh`, which renders rest / sprint / storm / any-size / detail panels to PNGs in `build/capephysics-preview/` using the exact simulation the game runs.
 
 ## System Requirements
 
