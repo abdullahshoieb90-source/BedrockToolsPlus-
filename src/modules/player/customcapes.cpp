@@ -354,8 +354,13 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
         m_needsApply = true;
     }
 
-    // Patch already in place and untouched? Nothing to do this tick.
-    const bool idIntact = shortStdStringEquals(capeIdAddr, m_activeCapeId.c_str(),
+    // Patch already in place and untouched? Nothing to do this tick. While
+    // Cape Physics suppresses the mesh (see setCapeMeshSuppressed) the cape
+    // id in the skin is deliberately empty, so "id intact" must not be
+    // required — otherwise the module would rewrite the id (and churn the
+    // pixel blob) on every single tick while the physics cape is drawn.
+    const bool idIntact = m_capeMeshSuppressed ||
+                          shortStdStringEquals(capeIdAddr, m_activeCapeId.c_str(),
                                                m_activeCapeId.size());
     if (!m_needsApply && m_injectedBlob != nullptr &&
         *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) == m_injectedBlob &&
@@ -382,7 +387,12 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
     m_injectedBlob = newBlob;
     if (previousBlob != nullptr) std::free(previousBlob);
 
-    writeShortStdString(capeIdAddr, m_activeCapeId.c_str(), m_activeCapeId.size());
+    // While Cape Physics hides the game's cape mesh the id must stay empty;
+    // write it again as soon as the suppression is lifted (the idIntact
+    // check above then fails once and re-applies the whole patch).
+    if (!m_capeMeshSuppressed) {
+        writeShortStdString(capeIdAddr, m_activeCapeId.c_str(), m_activeCapeId.size());
+    }
 
     m_needsApply = false;
     return true;
