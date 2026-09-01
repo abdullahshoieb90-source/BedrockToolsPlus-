@@ -23,7 +23,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ, Custom Capes
 
-**Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter
+**Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, Pack Merger
 
 ## Wings
 
@@ -50,6 +50,27 @@ The **Custom Capes** module lets you wear any PNG as a classic cape.
 Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
 
 The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
+
+## Pack Merger
+
+The **Pack Merger** module lets conflicting resource packs work together. Minecraft Bedrock loads a resource file from the highest pack on the stack that contains it, so two packs that both edit the same file — for example a Java-animations pack and a Cape-Physics pack both shipping `entity/player.entity.json` — can never coexist: only the top pack's version is loaded and the other pack silently stops working.
+
+When enabled, the module automates the usual manual fix with no file editing:
+
+1. It reads your global pack stack (`<com.mojang>/global_resource_packs.json`).
+2. Every `.json` or `.lang` file that exists in **more than one** of those packs is deep-merged: the top pack wins every conflicting key, keys that only exist in lower packs are copied in recursively, and `scripts.animate` binding lists are unioned so every pack's animations stay bound.
+3. The merged files are written to a small generated pack `resource_packs/bedrocktoolsplus-merged/` (fixed UUID, shows up as **BTP Merged Packs**).
+4. That pack is appended to the global stack — and to any world's stack that uses one of the participating packs — so the merged files load above your packs. Everything else (textures, sounds, unique files) still resolves through your own packs exactly like vanilla.
+5. Disabling the module removes the generated pack from the stacks again. Your packs are never modified, and a one-time `.btp-backup` copy is kept next to each stack file before it is first rewritten.
+
+Usage: enable **Pack Merger**, restart Minecraft once, done. Add or remove resource packs whenever you like — the merged pack is rebuilt automatically on the next launch. The module's menu entry shows the last build status, an **Add To Worlds** toggle (on by default) and a **Rebuild Now** button.
+
+Notes and limits:
+
+- Only packs enabled in the **global** resource pack stack participate; packs enabled per world count only through the world-stack update in step 4.
+- Binary conflicts (both packs shipping the same `.png`) are not merged — the top pack's file wins, like vanilla.
+- A pack whose JSON is invalid keeps vanilla behavior for that file (the top pack's bytes are used instead of a merge).
+- Files inside `subpacks/` are ignored.
 
 ## System Requirements
 

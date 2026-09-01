@@ -139,6 +139,7 @@ void registerAllModules() {
     registry.emplace<ShulkerPreviewModule>();
     registry.emplace<ConnectedGlassModule>();
     registry.emplace<ForceGlobalRPModule>();
+    registry.emplace<PackMergerModule>();
     registry.emplace<CommentKey>();
     registry.emplace<CommandHotkeyModule>();
     registry.emplace<CrosshairModule>();
