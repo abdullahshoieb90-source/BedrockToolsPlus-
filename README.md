@@ -43,18 +43,11 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 
 The **Custom Capes** module lets you wear any PNG as a classic cape.
 
-1. Put cape images (`.png` — **any size**: 64x32, 22x23, 88x92, 176x184, 704x736, 128x64 HD, …) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a sample cape).
+1. Put cape images (`.png`, ideally 64x32 — any other size is scaled automatically) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a sample cape).
 2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Custom Capes**.
 3. Pick a file in the module's **Cape** selector — the cape updates in-game immediately. Choose `None` to bring your vanilla cape back.
-4. If the artwork is not 64x32, pick how it is mapped in the module's **Cape Fit** selector (see below). The cape re-applies immediately.
 
-Images that are not exactly 64x32 are resampled (bilinear) onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing, and HD canvases (2:1 and at least 128 px wide, e.g. 128x64 or 256x128) are scaled down over the whole 64x32 canvas so their layout — including hand-authored Elytra pixels — survives.
-
-**Cape Fit** decides what happens to a non-64x32 image:
-
-- **Fit** (default) — the whole image is used with its aspect ratio intact. It is scaled into the largest centered rectangle that still fits the 10x16 cape face, and the leftover bands are filled by continuing the image's own edge colors, so nothing is cut off, nothing is stretched and there are no black bars. A 22x23 cape becomes a 10x10 design centered on the cape.
-- **Fill** — the whole image is stretched over the entire cape face. Nothing is cut off either, but the aspect ratio is not preserved.
-- **Crop** — the image is scaled to cover the face and the part that does not fit is cropped away from the center (35% of a 22x23 cape). No distortion, but the edges of the artwork are lost.
+Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
 
 The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
 
