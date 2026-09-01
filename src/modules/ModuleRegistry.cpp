@@ -45,6 +45,7 @@
 #include "visual/swingmodifier.hpp"
 #include <bedrocktools/modules/visual/wings.hpp>
 #include "player/autosprint.hpp"
+#include "visual/capephysics.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -146,4 +147,9 @@ void registerAllModules() {
     registry.emplace<WingsModule>();
     registry.emplace<AutoSprintModule>();
     registry.emplace<CustomCapesModule>();
+    // Registered after Custom Capes on purpose: both tick hooks touch the
+    // skin's cape fields, and Cape Physics must run last within a tick so
+    // it can hide the cape mesh (clear mCapeId) after Custom Capes has had
+    // its say (see CustomCapesModule::setCapeMeshSuppressed).
+    registry.emplace<CapePhysicsModule>();
 }
