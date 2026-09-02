@@ -133,6 +133,7 @@ LevelGetHitResult g_getHitResult = nullptr;
 
 std::uintptr_t g_renderMaterialGroup = 0;
 MaterialPtr g_matSelection;
+MaterialPtr g_matFill;
 
 std::mutex g_targetMutex;
 bedrocktools::sdk::BlockPos g_target{};
@@ -194,6 +195,26 @@ void ensureMaterials() {
     if (!g_renderMaterialGroup) return;
 
     if (!g_matSelection) g_matSelection = getMaterial("selection_box");
+
+    // The 3D fill needs a vertex-color material that alpha-blends. The
+    // selection overlay material is depth-tested (which keeps the thick frame
+    // from X-raying through walls), but it washes the vertex color out of
+    // filled quads, so drawing the translucent box with it reads as a solid
+    // white sheet on the block's top face instead of a tint. Prefer a
+    // vertex-color fill for the translucent volume and keep selection_box for
+    // the opaque frame.
+    if (!g_matFill) {
+        static const char* kFillNames[] = {
+            "ui_fill_color",
+            "ui_textured_and_glcolor",
+            "debug_filled_box",
+            "selection_box",
+        };
+        for (const char* name : kFillNames) {
+            g_matFill = getMaterial(name);
+            if (g_matFill) break;
+        }
+    }
 }
 
 void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParams) {
@@ -233,13 +254,17 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     const auto camera = *reinterpret_cast<const bedrocktools::sdk::Vec3*>(
         playerRendererAddress + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
     // The game's own selection material is always initialized with the level
-    // renderer and has the depth/blend state expected for a block outline.
+    // renderer and has the depth state expected for a block outline. It keeps
+    // the opaque frame from X-raying through walls, but it washes vertex color
+    // out of filled quads, so the translucent 3D fill uses a separate
+    // vertex-color fill material instead (see ensureMaterials).
     void* overlayMaterial = reinterpret_cast<void*>(
         playerRendererAddress +
         bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
 
     ensureMaterials();
     void* matInner = g_matSelection ? static_cast<void*>(&g_matSelection) : overlayMaterial;
+    void* matFill = g_matFill ? static_cast<void*>(&g_matFill) : matInner;
 
     const float savedColor[4] = {
         colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3]
@@ -315,7 +340,10 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     // The faces are expanded slightly (less than the wireframe) so they never
     // z-fight with the block's own surface. Only the faces pointing at the
     // camera are drawn, so the tint stays on the surface of the block and the
-    // color never bleeds through to its inside.
+    // color never bleeds through to its inside. Drawn with the vertex-color
+    // fill material rather than the selection overlay: the overlay washes the
+    // vertex color out of filled quads, which made the box read as a solid
+    // white sheet on the block's top face instead of a translucent tint.
     if (g_module->show3d) {
         constexpr float kFillAlpha = 0.25f;
         const auto faces = bedrocktools::modules::blockoutline::makeFaces(
@@ -351,7 +379,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
                 }
             }
             std::memset(meshParams, 0, sizeof(meshParams));
-            g_renderMesh(screenContext, tessellator, matInner, meshParams);
+            g_renderMesh(screenContext, tessellator, matFill, meshParams);
         }
     }
 
