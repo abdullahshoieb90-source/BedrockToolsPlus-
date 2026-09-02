@@ -19,7 +19,7 @@ public:
     // instead of the old Red/Green/Blue sliders. The legacy per-channel keys
     // are still accepted when loading older configs. Only used while `rgb`
     // (rainbow mode) is off.
-    std::uint32_t outlineColor = 0xFF00FFFFu;
+    std::uint32_t outlineColor = 0xFFFFFFFFu;  // white by default
 
     // Opt-in menu toggle ("Show 3D"): draws the targeted block as a
     // translucent filled box (a true 3D volume) in addition to the wireframe

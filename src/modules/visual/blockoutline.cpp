@@ -549,7 +549,7 @@ void BlockOutlineModule::loadConfig(const nlohmann::json& json) {
                             json.contains("outlineGreen") ||
                             json.contains("outlineBlue");
         if (hasRgb) {
-            const int r = readChannel("outlineRed", 0);
+            const int r = readChannel("outlineRed", 255);
             const int g = readChannel("outlineGreen", 255);
             const int b = readChannel("outlineBlue", 255);
             outlineColor = 0xFF000000u |
