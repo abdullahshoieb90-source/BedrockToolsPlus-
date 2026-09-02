@@ -21,13 +21,13 @@ public:
     // (rainbow mode) is off.
     std::uint32_t outlineColor = 0xFF00FFFFu;
 
-    // Opt-in menu toggle ("Block 3d"): draws the targeted block as a
+    // Opt-in menu toggle ("Show 3D"): draws the targeted block as a
     // translucent filled box (a true 3D volume) in addition to the wireframe
     // edges. Defaults to off, so the plain wireframe is what players get
     // unless they explicitly enable the 3D box. Only the faces pointing at
     // the camera are drawn, so the tint stays on the block's surface instead
     // of bleeding through to the inside.
-    bool block3d = false;
+    bool show3d = false;
 
     // Rainbow mode ("Rgb" menu toggle): while enabled, the outline color
     // cycles continuously through the RGB spectrum and overrides the static
@@ -41,7 +41,7 @@ public:
     // strips lying on the visible faces of the block (never as camera-facing
     // bars floating in space), so raising the size only makes the classic
     // wireframe bolder - it cannot turn into a 3D cube. The explicit
-    // "Block 3d" toggle is the only thing that produces a 3D look.
+    // "Show 3D" toggle is the only thing that produces a 3D look.
     float lineThickness = 1.0f;
 
 private:

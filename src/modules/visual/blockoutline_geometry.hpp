@@ -152,7 +152,7 @@ constexpr std::array<bool, 12> makeEdgeVisibility(
 // overshot both ends by half the width. Those bars have real depth (they
 // stick out of the block towards the eye and away from it) and, where the
 // three edges of the near corner meet, they form the "corner of a box" look,
-// so raising Line Size made the frame read as a 3D cube even with Block 3d
+// so raising Line Size made the frame read as a 3D cube even with Show 3D
 // off. Painting the frame onto the surface of each visible face keeps the
 // exact same silhouette as the classic hairline wireframe, just wider, and
 // it can never look like a volume because nothing leaves the face plane.
