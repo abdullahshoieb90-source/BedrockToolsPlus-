@@ -36,10 +36,12 @@ public:
     bool rgb = false;
 
     // Line size (menu slider units). 1.0 keeps the classic hairline box;
-    // anything above that is drawn as real camera-facing geometry because GL
-    // line width is ignored by most mobile GLES drivers. Only edges facing
-    // the camera are drawn, so a thick outline still reads as a flat frame
-    // rather than a see-through 3D wireframe.
+    // anything above that is drawn as real geometry because GL line width is
+    // ignored by most mobile GLES drivers. The wide frame is painted as flat
+    // strips lying on the visible faces of the block (never as camera-facing
+    // bars floating in space), so raising the size only makes the classic
+    // wireframe bolder - it cannot turn into a 3D cube. The explicit
+    // "Block 3d" toggle is the only thing that produces a 3D look.
     float lineThickness = 1.0f;
 
 private:
