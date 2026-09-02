@@ -21,18 +21,18 @@ public:
     // (rainbow mode) is off.
     std::uint32_t outlineColor = 0xFFFFFFFFu;  // white by default
 
-    // Opt-in menu toggle ("Show 3D"): draws the targeted block as a
-    // translucent filled box (a true 3D volume) in addition to the wireframe
-    // edges. Defaults to off, so the plain wireframe is what players get
-    // unless they explicitly enable the 3D box. Only the faces pointing at
-    // the camera are drawn, so the tint stays on the block's surface instead
-    // of bleeding through to the inside.
+    // Opt-in menu toggle ("Show 3D"): draws the targeted block as a full
+    // twelve-edge 3D wireframe instead of a filled box. The ordinary outline
+    // still paints the near edges; this adds the hidden/back edges so the
+    // whole cube silhouette is visible. No face is filled, so the block's own
+    // surface stays visible. Defaults to off, so the plain wireframe is what
+    // players get unless they explicitly enable the 3D edges.
     bool show3d = false;
 
     // Rainbow mode ("Rgb" menu toggle): while enabled, the outline color
     // cycles continuously through the RGB spectrum and overrides the static
     // `outlineColor` picker. The cycling color is applied to every pass
-    // (hairline, thick edges and the 3D fill).
+    // (hairline, thick edges and the 3D back edges).
     bool rgb = false;
 
     // Line size (menu slider units). 1.0 keeps the classic hairline box;

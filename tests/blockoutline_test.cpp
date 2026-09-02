@@ -32,7 +32,7 @@ int main() {
     static_assert(expanded[0].from.x < 0.0f);
     static_assert(expanded[5].to.z > 1.0f);
 
-    // The 3D fill mode emits exactly six faces.
+    // makeFaces emits exactly six faces.
     constexpr auto faces = makeFaces(10.0f, -2.0f, 4.0f, 0.0f);
     static_assert(faces.size() == 6);
 
@@ -134,6 +134,9 @@ int main() {
     using bedrocktools::modules::blockoutline::frameWidthForLineSize;
     using bedrocktools::modules::blockoutline::kFaceCount;
     using bedrocktools::modules::blockoutline::makeThickFrame;
+    using bedrocktools::modules::blockoutline::makeHiddenFrame;
+    using bedrocktools::modules::blockoutline::kMinimum3DEdgeWidth;
+    using bedrocktools::modules::blockoutline::kMaxFrameWidth;
 
     // Slider mapping: hairline at 1.0, wider above, clamped at 10.
     static_assert(frameWidthForLineSize(1.0f) == 0.0f);
@@ -213,6 +216,47 @@ int main() {
         static_assert(makeThickFrame(0.0f, 0.0f, 0.0f, none, 0.1f).count == 0);
         constexpr std::array<bool, kFaceCount> top = {false, true, false, false, false, false};
         static_assert(makeThickFrame(0.0f, 0.0f, 0.0f, top, 0.0f).count == 0);
+    }
+
+    // --- Hidden back edge frame ("Show 3D") ------------------------------
+    // The "Show 3D" mode draws the hidden/back edges so the target reads as a
+    // full twelve-edge 3D wireframe. It must never fill a face or paint the
+    // visible front faces (those are drawn by the normal outline passes).
+    static_assert(kMinimum3DEdgeWidth > 0.0f);
+    static_assert(kMinimum3DEdgeWidth < kMaxFrameWidth);
+
+    // Straight above: only the +Y face faces the eye, so the hidden frame
+    // covers the other five faces (20 strips) and never touches the visible
+    // top plane.
+    {
+        constexpr std::array<bool, kFaceCount> top = {false, true, false, false, false, false};
+        constexpr auto hidden = makeHiddenFrame(0.0f, 0.0f, 0.0f, top, 0.1f, 0.004f);
+        static_assert(hidden.count == 20);
+        for (std::size_t i = 0; i < hidden.count; ++i) {
+            const Point quad[4] = {hidden.quads[i].a, hidden.quads[i].b,
+                                   hidden.quads[i].c, hidden.quads[i].d};
+            bool allOnVisibleTop = true;
+            for (const auto& v : quad) {
+                if (std::fabs(v.y - (1.0f + 0.004f)) > 1e-6f) allOnVisibleTop = false;
+                // Hidden strips stay inside the block footprint too.
+                assert(v.x >= -0.004f - 1e-6f && v.x <= 1.004f + 1e-6f);
+                assert(v.y >= -0.004f - 1e-6f && v.y <= 1.004f + 1e-6f);
+                assert(v.z >= -0.004f - 1e-6f && v.z <= 1.004f + 1e-6f);
+            }
+            assert(!allOnVisibleTop);
+        }
+    }
+    // Corner view: three visible faces -> the other three faces (12 strips).
+    {
+        constexpr std::array<bool, kFaceCount> corner = {false, true, false, true, false, true};
+        constexpr auto hidden = makeHiddenFrame(0.0f, 0.0f, 0.0f, corner, 0.05f, 0.004f);
+        static_assert(hidden.count == 12);
+    }
+    // Inside the block every face faces the eye, so nothing is hidden; the
+    // normal hairline pass already draws all twelve edges in that case.
+    {
+        constexpr std::array<bool, kFaceCount> all = {true, true, true, true, true, true};
+        static_assert(makeHiddenFrame(0.0f, 0.0f, 0.0f, all, 0.1f).count == 0);
     }
 
     // --- RGB rainbow cycle -----------------------------------------------
