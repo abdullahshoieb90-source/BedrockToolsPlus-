@@ -15,6 +15,11 @@ extern CrosshairModule* g_crosshairMod;
 // the mod menu. Selecting the "Vanilla" style restores the game's own
 // crosshair.png - the module then only draws when the hit indicator is
 // active and in-place tinting is unavailable.
+//
+// "Show In Third Person" (m_showThirdPerson) controls whether the overlay
+// also appears while the camera is behind (1) or in front (2) of the
+// player. It is off by default to match vanilla behavior; the perspective
+// is observed from Options::getPlayerViewPerspective().
 class CrosshairModule : public Module {
 public:
     // The radio option order is persisted by index (see saveConfig), so new
@@ -72,10 +77,20 @@ public:
     bool m_indicator = false;
     uint32_t m_indicatorColor = 0xFFFF0000;
 
+    // Show the crosshair overlay while the camera is in third person
+    // (back or front). Off by default: like the vanilla game, the
+    // crosshair stays first-person only until the user enables this.
+    bool m_showThirdPerson = false;
+
     bool indicatorActive() const { return enabled && m_indicator; }
     uint32_t indicatorColor() const { return m_indicatorColor; }
+    // True while the game camera is in third person. Tracked from
+    // Options::getPlayerViewPerspective(), same as the View Model and
+    // Hitbox modules.
+    bool isThirdPerson() const;
 
 private:
-    bool m_cursorHooked = false;    // HudCursorRenderer hook installed
-    bool m_tessColorHooked = false; // Tessellator::color hook (vanilla tint)
+    bool m_cursorHooked = false;      // HudCursorRenderer hook installed
+    bool m_tessColorHooked = false;   // Tessellator::color hook (vanilla tint)
+    bool m_perspectiveHooked = false; // perspective mode observer hook
 };

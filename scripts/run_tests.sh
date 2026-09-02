@@ -38,13 +38,20 @@ for source in "${root}"/tests/*_test.cpp; do
     extra_srcs=()
     skip=""
     case "${name}" in
-        commandhotkey_test|crosshair_test)
+        commandhotkey_test)
             if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
                [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
                 extra+=(-I "${preloader_inc}" -I "${json_inc}" -I "${root}/tests/fakejni")
             else
                 skip="preloader/nlohmann_json headers (set PRE_LOADER_INCLUDE and JSON_INCLUDE)"
             fi
+            ;;
+        crosshair_test)
+            # This test owns its pl::modmenu / pl::memory stubs, so it only
+            # needs the API type declarations plus the host JSON/JNI fakes; a
+            # full preloader header would redeclare those stubs.
+            extra+=(-I "${root}/tests/crosshair_fakepl" -I "${root}/tests/fakejson"
+                    -I "${root}/tests/fakejni")
             ;;
         effectdisplay_test)
             # Also needs entt from the xmake packages; fmt and <android/log.h>

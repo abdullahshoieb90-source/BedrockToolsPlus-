@@ -26,12 +26,29 @@ using TessellatorColorFn = void (*)(void*, float, float, float, float);
 using LevelGetHitResultFn = void* (*)(void*);
 using HitResultGetEntityFn = void* (*)(void*);
 using ActorIsPlayerFn = bool (*)(void*);
+using GetPerspectiveFn = int (*)(void*);
 
 HudCursorRenderFn g_cursorRenderOrig = nullptr;
 TessellatorColorFn g_tessColorOrig = nullptr;
 LevelGetHitResultFn g_levelGetHitResult = nullptr;
 HitResultGetEntityFn g_hitResultGetEntity = nullptr;
 ActorIsPlayerFn g_actorIsPlayer = nullptr;
+GetPerspectiveFn g_getPerspectiveOrig = nullptr;
+
+// Options::getPlayerViewPerspective(): 0 = first person, 1 = third person
+// back, 2 = third person front. The crosshair module observes it so the
+// "Show In Third Person" option can hide the overlay in third person while
+// keeping the default (first-person-only) behavior backwards compatible.
+std::atomic<bool> g_isThirdPerson{false};
+std::atomic<bool> g_perspectiveKnown{false};
+
+int getPerspectiveHook(void* _this) {
+    int result = 0;
+    if (g_getPerspectiveOrig) result = g_getPerspectiveOrig(_this);
+    g_isThirdPerson.store(result != 0, std::memory_order_relaxed);
+    g_perspectiveKnown.store(true, std::memory_order_relaxed);
+    return result;
+}
 
 // Timestamp of the last HudCursorRenderer::render call that the module
 // swallowed (custom style) or tinted (vanilla indicator). Read by onFrame
@@ -210,11 +227,12 @@ void cursorRenderHook(void* _this, void* a1, void* a2, void* a3) {
     }
 }
 
-// True when the cursor renderer ran very recently, i.e. the game itself
-// would be showing its crosshair right now (first person, no menu open).
-// Guards the overlay so a custom crosshair is never painted where the game
-// would not draw one (third person, pause/menu screens, touch layouts
-// without a crosshair).
+// True when the cursor renderer ran very recently, i.e. the game itself is
+// drawing a crosshair right now (first person, no menu open). Guards the
+// overlay so a custom crosshair is never painted on menu screens, touch
+// layouts without a crosshair, or any other frame the game skips it on.
+// Third-person visibility is controlled separately by the "Show In Third
+// Person" option once the perspective observer knows the camera mode.
 bool cursorRenderRecent() {
     constexpr int64_t kMaxAgeUs = 100000; // 100 ms, ~6 frames at 60 fps
     const int64_t last = g_lastCursorRenderUs.load(std::memory_order_relaxed);
@@ -420,7 +438,7 @@ void buildShape(CrosshairModule::Style style, const ShapePainter& p, float s) {
 } // namespace
 
 CrosshairModule::CrosshairModule()
-    : Module("Crosshair", "Replaces the vanilla crosshair with 16 custom shapes. Color, size, thickness, outline, an animated RGB mode and a hit indicator are configurable.") {
+    : Module("Crosshair", "Replaces the vanilla crosshair with 16 custom shapes. Color, size, thickness, outline, an animated RGB mode, a hit indicator and a show-in-third-person option are configurable.") {
     // The crosshair always sits at the exact screen center; there is nothing
     // to drag in the HUD editor.
     hideInHudEditor = true;
@@ -429,6 +447,10 @@ CrosshairModule::CrosshairModule()
 
 CrosshairModule::~CrosshairModule() {
     if (g_crosshairMod == this) g_crosshairMod = nullptr;
+}
+
+bool CrosshairModule::isThirdPerson() const {
+    return g_isThirdPerson.load(std::memory_order_relaxed);
 }
 
 void CrosshairModule::onInit() {
@@ -469,6 +491,20 @@ void CrosshairModule::onInit() {
         if (addr) g_actorIsPlayer = reinterpret_cast<ActorIsPlayerFn>(addr);
     }
 
+    // Observe the camera perspective so the "Show In Third Person" option
+    // can suppress the custom crosshair while in third/back or third/front
+    // view. The hook chains safely with View Model and Hitbox, which hook
+    // the same signature.
+    if (!m_perspectiveHooked) {
+        uintptr_t perspective = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::GetPerspective);
+        if (perspective != 0 &&
+            bedrocktools::hooks::install(reinterpret_cast<void*>(perspective),
+                                         reinterpret_cast<void*>(&getPerspectiveHook),
+                                         reinterpret_cast<void**>(&g_getPerspectiveOrig))) {
+            m_perspectiveHooked = true;
+        }
+    }
+
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [](auto& event) { onCrosshairTick(event.player); });
 }
@@ -489,6 +525,16 @@ void CrosshairModule::onFrame() {
     const bool custom = customStyleActive();
     const bool indicate = indicatorLit();
     const bool vanillaFallback = !custom && indicate && overlayFallbackLatched();
+
+    // Hide the crosshair in third person unless the new option is enabled.
+    // While no perspective value has been observed yet, keep the historical
+    // first-person behavior so the option cannot flash on startup.
+    const bool isThirdPerson = g_perspectiveKnown.load(std::memory_order_relaxed) &&
+                               g_isThirdPerson.load(std::memory_order_relaxed);
+    if (isThirdPerson && !m_showThirdPerson) {
+        submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
+        return;
+    }
 
     if (!enabled || (!custom && !vanillaFallback) || !cursorRenderRecent()) {
         submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
@@ -617,6 +663,10 @@ void CrosshairModule::loadConfig(const nlohmann::json& j) {
             try { m_indicatorColor = 0xFF000000u | (static_cast<uint32_t>(std::stoul(hexStr, nullptr, 16)) & 0x00FFFFFFu); } catch (...) {}
         }
     }
+
+    if (j.contains("m_showThirdPerson")) {
+        try { m_showThirdPerson = j["m_showThirdPerson"].get<bool>(); } catch (...) {}
+    }
 }
 
 void CrosshairModule::saveConfig(nlohmann::json& j) {
@@ -637,6 +687,7 @@ void CrosshairModule::saveConfig(nlohmann::json& j) {
     j["m_rgbSpeed"] = m_rgbSpeed;
     j["m_outline"] = m_outline;
     j["m_indicator"] = m_indicator;
+    j["m_showThirdPerson"] = m_showThirdPerson;
 
     char indicatorColor[10];
     std::snprintf(indicatorColor, sizeof(indicatorColor), "#%06X", m_indicatorColor & 0x00FFFFFFu);

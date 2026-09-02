@@ -8,14 +8,16 @@
 //   * the outline pass is drawn first (dark, thicker) and RGB animates
 //   * the hit indicator recolors a custom crosshair without Hitbox enabled
 //   * Vanilla + indicator falls back to an overlay when tinting is impossible
+//   * the show-in-third-person option suppresses/restores third-person draw
 //
 // Unlike the other tests in this directory, the module needs the preloader
-// and nlohmann_json headers (normally provided by xmake). Build and run
-// standalone (adjust the two package paths to your xmake cache):
+// API types and the nlohmann_json headers. The preloader types come from
+// tests/crosshair_fakepl (full preloader headers would redeclare the stubs
+// below), and JSON/JNI come from tests/fakejson and tests/fakejni. Build and
+// run standalone:
 //
-//     PRE_LOADER=$(echo ~/.xmake/packages/p/preloader/main/*/include)
-//     JSON=$(echo ~/.xmake/packages/n/nlohmann_json/v3.11.3/*/include)
-//     g++ -std=c++20 -I include -I src -I "$PRE_LOADER" -I "$JSON" \
+//     g++ -std=c++20 -I include -I src \
+//         -I tests/crosshair_fakepl -I tests/fakejson -I tests/fakejni \
 //         tests/crosshair_test.cpp -o /tmp/crosshair_test
 //     /tmp/crosshair_test
 
@@ -40,7 +42,10 @@
 static int g_originalCursorCalls = 0;
 
 namespace pl::memory {
-    int hook(FuncPtr, FuncPtr, FuncPtr* originalFunc, HookPriority) {
+    // The real preloader API takes a HookPriority with a default (Normal),
+    // which is also what bedrocktools::hooks::install relies on when it calls
+    // pl::memory::hook with only three arguments.
+    int hook(FuncPtr, FuncPtr, FuncPtr* originalFunc, HookPriority = HookPriority::Normal) {
         if (originalFunc) {
             *originalFunc = (FuncPtr)+[](void*, void*, void*, void*) { ++g_originalCursorCalls; };
         }
@@ -258,6 +263,39 @@ int main() {
     mod4.onFrame();
     check(g_lastCmds.size() >= 4, "vanilla indicator fallback draws replacement arms");
     check((g_lastCmds.back().color & 0x00FFFFFF) == 0xFF3300, "fallback arms use indicator color");
+
+    // Show In Third Person: the default keeps the crosshair first-person
+    // only, like vanilla. Enabling the option should render the overlay in
+    // third person too.
+    g_lastCursorRenderUs.store(0, std::memory_order_relaxed);
+    g_aimedEntityInRange.store(false, std::memory_order_relaxed);
+    g_aimRefreshTimeUs.store(0, std::memory_order_relaxed);
+    g_perspectiveKnown.store(true, std::memory_order_relaxed);
+    g_isThirdPerson.store(true, std::memory_order_relaxed);
+    mod4.m_style = CrosshairModule::Style::Cross;
+    mod4.m_indicator = false;
+    mod4.m_showThirdPerson = false;
+    cursorRenderHook(nullptr, nullptr, nullptr, nullptr);
+    mod4.onFrame();
+    check(g_lastCmds.empty(), "third person draw is hidden while the option is off");
+
+    mod4.m_showThirdPerson = true;
+    cursorRenderHook(nullptr, nullptr, nullptr, nullptr);
+    mod4.onFrame();
+    check(!g_lastCmds.empty(), "third person draw appears once the option is on");
+
+    g_isThirdPerson.store(false, std::memory_order_relaxed);
+    cursorRenderHook(nullptr, nullptr, nullptr, nullptr);
+    mod4.onFrame();
+    check(!g_lastCmds.empty(), "first person draw still works after toggling back");
+
+    // Third-person flag round-trip through config.
+    nlohmann::json jThird;
+    mod4.saveConfig(jThird);
+    check(jThird["m_showThirdPerson"].get<bool>(), "show-third-person persists as true");
+    CrosshairModule mod5;
+    mod5.loadConfig(jThird);
+    check(mod5.m_showThirdPerson, "show-third-person flag round-trip");
 
     std::printf(g_failures == 0 ? "ALL TESTS PASSED\n" : "%d TEST(S) FAILED\n", g_failures);
     return g_failures == 0 ? 0 : 1;
