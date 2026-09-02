@@ -134,7 +134,7 @@ int main() {
     using bedrocktools::modules::blockoutline::frameWidthForLineSize;
     using bedrocktools::modules::blockoutline::kFaceCount;
     using bedrocktools::modules::blockoutline::makeThickFrame;
-    using bedrocktools::modules::blockoutline::makeHiddenFrame;
+    using bedrocktools::modules::blockoutline::makeEdgeBars;
     using bedrocktools::modules::blockoutline::kMinimum3DEdgeWidth;
     using bedrocktools::modules::blockoutline::kMaxFrameWidth;
 
@@ -218,45 +218,103 @@ int main() {
         static_assert(makeThickFrame(0.0f, 0.0f, 0.0f, top, 0.0f).count == 0);
     }
 
-    // --- Hidden back edge frame ("Show 3D") ------------------------------
+    // --- Hidden back edges ("Show 3D") -----------------------------------
     // The "Show 3D" mode draws the hidden/back edges so the target reads as a
-    // full twelve-edge 3D wireframe. It must never fill a face or paint the
-    // visible front faces (those are drawn by the normal outline passes).
+    // full twelve-edge 3D wireframe. Those edges are emitted as edge bars (a
+    // cross of two perpendicular quads centred on the edge) instead of strips
+    // painted onto the hidden faces: a face strip collapses to nothing as
+    // soon as its face turns edge-on to the camera, which made back edges
+    // disappear at some viewing angles.
     static_assert(kMinimum3DEdgeWidth > 0.0f);
     static_assert(kMinimum3DEdgeWidth < kMaxFrameWidth);
 
-    // Straight above: only the +Y face faces the eye, so the hidden frame
-    // covers the other five faces (20 strips) and never touches the visible
-    // top plane.
+    // Two quads per selected edge, nothing for the unselected ones.
     {
-        constexpr std::array<bool, kFaceCount> top = {false, true, false, false, false, false};
-        constexpr auto hidden = makeHiddenFrame(0.0f, 0.0f, 0.0f, top, 0.1f, 0.004f);
-        static_assert(hidden.count == 20);
-        for (std::size_t i = 0; i < hidden.count; ++i) {
-            const Point quad[4] = {hidden.quads[i].a, hidden.quads[i].b,
-                                   hidden.quads[i].c, hidden.quads[i].d};
-            bool allOnVisibleTop = true;
-            for (const auto& v : quad) {
-                if (std::fabs(v.y - (1.0f + 0.004f)) > 1e-6f) allOnVisibleTop = false;
-                // Hidden strips stay inside the block footprint too.
-                assert(v.x >= -0.004f - 1e-6f && v.x <= 1.004f + 1e-6f);
-                assert(v.y >= -0.004f - 1e-6f && v.y <= 1.004f + 1e-6f);
-                assert(v.z >= -0.004f - 1e-6f && v.z <= 1.004f + 1e-6f);
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f, 0.0f);
+        constexpr std::array<bool, 12> none{};
+        static_assert(makeEdgeBars(box, none, 0.05f).count == 0);
+
+        constexpr std::array<bool, 12> all = {true, true, true, true, true, true,
+                                              true, true, true, true, true, true};
+        static_assert(makeEdgeBars(box, all, 0.05f).count == 24);
+        // Hairline width means "no bars"; the line pass covers that case.
+        static_assert(makeEdgeBars(box, all, 0.0f).count == 0);
+    }
+
+    // Each bar is a cross: the two quads of an edge share the edge axis and
+    // are perpendicular to each other, so no camera angle can flatten both.
+    {
+        constexpr auto box = makeBox(10.0f, -2.0f, 4.0f, 0.0f);
+        constexpr std::array<bool, 12> all = {true, true, true, true, true, true,
+                                              true, true, true, true, true, true};
+        constexpr float w = 0.05f;
+        constexpr auto bars = makeEdgeBars(box, all, w);
+        static_assert(bars.count == 24);
+
+        const auto normalOf = [](const auto& q) {
+            const float ux = q.b.x - q.a.x, uy = q.b.y - q.a.y, uz = q.b.z - q.a.z;
+            const float vx = q.d.x - q.a.x, vy = q.d.y - q.a.y, vz = q.d.z - q.a.z;
+            return std::array<float, 3>{uy * vz - uz * vy,
+                                        uz * vx - ux * vz,
+                                        ux * vy - uy * vx};
+        };
+
+        for (std::size_t e = 0; e < 12; ++e) {
+            const auto& q0 = bars.quads[e * 2];
+            const auto& q1 = bars.quads[e * 2 + 1];
+            const auto n0 = normalOf(q0);
+            const auto n1 = normalOf(q1);
+            // Both quads have a real area ...
+            const float a0 = n0[0] * n0[0] + n0[1] * n0[1] + n0[2] * n0[2];
+            const float a1 = n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2];
+            assert(a0 > 0.0f && a1 > 0.0f);
+            // ... and their normals are perpendicular.
+            const float dot = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
+            assert(std::fabs(dot) < 1e-6f);
+
+            // Both are centred on the edge and no wider than the bar width.
+            const auto& line = box[e];
+            const float cx = (line.from.x + line.to.x) * 0.5f;
+            const float cy = (line.from.y + line.to.y) * 0.5f;
+            const float cz = (line.from.z + line.to.z) * 0.5f;
+            for (const auto* q : {&q0, &q1}) {
+                const Point quad[4] = {q->a, q->b, q->c, q->d};
+                for (const auto& v : quad) {
+                    assert(std::fabs(v.x - cx) <= 0.5f + w + 1e-6f);
+                    assert(std::fabs(v.y - cy) <= 0.5f + w + 1e-6f);
+                    assert(std::fabs(v.z - cz) <= 0.5f + w + 1e-6f);
+                }
             }
-            assert(!allOnVisibleTop);
         }
     }
-    // Corner view: three visible faces -> the other three faces (12 strips).
+
+    // Whatever the viewpoint, the visible edges (drawn by the normal passes)
+    // plus the hidden ones (drawn as bars) always add up to all twelve edges,
+    // and the hidden set is never drawn twice.
     {
-        constexpr std::array<bool, kFaceCount> corner = {false, true, false, true, false, true};
-        constexpr auto hidden = makeHiddenFrame(0.0f, 0.0f, 0.0f, corner, 0.05f, 0.004f);
-        static_assert(hidden.count == 12);
-    }
-    // Inside the block every face faces the eye, so nothing is hidden; the
-    // normal hairline pass already draws all twelve edges in that case.
-    {
-        constexpr std::array<bool, kFaceCount> all = {true, true, true, true, true, true};
-        static_assert(makeHiddenFrame(0.0f, 0.0f, 0.0f, all, 0.1f).count == 0);
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f);
+        const Point eyes[] = {
+            {0.5f, 5.0f, 0.5f},    // straight above (block under the feet)
+            {5.0f, 0.5f, 0.5f},    // straight along +X
+            {3.0f, 3.0f, 3.0f},    // corner view
+            {0.5f, 3.0f, -4.0f},   // grazing angle that used to lose an edge
+            {-6.0f, 0.5f, 2.0f},
+            {2.0f, -3.0f, 0.5f},
+        };
+        for (const auto& eye : eyes) {
+            const auto vis = makeEdgeVisibility(box, eye);
+            std::array<bool, 12> hidden{};
+            int hiddenCount = 0;
+            for (std::size_t i = 0; i < 12; ++i) {
+                hidden[i] = !vis[i];
+                if (hidden[i]) ++hiddenCount;
+            }
+            int visibleCount = 0;
+            for (bool v : vis) visibleCount += v ? 1 : 0;
+            assert(visibleCount + hiddenCount == 12);
+            const auto bars = makeEdgeBars(box, hidden, kMinimum3DEdgeWidth);
+            assert(bars.count == static_cast<std::size_t>(hiddenCount) * 2);
+        }
     }
 
     // --- RGB rainbow cycle -----------------------------------------------

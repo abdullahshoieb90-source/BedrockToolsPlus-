@@ -231,24 +231,97 @@ constexpr FrameQuads makeThickFrame(float x, float y, float z,
     return out;
 }
 
-// Fallback strip width for "Show 3D" even when Line Size stays at the
+// Fallback bar width for "Show 3D" even when Line Size stays at the
 // default 1.0 (hairline). The back edges have to be real geometry to be
 // visible, so this is the smallest width used when the slider is not making
 // the outline thicker.
 inline constexpr float kMinimum3DEdgeWidth = 0.02f;
 
-// Builds the edge strips for the faces that do NOT face the eye. Used by the
-// "Show 3D" mode so the block reads as a full twelve-edge 3D wireframe
-// instead of a filled volume: the normal outline already paints the near
-// faces, and this supplies the hidden/back edges that would otherwise never
-// be seen. Nothing is filled and no interior surface is drawn, so the block
-// itself stays completely visible.
-constexpr FrameQuads makeHiddenFrame(float x, float y, float z,
-                                     const std::array<bool, kFaceCount>& faceVisible,
-                                     float width, float lift = 0.004f) {
-    std::array<bool, kFaceCount> hidden{};
-    for (std::size_t i = 0; i < kFaceCount; ++i) hidden[i] = !faceVisible[i];
-    return makeThickFrame(x, y, z, hidden, width, lift);
+// Edge bars: real geometry built around an edge of the box instead of strips
+// painted on a face.
+//
+// Face strips are useless for the hidden ("Show 3D") edges: a strip only
+// exists on the plane of its face, so as soon as that face turns edge-on to
+// the camera the strip projects to (nearly) zero pixels and the edge simply
+// disappears. That is exactly what happened at grazing viewing angles, while
+// a block straight under the player kept its edges because the hidden faces
+// there stayed nearly perpendicular to the view direction.
+//
+// A bar is a cross of two perpendicular quads centred on the edge, so at any
+// camera angle at least one of the two is far from edge-on and the edge
+// always covers pixels. Both quads are extended by half the width past each
+// end so neighbouring bars meet at the corners without a gap.
+inline constexpr std::size_t kMaxEdgeBarQuads = 12 * 2;
+
+struct EdgeBars {
+    std::array<Quad, kMaxEdgeBarQuads> quads{};
+    std::size_t count = 0;
+};
+
+constexpr EdgeBars makeEdgeBars(const std::array<Line, 12>& box,
+                                const std::array<bool, 12>& mask,
+                                float width) {
+    EdgeBars out{};
+    if (width <= 0.0f) return out;
+    if (width > kMaxFrameWidth) width = kMaxFrameWidth;
+    const float half = width * 0.5f;
+
+    auto makePoint = [](float p0, float p1, float p2) {
+        return Point{p0, p1, p2};
+    };
+
+    for (std::size_t i = 0; i < box.size(); ++i) {
+        if (!mask[i]) continue;
+        const Point& a = box[i].from;
+        const Point& b = box[i].to;
+        const float from[3] = {a.x, a.y, a.z};
+        const float to[3] = {b.x, b.y, b.z};
+
+        // Which axis does this edge run along?
+        int axis = 0;
+        float best = -1.0f;
+        for (int k = 0; k < 3; ++k) {
+            const float d = to[k] - from[k];
+            const float len = d < 0.0f ? -d : d;
+            if (len > best) {
+                best = len;
+                axis = k;
+            }
+        }
+        if (best <= 0.0f) continue;  // degenerate edge, nothing to draw
+
+        const int uAxis = (axis + 1) % 3;
+        const int vAxis = (axis + 2) % 3;
+        const float lo = from[axis] < to[axis] ? from[axis] : to[axis];
+        const float hi = from[axis] < to[axis] ? to[axis] : from[axis];
+        const float a0 = lo - half;
+        const float a1 = hi + half;
+        const float u = from[uAxis];
+        const float v = from[vAxis];
+
+        auto emit = [&](float uA, float vA, float uB, float vB) {
+            float p[3]{};
+            p[axis] = a0;
+            p[uAxis] = uA;
+            p[vAxis] = vA;
+            const Point c0 = makePoint(p[0], p[1], p[2]);
+            p[uAxis] = uB;
+            p[vAxis] = vB;
+            const Point c1 = makePoint(p[0], p[1], p[2]);
+            p[axis] = a1;
+            const Point c2 = makePoint(p[0], p[1], p[2]);
+            p[uAxis] = uA;
+            p[vAxis] = vA;
+            const Point c3 = makePoint(p[0], p[1], p[2]);
+            out.quads[out.count++] = Quad{c0, c1, c2, c3};
+        };
+
+        // Quad spread along u (flat in the u/axis plane) ...
+        emit(u - half, v, u + half, v);
+        // ... and its perpendicular partner spread along v.
+        emit(u, v - half, u, v + half);
+    }
+    return out;
 }
 
 // Maps the "Line Size" menu slider (1 = hairline) to the world-space width of

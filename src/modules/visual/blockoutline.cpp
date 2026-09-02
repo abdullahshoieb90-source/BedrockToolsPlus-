@@ -9,6 +9,7 @@
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/Types.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -339,29 +340,41 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
 
     // "Show 3D" mode: draw the hidden/back edges of the block so the target
     // reads as a full twelve-edge 3D wireframe instead of a filled volume.
-    // The visible faces are already painted by the thick/hairline passes
-    // below, so this pass only emits faces that do NOT face the eye. Drawn
-    // with the vertex-color fill material (rather than the depth-tested
+    // The visible edges are already painted by the thick/hairline passes
+    // below, so this pass only emits the edges that touch no eye-facing face.
+    //
+    // The hidden edges are emitted as edge bars (a cross of two perpendicular
+    // quads centred on the edge), NOT as strips painted onto the hidden
+    // faces. Face strips vanish whenever their face turns edge-on to the
+    // camera, which is why a back edge could disappear at certain viewing
+    // angles while the same block straight under the player kept all of its
+    // edges. A cross of two perpendicular quads always has one quad clearly
+    // facing the camera, so the edge holds up at every angle.
+    //
+    // Drawn with the vertex-color fill material (rather than the depth-tested
     // selection overlay) because that lets the back edges show through the
     // block itself while never filling its interior.
     if (g_module->show3d) {
+        std::array<bool, 12> hiddenEdges{};
+        int hiddenEdgeCount = 0;
+        for (std::size_t i = 0; i < edgeVisible.size(); ++i) {
+            hiddenEdges[i] = !edgeVisible[i];
+            if (hiddenEdges[i]) ++hiddenEdgeCount;
+        }
+
         const float edgeWidth = frameWidth > 0.0f
             ? frameWidth
             : bedrocktools::modules::blockoutline::kMinimum3DEdgeWidth;
-        const auto hiddenFrame = bedrocktools::modules::blockoutline::makeHiddenFrame(
-            static_cast<float>(target.x),
-            static_cast<float>(target.y),
-            static_cast<float>(target.z),
-            faceVisible,
-            edgeWidth);
+        const auto bars = bedrocktools::modules::blockoutline::makeEdgeBars(
+            lines, hiddenEdges, edgeWidth);
 
-        if (hiddenFrame.count > 0) {
-            // Both windings per strip so back-face culling never eats one.
+        if (bars.count > 0) {
+            // Both windings per bar so back-face culling never eats one.
             g_tessellatorBegin(tessellator, nullptr, kQuadPrimitive,
-                               static_cast<int>(hiddenFrame.count) * 8, 0);
+                               static_cast<int>(bars.count) * 8, 0);
             g_tessellatorColor(tessellator, red, green, blue, 1.0f);
-            for (std::size_t i = 0; i < hiddenFrame.count; ++i) {
-                const auto& q = hiddenFrame.quads[i];
+            for (std::size_t i = 0; i < bars.count; ++i) {
+                const auto& q = bars.quads[i];
                 const bedrocktools::sdk::Vec3 verts[4] = {
                     {q.a.x - camX, q.a.y - camY, q.a.z - camZ},
                     {q.b.x - camX, q.b.y - camY, q.b.z - camZ},
@@ -374,6 +387,26 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
                 for (int j = 3; j >= 0; --j) {
                     g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
                 }
+            }
+            std::memset(meshParams, 0, sizeof(meshParams));
+            g_renderMesh(screenContext, tessellator, matFill, meshParams);
+        }
+
+        // Hairline pass for the same hidden edges. The bars shrink below a
+        // pixel at distance (and are extremely thin at the default Line Size),
+        // so this keeps the back edges crisp at any range, exactly like the
+        // visible hairline pass does for the front edges.
+        if (hiddenEdgeCount > 0) {
+            g_tessellatorBegin(tessellator, nullptr, kLinePrimitive,
+                               hiddenEdgeCount * 2, 0);
+            g_tessellatorColor(tessellator, red, green, blue, 1.0f);
+            for (std::size_t i = 0; i < lines.size(); ++i) {
+                if (!hiddenEdges[i]) continue;
+                const auto& line = lines[i];
+                g_tessellatorVertex(tessellator,
+                    line.from.x - camX, line.from.y - camY, line.from.z - camZ);
+                g_tessellatorVertex(tessellator,
+                    line.to.x - camX, line.to.y - camY, line.to.z - camZ);
             }
             std::memset(meshParams, 0, sizeof(meshParams));
             g_renderMesh(screenContext, tessellator, matFill, meshParams);
