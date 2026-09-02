@@ -231,6 +231,26 @@ constexpr FrameQuads makeThickFrame(float x, float y, float z,
     return out;
 }
 
+// Fallback strip width for "Show 3D" even when Line Size stays at the
+// default 1.0 (hairline). The back edges have to be real geometry to be
+// visible, so this is the smallest width used when the slider is not making
+// the outline thicker.
+inline constexpr float kMinimum3DEdgeWidth = 0.02f;
+
+// Builds the edge strips for the faces that do NOT face the eye. Used by the
+// "Show 3D" mode so the block reads as a full twelve-edge 3D wireframe
+// instead of a filled volume: the normal outline already paints the near
+// faces, and this supplies the hidden/back edges that would otherwise never
+// be seen. Nothing is filled and no interior surface is drawn, so the block
+// itself stays completely visible.
+constexpr FrameQuads makeHiddenFrame(float x, float y, float z,
+                                     const std::array<bool, kFaceCount>& faceVisible,
+                                     float width, float lift = 0.004f) {
+    std::array<bool, kFaceCount> hidden{};
+    for (std::size_t i = 0; i < kFaceCount; ++i) hidden[i] = !faceVisible[i];
+    return makeThickFrame(x, y, z, hidden, width, lift);
+}
+
 // Maps the "Line Size" menu slider (1 = hairline) to the world-space width of
 // the surface strips. Kept in the header so the tests can pin the mapping;
 // 1.0 or less means "hairline only, no strips".

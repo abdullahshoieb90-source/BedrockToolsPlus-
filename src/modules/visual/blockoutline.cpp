@@ -196,13 +196,12 @@ void ensureMaterials() {
 
     if (!g_matSelection) g_matSelection = getMaterial("selection_box");
 
-    // The 3D fill needs a vertex-color material that alpha-blends. The
-    // selection overlay material is depth-tested (which keeps the thick frame
-    // from X-raying through walls), but it washes the vertex color out of
-    // filled quads, so drawing the translucent box with it reads as a solid
-    // white sheet on the block's top face instead of a tint. Prefer a
-    // vertex-color fill for the translucent volume and keep selection_box for
-    // the opaque frame.
+    // The hidden back edge pass in "Show 3D" mode needs a vertex-color
+    // material whose depth state lets the far edges show through the block
+    // itself. The selection overlay material is depth-tested (which keeps the
+    // visible frame from X-raying through walls), so it would hide every back
+    // edge. Prefer a vertex-color fill for the 3D edge pass and keep
+    // selection_box for the opaque visible frame.
     if (!g_matFill) {
         static const char* kFillNames[] = {
             "ui_fill_color",
@@ -255,9 +254,10 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         playerRendererAddress + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
     // The game's own selection material is always initialized with the level
     // renderer and has the depth state expected for a block outline. It keeps
-    // the opaque frame from X-raying through walls, but it washes vertex color
-    // out of filled quads, so the translucent 3D fill uses a separate
-    // vertex-color fill material instead (see ensureMaterials).
+    // the visible frame from X-raying through walls. The "Show 3D" back edge
+    // pass uses a separate vertex-color fill material instead because that
+    // material lets the far edges show through the block (see
+    // ensureMaterials).
     void* overlayMaterial = reinterpret_cast<void*>(
         playerRendererAddress +
         bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
@@ -313,11 +313,12 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         static_cast<float>(target.y),
         static_cast<float>(target.z));
 
-    // Only geometry facing the camera is emitted. The fill material is not
-    // guaranteed to depth-test custom world geometry, and without this culling
-    // the far side of the block bleeds through it: the 3D tint looks like it
-    // is painted inside the block and thick lines read as a full 3D wireframe
-    // cube instead of a flat frame.
+    // The normal visible passes only emit geometry facing the camera. The
+    // fill material used by the "Show 3D" back edge pass is not guaranteed to
+    // depth-test custom world geometry, so that pass is strictly limited to
+    // the faces that do not face the eye; without this culling the far side
+    // would bleed through the block as a translucent sheet instead of staying
+    // a crisp set of hidden edges.
     const bedrocktools::modules::blockoutline::Point eye{camX, camY, camZ};
     const auto edgeVisible = bedrocktools::modules::blockoutline::makeEdgeVisibility(lines, eye);
     int visibleEdgeCount = 0;
@@ -326,8 +327,8 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     }
 
     // Faces of the block itself (no expansion) and which of them face the
-    // eye. Shared by the thick frame and the 3D fill so both agree on what is
-    // "in front".
+    // eye. Shared by the thick frame and the "Show 3D" back edge pass so both
+    // agree on what is "in front".
     const auto blockFaces = bedrocktools::modules::blockoutline::makeFaces(
         static_cast<float>(target.x),
         static_cast<float>(target.y),
@@ -336,40 +337,36 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     const auto faceVisible =
         bedrocktools::modules::blockoutline::makeFaceVisibility(blockFaces, eye);
 
-    // 3D fill pass: translucent faces so the block reads as a solid volume.
-    // The faces are expanded slightly (less than the wireframe) so they never
-    // z-fight with the block's own surface. Only the faces pointing at the
-    // camera are drawn, so the tint stays on the surface of the block and the
-    // color never bleeds through to its inside. Drawn with the vertex-color
-    // fill material rather than the selection overlay: the overlay washes the
-    // vertex color out of filled quads, which made the box read as a solid
-    // white sheet on the block's top face instead of a translucent tint.
+    // "Show 3D" mode: draw the hidden/back edges of the block so the target
+    // reads as a full twelve-edge 3D wireframe instead of a filled volume.
+    // The visible faces are already painted by the thick/hairline passes
+    // below, so this pass only emits faces that do NOT face the eye. Drawn
+    // with the vertex-color fill material (rather than the depth-tested
+    // selection overlay) because that lets the back edges show through the
+    // block itself while never filling its interior.
     if (g_module->show3d) {
-        constexpr float kFillAlpha = 0.25f;
-        const auto faces = bedrocktools::modules::blockoutline::makeFaces(
+        const float edgeWidth = frameWidth > 0.0f
+            ? frameWidth
+            : bedrocktools::modules::blockoutline::kMinimum3DEdgeWidth;
+        const auto hiddenFrame = bedrocktools::modules::blockoutline::makeHiddenFrame(
             static_cast<float>(target.x),
             static_cast<float>(target.y),
             static_cast<float>(target.z),
-            0.001f);
-        int visibleFaceCount = 0;
-        for (const bool visible : faceVisible) {
-            if (visible) ++visibleFaceCount;
-        }
+            faceVisible,
+            edgeWidth);
 
-        // Up to 3 visible faces, each with both windings (4 + 4 vertices) so
-        // back-face culling can never eat one.
-        if (visibleFaceCount > 0) {
+        if (hiddenFrame.count > 0) {
+            // Both windings per strip so back-face culling never eats one.
             g_tessellatorBegin(tessellator, nullptr, kQuadPrimitive,
-                               visibleFaceCount * 2 * 4, 0);
-            g_tessellatorColor(tessellator, red, green, blue, kFillAlpha);
-            for (std::size_t i = 0; i < faces.size(); ++i) {
-                if (!faceVisible[i]) continue;
-                const auto& face = faces[i];
+                               static_cast<int>(hiddenFrame.count) * 8, 0);
+            g_tessellatorColor(tessellator, red, green, blue, 1.0f);
+            for (std::size_t i = 0; i < hiddenFrame.count; ++i) {
+                const auto& q = hiddenFrame.quads[i];
                 const bedrocktools::sdk::Vec3 verts[4] = {
-                    {face.a.x - camX, face.a.y - camY, face.a.z - camZ},
-                    {face.b.x - camX, face.b.y - camY, face.b.z - camZ},
-                    {face.c.x - camX, face.c.y - camY, face.c.z - camZ},
-                    {face.d.x - camX, face.d.y - camY, face.d.z - camZ},
+                    {q.a.x - camX, q.a.y - camY, q.a.z - camZ},
+                    {q.b.x - camX, q.b.y - camY, q.b.z - camZ},
+                    {q.c.x - camX, q.c.y - camY, q.c.z - camZ},
+                    {q.d.x - camX, q.d.y - camY, q.d.z - camZ},
                 };
                 for (int j = 0; j < 4; ++j) {
                     g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
@@ -386,10 +383,11 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     // Thick pass: the frame is painted as flat strips lying on the visible
     // faces of the block (see makeThickFrame). Nothing leaves the face plane,
     // so a wide outline is just the classic wireframe drawn bolder - it can
-    // no longer look like a 3D cube the way camera-facing bars did. When the
-    // eye is inside the block every face is "visible"; the strips would then
-    // surround the player, which is fine, but skip the thick pass and keep
-    // the hairline there.
+    // never fill the block or turn into a volume by itself. The full 3D
+    // twelve-edge look is produced only by the "Show 3D" back edge pass
+    // above. When the eye is inside the block every face is "visible"; the
+    // strips would then surround the player, which is fine, but skip the
+    // thick pass and keep the hairline there.
     const bool eyeInsideBlock =
         camX > static_cast<float>(target.x) && camX < static_cast<float>(target.x) + 1.0f &&
         camY > static_cast<float>(target.y) && camY < static_cast<float>(target.y) + 1.0f &&
@@ -456,7 +454,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
 } // namespace
 
 BlockOutlineModule::BlockOutlineModule()
-    : Module("Block Outline", "Draws a configurable outline around the block you are looking at. Optional 3D box and rainbow RGB colors.") {
+    : Module("Block Outline", "Draws a configurable outline around the block you are looking at. Optional full 3D edges and rainbow RGB colors.") {
     g_module = this;
 }
 
@@ -522,7 +520,7 @@ void BlockOutlineModule::onDisable() {
 void BlockOutlineModule::loadConfig(const nlohmann::json& json) {
     Module::loadConfig(json);
 
-    // The 3D box is an explicit opt-in toggle ("Show 3D" in the menu).
+    // The 3D edge view is an explicit opt-in toggle ("Show 3D" in the menu).
     // Current configs use the "show3d" key; the older "block3d" and
     // "outline3d" keys are still accepted so upgrading players keep their
     // setting.
