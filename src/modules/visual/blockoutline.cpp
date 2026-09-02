@@ -291,14 +291,15 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     const float camY = camera.y;
     const float camZ = camera.z;
 
-    // Line size slider -> world-space half width. 1.0 (or lower) keeps the
-    // classic hairline box; above that the edges are drawn as real quads,
-    // because GL line width is ignored by nearly every mobile GLES driver.
+    // Line size slider. 1.0 (or lower) keeps the classic hairline box; above
+    // that the frame is widened with real geometry, because GL line width is
+    // ignored by nearly every mobile GLES driver.
     float lineSize = g_module->lineThickness;
     if (lineSize < 1.0f) lineSize = 1.0f;
     if (lineSize > 10.0f) lineSize = 10.0f;
-    const bool thickLines = lineSize > 1.05f;
-    const float halfWidth = lineSize * 0.01f * 0.5f;
+    const float frameWidth =
+        bedrocktools::modules::blockoutline::frameWidthForLineSize(lineSize);
+    const bool thickLines = frameWidth > 0.0f;
 
     char meshParams[0x58];
     const auto lines = bedrocktools::modules::blockoutline::makeBox(
@@ -318,6 +319,17 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         if (visible) ++visibleEdgeCount;
     }
 
+    // Faces of the block itself (no expansion) and which of them face the
+    // eye. Shared by the thick frame and the 3D fill so both agree on what is
+    // "in front".
+    const auto blockFaces = bedrocktools::modules::blockoutline::makeFaces(
+        static_cast<float>(target.x),
+        static_cast<float>(target.y),
+        static_cast<float>(target.z),
+        0.0f);
+    const auto faceVisible =
+        bedrocktools::modules::blockoutline::makeFaceVisibility(blockFaces, eye);
+
     // 3D fill pass: translucent faces so the block reads as a solid volume.
     // The faces are expanded slightly (less than the wireframe) so they never
     // z-fight with the block's own surface. Only the faces pointing at the
@@ -330,8 +342,6 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
             static_cast<float>(target.y),
             static_cast<float>(target.z),
             0.001f);
-        const auto faceVisible =
-            bedrocktools::modules::blockoutline::makeFaceVisibility(faces, eye);
         int visibleFaceCount = 0;
         for (const bool visible : faceVisible) {
             if (visible) ++visibleFaceCount;
@@ -364,81 +374,52 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         }
     }
 
-    // Thick pass: every camera-facing edge becomes a camera-facing quad so
-    // the apparent width follows the line-size setting from any angle. Edges
-    // on the far side of the block are skipped; without the depth test they
-    // would shine through the block and make the frame look 3D.
-    if (thickLines && visibleEdgeCount > 0) {
-        g_tessellatorBegin(tessellator, nullptr, kQuadPrimitive,
-                           visibleEdgeCount * 8, 0);
-        g_tessellatorColor(tessellator, red, green, blue, 1.0f);
+    // Thick pass: the frame is painted as flat strips lying on the visible
+    // faces of the block (see makeThickFrame). Nothing leaves the face plane,
+    // so a wide outline is just the classic wireframe drawn bolder - it can
+    // no longer look like a 3D cube the way camera-facing bars did. When the
+    // eye is inside the block every face is "visible"; the strips would then
+    // surround the player, which is fine, but the fill material does not
+    // depth-test so skip the thick pass and keep the hairline there.
+    const bool eyeInsideBlock =
+        camX > static_cast<float>(target.x) && camX < static_cast<float>(target.x) + 1.0f &&
+        camY > static_cast<float>(target.y) && camY < static_cast<float>(target.y) + 1.0f &&
+        camZ > static_cast<float>(target.z) && camZ < static_cast<float>(target.z) + 1.0f;
+    if (thickLines && !eyeInsideBlock) {
+        const auto frame = bedrocktools::modules::blockoutline::makeThickFrame(
+            static_cast<float>(target.x),
+            static_cast<float>(target.y),
+            static_cast<float>(target.z),
+            faceVisible,
+            frameWidth);
 
-        for (std::size_t i = 0; i < lines.size(); ++i) {
-            if (!edgeVisible[i]) continue;
-            const auto& line = lines[i];
-            bedrocktools::sdk::Vec3 p1 = {
-                line.from.x - camX, line.from.y - camY, line.from.z - camZ};
-            bedrocktools::sdk::Vec3 p2 = {
-                line.to.x - camX, line.to.y - camY, line.to.z - camZ};
-
-            float dx = p2.x - p1.x;
-            float dy = p2.y - p1.y;
-            float dz = p2.z - p1.z;
-            float len = std::sqrt(dx * dx + dy * dy + dz * dz);
-            if (len < 1e-5f) continue;
-            dx /= len; dy /= len; dz /= len;
-
-            // The camera sits at the origin of this relative space, so the
-            // vector to the segment midpoint is the view direction.
-            const float mx = (p1.x + p2.x) * 0.5f;
-            const float my = (p1.y + p2.y) * 0.5f;
-            const float mz = (p1.z + p2.z) * 0.5f;
-
-            // side = dir x view, perpendicular to both the segment and the
-            // eye ray => the quad always faces the player.
-            float sx = dy * mz - dz * my;
-            float sy = dz * mx - dx * mz;
-            float sz = dx * my - dy * mx;
-            float sLen = std::sqrt(sx * sx + sy * sy + sz * sz);
-            if (sLen < 1e-5f) {
-                // Looking straight down the segment: pick any perpendicular.
-                if (std::fabs(dy) < 0.9f) { sx = -dz; sy = 0.0f; sz = dx; }
-                else { sx = 1.0f; sy = 0.0f; sz = 0.0f; }
-                sLen = std::sqrt(sx * sx + sy * sy + sz * sz);
-                if (sLen < 1e-5f) continue;
+        if (frame.count > 0) {
+            // Both windings per strip so back-face culling never eats one.
+            g_tessellatorBegin(tessellator, nullptr, kQuadPrimitive,
+                               static_cast<int>(frame.count) * 8, 0);
+            g_tessellatorColor(tessellator, red, green, blue, 1.0f);
+            for (std::size_t i = 0; i < frame.count; ++i) {
+                const auto& q = frame.quads[i];
+                const bedrocktools::sdk::Vec3 verts[4] = {
+                    {q.a.x - camX, q.a.y - camY, q.a.z - camZ},
+                    {q.b.x - camX, q.b.y - camY, q.b.z - camZ},
+                    {q.c.x - camX, q.c.y - camY, q.c.z - camZ},
+                    {q.d.x - camX, q.d.y - camY, q.d.z - camZ},
+                };
+                for (int j = 0; j < 4; ++j) {
+                    g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
+                }
+                for (int j = 3; j >= 0; --j) {
+                    g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
+                }
             }
-            sx = sx / sLen * halfWidth;
-            sy = sy / sLen * halfWidth;
-            sz = sz / sLen * halfWidth;
-
-            // Overshoot both ends by half the width so corners stay solid.
-            const float ex = dx * halfWidth;
-            const float ey = dy * halfWidth;
-            const float ez = dz * halfWidth;
-
-            const bedrocktools::sdk::Vec3 quad[4] = {
-                {p1.x - ex - sx, p1.y - ey - sy, p1.z - ez - sz},
-                {p2.x + ex - sx, p2.y + ey - sy, p2.z + ez - sz},
-                {p2.x + ex + sx, p2.y + ey + sy, p2.z + ez + sz},
-                {p1.x - ex + sx, p1.y - ey + sy, p1.z - ez + sz},
-            };
-
-            // Emitted with both windings so back-face culling never eats a
-            // segment.
-            for (int j = 0; j < 4; ++j) {
-                g_tessellatorVertex(tessellator, quad[j].x, quad[j].y, quad[j].z);
-            }
-            for (int j = 3; j >= 0; --j) {
-                g_tessellatorVertex(tessellator, quad[j].x, quad[j].y, quad[j].z);
-            }
+            std::memset(meshParams, 0, sizeof(meshParams));
+            g_renderMesh(screenContext, tessellator, matFill, meshParams);
         }
-
-        std::memset(meshParams, 0, sizeof(meshParams));
-        g_renderMesh(screenContext, tessellator, matFill, meshParams);
     }
 
     // Core hairline pass: keeps the edge crisp and visible even when the
-    // quads shrink below a pixel at long range. Same visibility set as the
+    // strips shrink below a pixel at long range. Same visibility set as the
     // thick pass so both stay consistent.
     if (visibleEdgeCount > 0) {
         g_tessellatorBegin(tessellator, nullptr, kLinePrimitive,

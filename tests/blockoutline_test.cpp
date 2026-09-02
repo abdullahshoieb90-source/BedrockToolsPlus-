@@ -126,6 +126,95 @@ int main() {
         assert(visibleCount >= 4 && visibleCount <= 12);
     }
 
+    // --- Thick frame (surface strips) --------------------------------------
+    // Raising Line Size must only make the wireframe bolder: every strip has
+    // to lie flat on a visible face of the block, inside the block's
+    // footprint. Nothing may stick out towards the eye, which is what made
+    // the old camera-facing bars read as a 3D cube.
+    using bedrocktools::modules::blockoutline::frameWidthForLineSize;
+    using bedrocktools::modules::blockoutline::kFaceCount;
+    using bedrocktools::modules::blockoutline::makeThickFrame;
+
+    // Slider mapping: hairline at 1.0, wider above, clamped at 10.
+    static_assert(frameWidthForLineSize(1.0f) == 0.0f);
+    static_assert(frameWidthForLineSize(0.5f) == 0.0f);
+    static_assert(frameWidthForLineSize(2.0f) > 0.0f);
+    static_assert(frameWidthForLineSize(5.0f) > frameWidthForLineSize(2.0f));
+    static_assert(frameWidthForLineSize(50.0f) == frameWidthForLineSize(10.0f));
+
+    // Straight above: exactly one face -> four strips, all in the +Y plane
+    // (lifted by `lift`), all within the block's XZ footprint.
+    {
+        constexpr std::array<bool, kFaceCount> vis = {false, true, false, false, false, false};
+        constexpr auto frame = makeThickFrame(10.0f, -2.0f, 4.0f, vis, 0.1f, 0.004f);
+        static_assert(frame.count == 4);
+        for (std::size_t i = 0; i < frame.count; ++i) {
+            const Point quad[4] = {frame.quads[i].a, frame.quads[i].b,
+                                   frame.quads[i].c, frame.quads[i].d};
+            for (const auto& v : quad) {
+                assert(std::fabs(v.y - (-1.0f + 0.004f)) < 1e-6f);
+                assert(v.x >= 10.0f && v.x <= 11.0f);
+                assert(v.z >= 4.0f && v.z <= 5.0f);
+            }
+        }
+    }
+    // Corner view: three faces -> twelve strips. No vertex may ever leave the
+    // (slightly lifted) block bounds, so nothing protrudes towards the eye.
+    {
+        constexpr std::array<bool, kFaceCount> vis = {false, true, false, true, false, true};
+        constexpr auto frame = makeThickFrame(0.0f, 0.0f, 0.0f, vis, 0.05f, 0.004f);
+        static_assert(frame.count == 12);
+        for (std::size_t i = 0; i < frame.count; ++i) {
+            const Point quad[4] = {frame.quads[i].a, frame.quads[i].b,
+                                   frame.quads[i].c, frame.quads[i].d};
+            for (const auto& v : quad) {
+                assert(v.x >= -0.004f - 1e-6f && v.x <= 1.004f + 1e-6f);
+                assert(v.y >= -0.004f - 1e-6f && v.y <= 1.004f + 1e-6f);
+                assert(v.z >= -0.004f - 1e-6f && v.z <= 1.004f + 1e-6f);
+            }
+        }
+    }
+    // Each face's four strips are planar (all four corners share the face
+    // coordinate) and together cover exactly the frame area:
+    // 1 - (1 - 2w)^2 for a unit face, i.e. mitred corners with no overlap.
+    {
+        constexpr std::array<bool, kFaceCount> vis = {false, false, false, true, false, false};
+        constexpr float w = 0.1f;
+        constexpr auto frame = makeThickFrame(3.0f, 3.0f, 3.0f, vis, w, 0.0f);
+        static_assert(frame.count == 4);
+        float area = 0.0f;
+        for (std::size_t i = 0; i < frame.count; ++i) {
+            const auto& q = frame.quads[i];
+            assert(q.a.z == 4.0f && q.b.z == 4.0f && q.c.z == 4.0f && q.d.z == 4.0f);
+            const float du = std::fabs(q.b.x - q.a.x) + std::fabs(q.b.y - q.a.y);
+            const float dv = std::fabs(q.d.x - q.a.x) + std::fabs(q.d.y - q.a.y);
+            area += du * dv;
+        }
+        const float expected = 1.0f - (1.0f - 2.0f * w) * (1.0f - 2.0f * w);
+        assert(std::fabs(area - expected) < 1e-5f);
+    }
+    // Absurd widths are clamped so opposite strips never cross the middle.
+    {
+        constexpr std::array<bool, kFaceCount> vis = {true, false, false, false, false, false};
+        constexpr auto frame = makeThickFrame(0.0f, 0.0f, 0.0f, vis, 5.0f, 0.0f);
+        static_assert(frame.count == 4);
+        for (std::size_t i = 0; i < frame.count; ++i) {
+            const Point quad[4] = {frame.quads[i].a, frame.quads[i].b,
+                                   frame.quads[i].c, frame.quads[i].d};
+            for (const auto& v : quad) {
+                assert(v.x >= 0.0f && v.x <= 1.0f);
+                assert(v.z >= 0.0f && v.z <= 1.0f);
+            }
+        }
+    }
+    // No visible face / hairline width -> nothing to draw.
+    {
+        constexpr std::array<bool, kFaceCount> none = {};
+        static_assert(makeThickFrame(0.0f, 0.0f, 0.0f, none, 0.1f).count == 0);
+        constexpr std::array<bool, kFaceCount> top = {false, true, false, false, false, false};
+        static_assert(makeThickFrame(0.0f, 0.0f, 0.0f, top, 0.0f).count == 0);
+    }
+
     // --- RGB rainbow cycle -----------------------------------------------
     using bedrocktools::modules::blockoutline::rainbowRgb;
     using bedrocktools::modules::blockoutline::wrapPhase;
