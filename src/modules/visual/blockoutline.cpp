@@ -133,7 +133,6 @@ LevelGetHitResult g_getHitResult = nullptr;
 
 std::uintptr_t g_renderMaterialGroup = 0;
 MaterialPtr g_matSelection;
-MaterialPtr g_matFill;
 
 std::mutex g_targetMutex;
 bedrocktools::sdk::BlockPos g_target{};
@@ -195,23 +194,6 @@ void ensureMaterials() {
     if (!g_renderMaterialGroup) return;
 
     if (!g_matSelection) g_matSelection = getMaterial("selection_box");
-
-    // Filled geometry (3D box faces and thick line quads) needs a
-    // vertex-color material; the selection overlay is built for a translucent
-    // block highlight and washes the color out once the outline is no longer
-    // a hairline.
-    if (!g_matFill) {
-        static const char* kFillNames[] = {
-            "ui_fill_color",
-            "ui_textured_and_glcolor",
-            "debug_filled_box",
-            "selection_box",
-        };
-        for (const char* name : kFillNames) {
-            g_matFill = getMaterial(name);
-            if (g_matFill) break;
-        }
-    }
 }
 
 void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParams) {
@@ -258,7 +240,6 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
 
     ensureMaterials();
     void* matInner = g_matSelection ? static_cast<void*>(&g_matSelection) : overlayMaterial;
-    void* matFill = g_matFill ? static_cast<void*>(&g_matFill) : matInner;
 
     const float savedColor[4] = {
         colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3]
@@ -370,7 +351,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
                 }
             }
             std::memset(meshParams, 0, sizeof(meshParams));
-            g_renderMesh(screenContext, tessellator, matFill, meshParams);
+            g_renderMesh(screenContext, tessellator, matInner, meshParams);
         }
     }
 
@@ -379,8 +360,8 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     // so a wide outline is just the classic wireframe drawn bolder - it can
     // no longer look like a 3D cube the way camera-facing bars did. When the
     // eye is inside the block every face is "visible"; the strips would then
-    // surround the player, which is fine, but the fill material does not
-    // depth-test so skip the thick pass and keep the hairline there.
+    // surround the player, which is fine, but skip the thick pass and keep
+    // the hairline there.
     const bool eyeInsideBlock =
         camX > static_cast<float>(target.x) && camX < static_cast<float>(target.x) + 1.0f &&
         camY > static_cast<float>(target.y) && camY < static_cast<float>(target.y) + 1.0f &&
@@ -414,7 +395,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
                 }
             }
             std::memset(meshParams, 0, sizeof(meshParams));
-            g_renderMesh(screenContext, tessellator, matFill, meshParams);
+            g_renderMesh(screenContext, tessellator, matInner, meshParams);
         }
     }
 
