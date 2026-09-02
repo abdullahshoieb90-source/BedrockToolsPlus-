@@ -156,10 +156,14 @@ void registerModulesWithLauncher() {
                     displayName += ' ';
                     displayName += sourceKey[i];
                 } else if (isdigit(sourceKey[i]) && i > 0 && !isdigit(sourceKey[i - 1])) {
-                    // Split before a digit so keys like "block3d" render as
-                    // "Block 3d" instead of "Block3d".
+                    // Split before a digit so keys like "show3d" render as
+                    // "Show 3d" instead of "Show3d".
                     displayName += ' ';
                     displayName += sourceKey[i];
+                } else if (isalpha(sourceKey[i]) && isdigit(sourceKey[i - 1])) {
+                    // A letter glued to a digit is a unit/dimension suffix, so
+                    // it reads better upper-cased: "show3d" -> "Show 3D".
+                    displayName += toupper(sourceKey[i]);
                 } else {
                     displayName += sourceKey[i];
                 }

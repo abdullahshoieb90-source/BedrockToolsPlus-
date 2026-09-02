@@ -316,7 +316,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     // z-fight with the block's own surface. Only the faces pointing at the
     // camera are drawn, so the tint stays on the surface of the block and the
     // color never bleeds through to its inside.
-    if (g_module->block3d) {
+    if (g_module->show3d) {
         constexpr float kFillAlpha = 0.25f;
         const auto faces = bedrocktools::modules::blockoutline::makeFaces(
             static_cast<float>(target.x),
@@ -494,16 +494,19 @@ void BlockOutlineModule::onDisable() {
 void BlockOutlineModule::loadConfig(const nlohmann::json& json) {
     Module::loadConfig(json);
 
-    // The 3D box is an explicit opt-in toggle. Current configs use the
-    // "block3d" key; the old "outline3d" key is still accepted so upgrading
-    // players keep their setting.
+    // The 3D box is an explicit opt-in toggle ("Show 3D" in the menu).
+    // Current configs use the "show3d" key; the older "block3d" and
+    // "outline3d" keys are still accepted so upgrading players keep their
+    // setting.
     auto readBool = [&](const char* key, bool& out) {
         if (json.contains(key) && json[key].is_boolean()) out = json[key].get<bool>();
     };
-    if (json.contains("block3d")) {
-        readBool("block3d", block3d);
+    if (json.contains("show3d")) {
+        readBool("show3d", show3d);
+    } else if (json.contains("block3d")) {
+        readBool("block3d", show3d);
     } else {
-        readBool("outline3d", block3d);
+        readBool("outline3d", show3d);
     }
     readBool("rgb", rgb);
 
@@ -546,7 +549,7 @@ void BlockOutlineModule::loadConfig(const nlohmann::json& json) {
                             json.contains("outlineGreen") ||
                             json.contains("outlineBlue");
         if (hasRgb) {
-            const int r = readChannel("outlineRed", 0);
+            const int r = readChannel("outlineRed", 255);
             const int g = readChannel("outlineGreen", 255);
             const int b = readChannel("outlineBlue", 255);
             outlineColor = 0xFF000000u |
@@ -569,7 +572,7 @@ void BlockOutlineModule::saveConfig(nlohmann::json& json) {
     std::snprintf(hex, sizeof(hex), "%06X", outlineColor & 0x00FFFFFFu);
     json["outlineColor"] = std::string("#") + hex;
 
-    json["block3d"] = block3d;
+    json["show3d"] = show3d;
     json["rgb"] = rgb;
     json["lineThickness"] = lineThickness;
 }
