@@ -6,7 +6,6 @@
 #include <bedrocktools/events/EventBus.hpp>
 
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -33,10 +32,17 @@ std::string hitsoundsDirectoryForConfig() {
 }
 
 // ---------------------------------------------------------------------------
-// Android audio engine. Every MediaPlayer lives behind one mutex so the
-// attack hook (which starts playback) and the tick hook (which reaps finished
-// players) can safely share the active list even if the engine dispatches
-// them from different threads. The engine is a no-op on non-Android builds.
+// Android audio engine, built on android.media.SoundPool — the platform API
+// designed for low-latency game sound effects. The selected file is decoded
+// once (SoundPool.load() returns immediately and the decode runs on
+// SoundPool's own loader thread), so the hot per-hit path is a single cheap
+// play() call: no file I/O, no codec setup and no native allocation ever
+// happens on the game thread. SoundPool also manages the overlapping-stream
+// cap itself (stealing the oldest stream), so there is no player list to
+// prune on later ticks. Everything is serialized behind one mutex so the
+// attack hook and the config path can safely share the engine even if the
+// engine dispatches them from different threads. The whole engine is a no-op
+// on non-Android builds.
 // ---------------------------------------------------------------------------
 
 #if defined(__ANDROID__)
@@ -44,31 +50,28 @@ std::string hitsoundsDirectoryForConfig() {
 std::mutex g_audioMutex;
 JavaVM* g_vm = nullptr;
 
-jclass g_mpClass = nullptr; // global ref to android.media.MediaPlayer
-jmethodID g_mpInit = nullptr;
-jmethodID g_mpSetDataSource = nullptr;
-jmethodID g_mpPrepare = nullptr;
-jmethodID g_mpStart = nullptr;
-jmethodID g_mpStop = nullptr;
-jmethodID g_mpRelease = nullptr;
-jmethodID g_mpIsPlaying = nullptr;
-jmethodID g_mpSetVolume = nullptr;
+jclass g_spClass = nullptr; // global ref to android.media.SoundPool
+jmethodID g_spInit = nullptr;
+jmethodID g_spLoad = nullptr;
+jmethodID g_spPlay = nullptr;
+jmethodID g_spUnload = nullptr;
+jmethodID g_spRelease = nullptr;
 
-// Hard cap so a fast attack stream (or creative-mode click spam) can never
-// stack unbounded decoders. Hit sounds are short, so 3 overlapping players
-// is plenty; when the cap is reached the oldest player is cut off.
-constexpr std::size_t kMaxPlayers = 3;
+jobject g_soundPool = nullptr; // global ref to the SoundPool instance
+int g_soundId = 0;             // id of the loaded hit sound inside the pool (0 = none)
+std::string g_loadedPath;      // path currently queued/loaded in the pool
 
-// Safety net for reaping: if isPlaying() ever reports true forever (it should
-// not after PlaybackCompleted), force-release the player after this age.
-constexpr double kMaxPlayerSeconds = 8.0;
+// A hit sound is a short sample fired a few times per second at most, so a
+// small stream cap is plenty; when it is reached SoundPool steals the oldest
+// stream, which sounds right for overlapping hit dings and keeps a fast
+// attack stream (or creative-mode click spam) from stacking decoders.
+constexpr jint kMaxStreams = 4;
 
-struct ActivePlayer {
-    jobject ref = nullptr; // global ref to android.media.MediaPlayer
-    steady_clock::time_point startedAt;
-};
+// AudioManager.STREAM_MUSIC so hit sounds follow the game's media volume.
+constexpr jint kStreamTypeMusic = 3;
 
-std::vector<ActivePlayer> g_players;
+// load()/play() priority; only one sample lives in the pool at a time.
+constexpr jint kPriority = 1;
 
 void clearJniException(JNIEnv* env) {
     if (env && env->ExceptionCheck()) env->ExceptionClear();
@@ -77,34 +80,6 @@ void clearJniException(JNIEnv* env) {
 void setAudioJavaVm(void* vm) {
     std::lock_guard<std::mutex> lock(g_audioMutex);
     g_vm = static_cast<JavaVM*>(vm);
-}
-
-bool ensureAudioApi(JNIEnv* env) {
-    if (g_mpClass && g_mpInit) return true;
-    clearJniException(env);
-    jclass local = env->FindClass("android/media/MediaPlayer");
-    if (!local || env->ExceptionCheck()) {
-        clearJniException(env);
-        return false;
-    }
-    g_mpClass = static_cast<jclass>(env->NewGlobalRef(local));
-    env->DeleteLocalRef(local);
-    if (!g_mpClass) return false;
-
-    g_mpInit = env->GetMethodID(g_mpClass, "<init>", "()V");
-    g_mpSetDataSource = env->GetMethodID(g_mpClass, "setDataSource", "(Ljava/lang/String;)V");
-    g_mpPrepare = env->GetMethodID(g_mpClass, "prepare", "()V");
-    g_mpStart = env->GetMethodID(g_mpClass, "start", "()V");
-    g_mpStop = env->GetMethodID(g_mpClass, "stop", "()V");
-    g_mpRelease = env->GetMethodID(g_mpClass, "release", "()V");
-    g_mpIsPlaying = env->GetMethodID(g_mpClass, "isPlaying", "()Z");
-    g_mpSetVolume = env->GetMethodID(g_mpClass, "setVolume", "(FF)V");
-    if (!g_mpInit || !g_mpSetDataSource || !g_mpPrepare || !g_mpStart || !g_mpStop ||
-        !g_mpRelease || !g_mpIsPlaying || !g_mpSetVolume || env->ExceptionCheck()) {
-        clearJniException(env);
-        return false;
-    }
-    return true;
 }
 
 // Attaches the calling thread to the JVM for the duration of the scope and
@@ -184,127 +159,145 @@ std::vector<jchar> utf8ToJChars(const std::string& text) {
     return out;
 }
 
-void releasePlayer(JNIEnv* env, jobject ref) {
-    if (!env || !ref) return;
+bool ensureSoundPool(JNIEnv* env) {
+    if (g_soundPool) return true;
     clearJniException(env);
-    if (g_mpClass && g_mpStop) {
-        env->CallVoidMethod(ref, g_mpStop);
-        clearJniException(env);
-    }
-    if (g_mpClass && g_mpRelease) {
-        env->CallVoidMethod(ref, g_mpRelease);
-        clearJniException(env);
-    }
-    env->DeleteGlobalRef(ref);
-}
 
-void pruneFinishedPlayers(JNIEnv* env) {
-    if (!env) return;
-    const auto now = steady_clock::now();
-    for (std::size_t i = 0; i < g_players.size();) {
-        bool finished = false;
-        if (g_mpIsPlaying) {
-            const jboolean playing = env->CallBooleanMethod(g_players[i].ref, g_mpIsPlaying);
+    if (!g_spClass) {
+        jclass local = env->FindClass("android/media/SoundPool");
+        if (!local || env->ExceptionCheck()) {
             clearJniException(env);
-            finished = !playing;
+            return false;
         }
-        const double age = duration<double>(now - g_players[i].startedAt).count();
-        if (age > kMaxPlayerSeconds) finished = true;
-        if (finished) {
-            releasePlayer(env, g_players[i].ref);
-            g_players[i] = g_players.back();
-            g_players.pop_back();
-        } else {
-            ++i;
+        g_spClass = static_cast<jclass>(env->NewGlobalRef(local));
+        env->DeleteLocalRef(local);
+        if (!g_spClass) return false;
+
+        g_spInit = env->GetMethodID(g_spClass, "<init>", "(III)V");
+        g_spLoad = env->GetMethodID(g_spClass, "load", "(Ljava/lang/String;I)I");
+        g_spPlay = env->GetMethodID(g_spClass, "play", "(IFFIIF)I");
+        g_spUnload = env->GetMethodID(g_spClass, "unload", "(I)Z");
+        g_spRelease = env->GetMethodID(g_spClass, "release", "()V");
+        if (!g_spInit || !g_spLoad || !g_spPlay || !g_spUnload || !g_spRelease ||
+            env->ExceptionCheck()) {
+            clearJniException(env);
+            return false;
         }
     }
+
+    // SoundPool(maxStreams, streamType, srcQuality). The plain constructor is
+    // deprecated on the Java side in favour of SoundPool.Builder, but it is
+    // the only direct (non-builder) constructor and works on every API level,
+    // which matters when calling it through JNI.
+    jobject local = env->NewObject(g_spClass, g_spInit, kMaxStreams, kStreamTypeMusic, static_cast<jint>(0));
+    if (!local || env->ExceptionCheck()) {
+        clearJniException(env);
+        return false;
+    }
+    g_soundPool = env->NewGlobalRef(local);
+    env->DeleteLocalRef(local);
+    if (!g_soundPool) {
+        clearJniException(env);
+        return false;
+    }
+    return true;
 }
 
-void startPlayer(JNIEnv* env, const std::string& path, float volume) {
-    if (!env || !g_mpClass) return;
-    clearJniException(env);
+void unloadSoundLocked(JNIEnv* env) {
+    if (env && g_soundPool && g_soundId != 0 && g_spUnload) {
+        env->CallBooleanMethod(g_soundPool, g_spUnload, g_soundId);
+        clearJniException(env);
+    }
+    g_soundId = 0;
+    g_loadedPath.clear();
+}
 
+// Kicks off decoding `path` into the pool. SoundPool.load() is asynchronous:
+// it queues the file and returns immediately, so this never stalls the
+// caller. g_loadedPath is updated even when load() reports failure (it
+// returns 0 for undecodable files) so a broken file is not re-queued on every
+// single hit.
+void loadSoundLocked(JNIEnv* env, const std::string& path) {
+    if (!env || path.empty()) return;
     const std::vector<jchar> widePath = utf8ToJChars(path);
     jstring jpath = env->NewString(widePath.data(), static_cast<jsize>(widePath.size()));
-    jobject player = env->NewObject(g_mpClass, g_mpInit);
-    if (!player) {
+    if (!jpath) {
         clearJniException(env);
-        if (jpath) env->DeleteLocalRef(jpath);
         return;
     }
-
-    bool ok = true;
-    if (jpath) env->CallVoidMethod(player, g_mpSetDataSource, jpath);
-    if (env->ExceptionCheck()) ok = false;
+    const jint id = env->CallIntMethod(g_soundPool, g_spLoad, jpath, kPriority);
     clearJniException(env);
-    if (ok) {
-        env->CallVoidMethod(player, g_mpPrepare);
-        if (env->ExceptionCheck()) ok = false;
-        clearJniException(env);
-    }
-    if (jpath) {
-        env->DeleteLocalRef(jpath);
-        jpath = nullptr;
-    }
-    if (!ok) {
-        env->DeleteLocalRef(player);
-        return;
-    }
-
-    if (volume < 0.0f) volume = 0.0f;
-    if (volume > 1.0f) volume = 1.0f;
-    env->CallVoidMethod(player, g_mpSetVolume, volume, volume);
-    clearJniException(env);
-    env->CallVoidMethod(player, g_mpStart);
-    clearJniException(env);
-
-    jobject global = env->NewGlobalRef(player);
-    env->DeleteLocalRef(player);
-    if (!global) return;
-
-    if (g_players.size() >= kMaxPlayers) {
-        releasePlayer(env, g_players.front().ref);
-        g_players.erase(g_players.begin());
-    }
-    g_players.push_back(ActivePlayer{global, steady_clock::now()});
+    env->DeleteLocalRef(jpath);
+    g_soundId = (id > 0) ? static_cast<int>(id) : 0;
+    g_loadedPath = path;
 }
 
 // Public audio entry points used by the module (each acquires the mutex so
 // the calling thread's identity never matters).
-void audioPlayFile(const std::string& path, float volume) {
+
+// Decodes `path` ahead of time so hits only pay for play(). Already-loaded
+// paths (and "None", i.e. an empty path) collapse to a cheap mutex+compare.
+void audioLoadFile(const std::string& path) {
     std::lock_guard<std::mutex> lock(g_audioMutex);
-    if (!g_vm || path.empty()) return;
+    if (!g_vm || path == g_loadedPath) return;
     ScopedJniEnv env(g_vm);
-    if (!env.get()) return;
-    if (!ensureAudioApi(env.get())) return;
-    pruneFinishedPlayers(env.get());
-    startPlayer(env.get(), path, volume);
+    if (!env.get() || !ensureSoundPool(env.get())) return;
+    unloadSoundLocked(env.get());
+    loadSoundLocked(env.get(), path);
 }
 
-void audioPrune() {
+// Hot per-hit path: play() just posts a start request to SoundPool's event
+// thread — microseconds of work, regardless of how big the audio file is.
+// Returns quietly while the sample is still decoding right after a (re)load
+// or when nothing is selected; the next hit plays normally.
+void audioPlay(float volume) {
     std::lock_guard<std::mutex> lock(g_audioMutex);
-    if (!g_vm || g_players.empty()) return;
+    if (!g_vm || !g_soundPool || g_soundId == 0 || !g_spPlay) return;
     ScopedJniEnv env(g_vm);
     if (!env.get()) return;
-    if (g_mpClass) pruneFinishedPlayers(env.get());
+    if (volume < 0.0f) volume = 0.0f;
+    if (volume > 1.0f) volume = 1.0f;
+    // play(soundID, leftVolume, rightVolume, priority, loop, rate) — loop 0
+    // means "play once", rate 1.0 is the original pitch.
+    env.get()->CallIntMethod(g_soundPool, g_spPlay, g_soundId, volume, volume, kPriority,
+                             static_cast<jint>(0), 1.0f);
+    clearJniException(env.get());
+}
+
+void audioUnload() {
+    std::lock_guard<std::mutex> lock(g_audioMutex);
+    if (!g_vm) {
+        g_soundId = 0;
+        g_loadedPath.clear();
+        return;
+    }
+    ScopedJniEnv env(g_vm);
+    unloadSoundLocked(env.get());
 }
 
 void audioReleaseAll() {
     std::lock_guard<std::mutex> lock(g_audioMutex);
-    if (!g_vm) {
-        g_players.clear();
-        return;
+    if (g_vm && g_soundPool) {
+        ScopedJniEnv env(g_vm);
+        if (env.get()) {
+            if (g_spRelease) {
+                env.get()->CallVoidMethod(g_soundPool, g_spRelease);
+                clearJniException(env.get());
+            }
+            env.get()->DeleteGlobalRef(g_soundPool);
+        }
     }
-    ScopedJniEnv env(g_vm);
-    for (const ActivePlayer& player : g_players) releasePlayer(env.get(), player.ref);
-    g_players.clear();
+    g_soundPool = nullptr;
+    g_soundId = 0;
+    g_loadedPath.clear();
 }
 
 #else // !defined(__ANDROID__)
 
 void setAudioJavaVm(void*) {}
-void audioPlayFile(const std::string&, float) {}
-void audioPrune() {}
+void audioLoadFile(const std::string&) {}
+void audioPlay(float) {}
+void audioUnload() {}
 void audioReleaseAll() {}
 
 #endif
@@ -329,11 +322,6 @@ void HitSoundModule::onInit() {
     refreshSelectionPath();
     setAudioJavaVm(bedrocktools::launcher::javaVm());
 
-    bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
-        [](auto&) {
-            if (g_hitSound && g_hitSound->enabled) g_hitSound->onTick();
-        });
-
     bedrocktools::events::bus().subscribe<bedrocktools::events::AttackEvent>(
         [](auto& event) {
             if (g_hitSound && g_hitSound->enabled) g_hitSound->onAttack(event.target);
@@ -341,14 +329,11 @@ void HitSoundModule::onInit() {
 }
 
 void HitSoundModule::onEnable() {
+    audioLoadFile(m_currentPath);
 }
 
 void HitSoundModule::onDisable() {
-    audioReleaseAll();
-}
-
-void HitSoundModule::onTick() {
-    audioPrune();
+    audioUnload();
 }
 
 void HitSoundModule::onAttack(void* target) {
@@ -363,7 +348,12 @@ void HitSoundModule::onAttack(void* target) {
     if (now - lastPlay < milliseconds(40)) return;
     lastPlay = now;
 
-    audioPlayFile(m_currentPath, m_volume);
+    // Safety net: if the sound is not in the pool yet (e.g. the module was
+    // enabled before the JVM handle was available) queue the load now.
+    // audioLoadFile() is a cheap no-op when the path is already loaded, and
+    // the decode itself runs off the game thread.
+    audioLoadFile(m_currentPath);
+    audioPlay(m_volume);
 }
 
 void HitSoundModule::loadConfig(const nlohmann::json& j) {
@@ -419,10 +409,12 @@ void HitSoundModule::writeSampleWav(const std::string& path) const {
 
 // Derives the absolute path of the selected entry (or clears it for "None").
 // Kept small instead of storing a copy of the name so index/list changes can
-// never leave a stale path behind.
+// never leave a stale path behind. When the module is enabled the new
+// selection is also (pre)loaded into the SoundPool so the next hit is lag-free.
 void HitSoundModule::refreshSelectionPath() {
     m_currentPath.clear();
     if (m_selectedIndex > 0 && m_selectedIndex <= static_cast<int>(m_files.size())) {
         m_currentPath = m_dir + "/" + m_files[static_cast<std::size_t>(m_selectedIndex - 1)];
     }
+    if (enabled) audioLoadFile(m_currentPath);
 }
