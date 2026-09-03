@@ -1,13 +1,18 @@
 #include "modules/visual/blockoutline_color.hpp"
 #include "modules/visual/blockoutline_geometry.hpp"
 
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 using bedrocktools::modules::blockoutline::Point;
+using bedrocktools::modules::blockoutline::Quad;
 using bedrocktools::modules::blockoutline::makeBox;
+using bedrocktools::modules::blockoutline::makeEdgeVisibility;
 using bedrocktools::modules::blockoutline::makeFaces;
+using bedrocktools::modules::blockoutline::makeThickFrame;
 
 int main() {
     constexpr auto box = makeBox(10.0f, -2.0f, 4.0f, 0.0f);
@@ -288,9 +293,8 @@ int main() {
         }
     }
 
-    // Whatever the viewpoint, the visible edges (drawn by the normal passes)
-    // plus the hidden ones (drawn as bars) always add up to all twelve edges,
-    // and the hidden set is never drawn twice.
+    // Whatever the viewpoint, the eye-facing edges plus the hidden ones always
+    // add up to all twelve edges, and the hidden set is never drawn twice.
     {
         constexpr auto box = makeBox(0.0f, 0.0f, 0.0f);
         const Point eyes[] = {
@@ -315,6 +319,337 @@ int main() {
             const auto bars = makeEdgeBars(box, hidden, kMinimum3DEdgeWidth);
             assert(bars.count == static_cast<std::size_t>(hiddenCount) * 2);
         }
+    }
+
+    // --- Show 3D: no edge may depend on where the eye is -------------------
+    // The reported bug: with "Show 3D" on, some of the twelve edges
+    // disappeared. The hidden edges had already been switched to bars (#176),
+    // but the eye-facing edges were still painted by makeThickFrame as strips
+    // lying in the plane of an eye-facing face. A strip projects to (nearly)
+    // zero pixels as soon as that face turns edge-on to the camera, so whether
+    // an edge was visible depended on the eye position: some edges vanished at
+    // grazing angles while their neighbours stayed solid. Show 3D now builds
+    // every edge from a bar, which cannot collapse that way.
+    using bedrocktools::modules::blockoutline::EdgeBarPasses;
+    using bedrocktools::modules::blockoutline::edgeBarWidthForFrame;
+    using bedrocktools::modules::blockoutline::kEdgeBarLift;
+    using bedrocktools::modules::blockoutline::makeEdgeBarPasses;
+
+    // Bar width follows the Line Size slider, and falls back to the minimum
+    // 3D edge width at hairline so the back edges always have real geometry.
+    static_assert(edgeBarWidthForFrame(0.0f) == kMinimum3DEdgeWidth);
+    static_assert(edgeBarWidthForFrame(frameWidthForLineSize(1.0f)) == kMinimum3DEdgeWidth);
+    static_assert(edgeBarWidthForFrame(frameWidthForLineSize(2.0f)) == frameWidthForLineSize(2.0f));
+    static_assert(edgeBarWidthForFrame(frameWidthForLineSize(10.0f)) == frameWidthForLineSize(10.0f));
+    static_assert(edgeBarWidthForFrame(-1.0f) == kMinimum3DEdgeWidth);
+
+    // The two passes are exact complements: every edge is drawn by exactly one
+    // of them, so the whole wireframe is always emitted - including when the
+    // eye is inside the block and every edge counts as facing it.
+    {
+        constexpr std::array<bool, 12> all = {true, true, true, true, true, true,
+                                              true, true, true, true, true, true};
+        constexpr std::array<bool, 12> none{};
+        constexpr std::array<bool, 12> top = {false, false, false, false,
+                                              true, true, true, true,
+                                              false, false, false, false};
+
+        constexpr EdgeBarPasses fromAll = makeEdgeBarPasses(all);
+        static_assert(fromAll.depthTestedCount == 12 && fromAll.seeThroughCount == 0);
+        constexpr EdgeBarPasses fromNone = makeEdgeBarPasses(none);
+        static_assert(fromNone.depthTestedCount == 0 && fromNone.seeThroughCount == 12);
+        constexpr EdgeBarPasses fromTop = makeEdgeBarPasses(top);
+        static_assert(fromTop.depthTestedCount == 4 && fromTop.seeThroughCount == 8);
+        for (std::size_t i = 0; i < 12; ++i) {
+            assert(fromTop.depthTested[i] != fromTop.seeThrough[i]);
+        }
+    }
+
+    // Whatever the viewpoint, the two passes together always cover all twelve
+    // edges and emit two bar quads per edge - never fewer, never twice.
+    {
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f);
+        const Point eyes[] = {
+            {0.5f, 5.0f, 0.5f},    // straight above (block under the feet)
+            {5.0f, 0.5f, 0.5f},    // straight along +X
+            {3.0f, 3.0f, 3.0f},    // corner view
+            {0.5f, 3.0f, -4.0f},   // grazing angle that used to lose an edge
+            {0.5f, 1.0001f, 4.0f}, // almost exactly level with the top face
+            {-6.0f, 0.5f, 2.0f},
+            {2.0f, -3.0f, 0.5f},
+            {0.5f, 0.5f, 0.5f},    // eye inside the block
+        };
+        for (const auto& eye : eyes) {
+            const auto passes = makeEdgeBarPasses(makeEdgeVisibility(box, eye));
+            assert(passes.depthTestedCount + passes.seeThroughCount == 12);
+
+            const auto front = makeEdgeBars(box, passes.depthTested,
+                                            edgeBarWidthForFrame(0.0f), kEdgeBarLift);
+            const auto back = makeEdgeBars(box, passes.seeThrough,
+                                           edgeBarWidthForFrame(0.0f), 0.0f);
+            assert(front.count == passes.depthTestedCount * 2);
+            assert(back.count == passes.seeThroughCount * 2);
+            assert(front.count + back.count == 24);
+        }
+    }
+
+    // The eye-facing bars are lifted clear of the block surface, because a bar
+    // quad lies in the plane of one of the faces meeting at its edge and would
+    // otherwise z-fight with the block under a depth-tested material. The
+    // see-through back bars keep lift 0 and stay exactly where they always
+    // were.
+    {
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f, 0.0f);
+        constexpr std::array<bool, 12> all = {true, true, true, true, true, true,
+                                              true, true, true, true, true, true};
+        constexpr auto flat = makeEdgeBars(box, all, 0.05f);
+        constexpr auto lifted = makeEdgeBars(box, all, 0.05f, kEdgeBarLift);
+        static_assert(flat.count == 24 && lifted.count == 24);
+
+        const auto onFacePlane = [](float c) { return c == 0.0f || c == 1.0f; };
+
+        for (std::size_t i = 0; i < flat.count; ++i) {
+            const Point fv[4] = {flat.quads[i].a, flat.quads[i].b,
+                                 flat.quads[i].c, flat.quads[i].d};
+            const Point lv[4] = {lifted.quads[i].a, lifted.quads[i].b,
+                                 lifted.quads[i].c, lifted.quads[i].d};
+            for (int k = 0; k < 4; ++k) {
+                const float f[3] = {fv[k].x, fv[k].y, fv[k].z};
+                const float l[3] = {lv[k].x, lv[k].y, lv[k].z};
+                // Unlifted: still coplanar with a face of the block.
+                assert(onFacePlane(f[0]) || onFacePlane(f[1]) || onFacePlane(f[2]));
+                // Lifted: pushed outside the block on that same axis, so no
+                // vertex touches a face plane any more.
+                assert(!onFacePlane(l[0]) && !onFacePlane(l[1]) && !onFacePlane(l[2]));
+                // The offset is exactly the lift, applied outwards.
+                bool moved = false;
+                for (int a = 0; a < 3; ++a) {
+                    const float d = l[a] - f[a];
+                    if (d != 0.0f) {
+                        assert(std::fabs(std::fabs(d) - kEdgeBarLift) < 1e-6f);
+                        assert(f[a] == 0.0f ? d < 0.0f : d > 0.0f);
+                        moved = true;
+                    }
+                }
+                assert(moved);
+            }
+        }
+        // A negative lift is clamped away rather than pushing bars inside.
+        static_assert(makeEdgeBars(box, all, 0.05f, -1.0f).count == 24);
+    }
+
+    // The regression itself, measured. Whether an edge covers pixels is
+    // decided by its projected area, and for a world-space quad that is the
+    // quad area scaled by the cosine of the angle between the quad normal and
+    // the direction from the eye to the quad. Sweep eyes all around the block
+    // - from touching distance out to 24 blocks, plus eyes parked just outside
+    // two adjacent face planes, which is the grazing case a block near eye
+    // level produces - and compare the bar against the strip the old code
+    // painted for the same edge.
+    {
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f, 0.0f);
+        constexpr std::array<bool, 12> all = {true, true, true, true, true, true,
+                                              true, true, true, true, true, true};
+        constexpr float w = 0.05f;
+        constexpr auto bars = makeEdgeBars(box, all, w, kEdgeBarLift);
+        constexpr auto faces = makeFaces(0.0f, 0.0f, 0.0f, 0.0f);
+
+        // Outward normals of the six faces, in makeFaces order.
+        constexpr std::array<std::array<float, 3>, kFaceCount> faceNormals = {{
+            {{0.0f, -1.0f, 0.0f}}, {{0.0f, 1.0f, 0.0f}},
+            {{0.0f, 0.0f, -1.0f}}, {{0.0f, 0.0f, 1.0f}},
+            {{-1.0f, 0.0f, 0.0f}}, {{1.0f, 0.0f, 0.0f}},
+        }};
+
+        // Projected area of a quad as seen from `eye`.
+        const auto projectedArea = [](const Quad& q, const Point& eye) {
+            const float cx = (q.a.x + q.b.x + q.c.x + q.d.x) * 0.25f;
+            const float cy = (q.a.y + q.b.y + q.c.y + q.d.y) * 0.25f;
+            const float cz = (q.a.z + q.b.z + q.c.z + q.d.z) * 0.25f;
+            float wx = cx - eye.x, wy = cy - eye.y, wz = cz - eye.z;
+            const float len = std::sqrt(wx * wx + wy * wy + wz * wz);
+            if (len <= 0.0f) return 0.0f;
+            wx /= len; wy /= len; wz /= len;
+            const float ux = q.b.x - q.a.x, uy = q.b.y - q.a.y, uz = q.b.z - q.a.z;
+            const float vx = q.d.x - q.a.x, vy = q.d.y - q.a.y, vz = q.d.z - q.a.z;
+            return std::fabs((uy * vz - uz * vy) * wx +
+                             (uz * vx - ux * vz) * wy +
+                             (ux * vy - uy * vx) * wz);
+        };
+
+        // Distance from an eye to the unit block, used to tell ordinary
+        // viewing distances from the camera practically touching the block.
+        const auto boxDistance = [](const Point& e) {
+            const auto outside = [](float c) {
+                if (c < 0.0f) return -c;
+                if (c > 1.0f) return c - 1.0f;
+                return 0.0f;
+            };
+            const float dx = outside(e.x), dy = outside(e.y), dz = outside(e.z);
+            return std::sqrt(dx * dx + dy * dy + dz * dz);
+        };
+
+        // A strip painted on a face spans the same rectangle as a bar quad
+        // (width x (1 + width)), so the two ratios are directly comparable.
+        const float quadArea = w * (1.0f + w);
+
+        std::vector<Point> eyes;
+        for (const float radius : {0.6f, 1.5f, 3.0f, 8.0f, 24.0f}) {
+            for (int yawStep = 0; yawStep < 72; ++yawStep) {
+                for (int pitchStep = -35; pitchStep <= 35; ++pitchStep) {
+                    const float yaw = yawStep * 5.0f * 3.14159265f / 180.0f;
+                    const float pitch = pitchStep * 2.5f * 3.14159265f / 180.0f;
+                    eyes.push_back(Point{
+                        0.5f + radius * std::cos(pitch) * std::cos(yaw),
+                        0.5f + radius * std::sin(pitch),
+                        0.5f + radius * std::cos(pitch) * std::sin(yaw)});
+                }
+            }
+        }
+        // Grazing eyes: barely outside two adjacent face planes at once, both
+        // up close and from a few blocks back.
+        for (const float eps : {0.0005f, 0.002f, 0.01f, 0.05f, 0.2f}) {
+            for (const float back : {0.0f, 0.5f, 2.0f, 4.0f, 10.0f}) {
+                eyes.push_back(Point{0.5f, 1.0f + eps, -eps - back});
+                eyes.push_back(Point{-eps - back, 1.0f + eps, 0.5f});
+                eyes.push_back(Point{0.5f, -eps - back, 1.0f + eps});
+                eyes.push_back(Point{1.0f + eps, 0.5f, -eps - back});
+                eyes.push_back(Point{0.5f, 1.0f + eps, 0.5f});
+            }
+        }
+
+        int checked = 0, degenerate = 0, collapsed = 0, collapsedFar = 0;
+        float worstBar = 1.0f;
+        for (const auto& eye : eyes) {
+            const auto faceVisible = makeFaceVisibility(faces, eye);
+            const float distance = boxDistance(eye);
+
+            for (std::size_t e = 0; e < 12; ++e) {
+                // Unit direction of the edge, and of eye -> edge centre.
+                float dir[3] = {box[e].to.x - box[e].from.x,
+                                box[e].to.y - box[e].from.y,
+                                box[e].to.z - box[e].from.z};
+                const float edgeLen = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] +
+                                                dir[2] * dir[2]);
+                assert(edgeLen > 0.0f);
+                for (float& d : dir) d /= edgeLen;
+                const float mx = (box[e].from.x + box[e].to.x) * 0.5f - eye.x;
+                const float my = (box[e].from.y + box[e].to.y) * 0.5f - eye.y;
+                const float mz = (box[e].from.z + box[e].to.z) * 0.5f - eye.z;
+                const float toLen = std::sqrt(mx * mx + my * my + mz * mz);
+                assert(toLen > 0.0f);
+                const float along = std::fabs(dir[0] * mx + dir[1] * my + dir[2] * mz) / toLen;
+
+                // Looking straight down the edge: no geometry of any kind can
+                // give it screen extent, so this is not a bug and is skipped.
+                if (along > 0.95f) { ++degenerate; continue; }
+                ++checked;
+
+                // The bar always keeps a real share of its area. Measured
+                // worst case over this whole sweep is ~0.22 of quadArea.
+                const float barRatio =
+                    std::max(projectedArea(bars.quads[e * 2], eye),
+                             projectedArea(bars.quads[e * 2 + 1], eye)) / quadArea;
+                assert(barRatio >= 0.20f);
+                worstBar = std::min(worstBar, barRatio);
+
+                // What the old code drew for this edge: strips on whichever of
+                // its two faces makeFaceVisibility marked as facing the eye.
+                float stripRatio = 0.0f;
+                bool drawnAsStrip = false;
+                for (std::size_t f = 0; f < kFaceCount; ++f) {
+                    const Point corners[4] = {faces[f].a, faces[f].b, faces[f].c, faces[f].d};
+                    bool touchesFrom = false, touchesTo = false;
+                    for (const auto& c : corners) {
+                        if (c == box[e].from) touchesFrom = true;
+                        if (c == box[e].to) touchesTo = true;
+                    }
+                    if (!touchesFrom || !touchesTo || !faceVisible[f]) continue;
+                    drawnAsStrip = true;
+                    const float fx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) * 0.25f - eye.x;
+                    const float fy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) * 0.25f - eye.y;
+                    const float fz = (corners[0].z + corners[1].z + corners[2].z + corners[3].z) * 0.25f - eye.z;
+                    const float fLen = std::sqrt(fx * fx + fy * fy + fz * fz);
+                    assert(fLen > 0.0f);
+                    const auto& n = faceNormals[f];
+                    stripRatio = std::max(stripRatio, std::fabs(
+                        n[0] * fx + n[1] * fy + n[2] * fz) / fLen);
+                }
+                // Faces an eye-facing face => the old thick pass drew it, and
+                // at these angles that strip covered almost no pixels.
+                if (drawnAsStrip && stripRatio < 0.02f) {
+                    ++collapsed;
+                    if (distance >= 1.0f) ++collapsedFar;
+                }
+            }
+        }
+
+        // The sweep really did cover the space around the block ...
+        assert(checked > 200000);
+        assert(degenerate > 0);
+        assert(worstBar >= 0.20f && worstBar < 1.0f);
+        // ... the strip approach really did lose edges, including from
+        // perfectly ordinary viewing distances of a block or more ...
+        assert(collapsed > 1000);
+        assert(collapsedFar > 500);
+    }
+
+    // One concrete repro at a realistic viewing distance: the eye is 4 blocks
+    // away and only just above the top face, which is how a block near eye
+    // level gets looked at. The far top edge (index 6) still counts as
+    // eye-facing - through the top face alone - so the old code painted it as
+    // a strip lying in the top face plane. Seen from almost level with that
+    // plane the strip covers ~0.3% of its area and the edge disappeared, while
+    // the bar for the same edge keeps essentially its full area through the
+    // perpendicular quad.
+    {
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f, 0.0f);
+        constexpr Point eye{0.5f, 1.02f, -4.0f};
+        constexpr auto faces = makeFaces(0.0f, 0.0f, 0.0f, 0.0f);
+        constexpr auto faceVisible = makeFaceVisibility(faces, eye);
+        // Only the top face and the near (-Z) face face the eye.
+        static_assert(!faceVisible[0] && faceVisible[1] && faceVisible[2] &&
+                      !faceVisible[3] && !faceVisible[4] && !faceVisible[5]);
+
+        constexpr auto edgeVisible = makeEdgeVisibility(box, eye);
+        // The far top edge is reported visible, so the old thick pass did try
+        // to draw it - as a strip on the grazing top face only.
+        static_assert(edgeVisible[6]);
+
+        constexpr std::array<bool, 12> justThatEdge = {false, false, false, false,
+                                                       false, false, true, false,
+                                                       false, false, false, false};
+        constexpr auto bars = makeEdgeBars(box, justThatEdge, 0.05f, kEdgeBarLift);
+        static_assert(bars.count == 2);
+        constexpr auto strips = makeThickFrame(0.0f, 0.0f, 0.0f, faceVisible, 0.05f, 0.004f);
+        static_assert(strips.count == 8);
+
+        const auto projectedArea = [](const Quad& q, const Point& from) {
+            const float cx = (q.a.x + q.b.x + q.c.x + q.d.x) * 0.25f;
+            const float cy = (q.a.y + q.b.y + q.c.y + q.d.y) * 0.25f;
+            const float cz = (q.a.z + q.b.z + q.c.z + q.d.z) * 0.25f;
+            float wx = cx - from.x, wy = cy - from.y, wz = cz - from.z;
+            const float len = std::sqrt(wx * wx + wy * wy + wz * wz);
+            wx /= len; wy /= len; wz /= len;
+            const float ux = q.b.x - q.a.x, uy = q.b.y - q.a.y, uz = q.b.z - q.a.z;
+            const float vx = q.d.x - q.a.x, vy = q.d.y - q.a.y, vz = q.d.z - q.a.z;
+            return std::fabs((uy * vz - uz * vy) * wx +
+                             (uz * vx - ux * vz) * wy +
+                             (ux * vy - uy * vx) * wz);
+        };
+        const float quadArea = 0.05f * 1.05f;
+
+        // Every strip on the top face - including the one for edge 6 - is
+        // seen almost exactly edge-on and covers no pixels.
+        for (std::size_t i = 0; i < strips.count; ++i) {
+            const bool onTop = strips.quads[i].a.y > 1.0f;
+            if (!onTop) continue;
+            assert(projectedArea(strips.quads[i], eye) < 0.02f * quadArea);
+        }
+        // The bar for edge 6 does not: its quad in the Z plane faces the eye.
+        const float barRatio = std::max(projectedArea(bars.quads[0], eye),
+                                        projectedArea(bars.quads[1], eye)) / quadArea;
+        assert(barRatio > 0.5f);
     }
 
     // --- RGB rainbow cycle -----------------------------------------------
