@@ -182,6 +182,14 @@ void setJavaVm(void* javaVm) {
 #endif
 }
 
+void* javaVm() {
+#if defined(__ANDROID__)
+    return gJavaVm.load(std::memory_order_acquire);
+#else
+    return nullptr;
+#endif
+}
+
 void refreshExternalButtonsForModule(std::string_view moduleId) {
 #if !defined(__ANDROID__)
     (void)moduleId;
