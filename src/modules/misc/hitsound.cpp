@@ -31,6 +31,23 @@ std::string hitsoundsDirectoryForConfig() {
     return dir + "/hitsounds";
 }
 
+// A swing is only interesting for this long after it happens. This covers the
+// singleplayer case (the hurt-time is set on the very next tick) and leaves
+// generous slack for laggy servers to confirm the hit; anything older is
+// either a whiffed/blocked/rejected hit (must stay silent) or a stale actor
+// pointer whose memory may have been recycled.
+constexpr auto kHitConfirmWindow = milliseconds(1000);
+
+// Fastest melee cadence (auto-swing) is a few hits per second, so the number
+// of unconfirmed swings at any moment is tiny; cap the list regardless.
+constexpr std::size_t kMaxPendingHits = 8;
+
+// hurtTime counts down from the maximum hurt flash (a handful of ticks) after
+// each hit; values outside this range mean the pointer is not a live actor,
+// so never read or trust them.
+constexpr int kHurtTimeMin = 0;
+constexpr int kHurtTimeMax = 100;
+
 // ---------------------------------------------------------------------------
 // Android audio engine, built on android.media.SoundPool — the platform API
 // designed for low-latency game sound effects. The selected file is decoded
@@ -306,7 +323,7 @@ void audioReleaseAll() {}
 
 HitSoundModule::HitSoundModule()
     : Module("Hit Sound",
-             "Plays a sound from the hitsounds folder when you hit a mob or player.") {
+             "Plays a sound from the hitsounds folder only when a mob or player actually takes damage from your hit.") {
     g_hitSound = this;
 }
 
@@ -326,34 +343,101 @@ void HitSoundModule::onInit() {
         [](auto& event) {
             if (g_hitSound && g_hitSound->enabled) g_hitSound->onAttack(event.target);
         });
+
+    // Damage confirmation runs here: in singleplayer the victim's hurt-time is
+    // already set on the tick after the swing, and in multiplayer it rises a
+    // few ticks later when the server confirms the hit.
+    bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
+        [](auto&) {
+            if (g_hitSound && g_hitSound->enabled) g_hitSound->onTickCheck();
+        });
 }
 
 void HitSoundModule::onEnable() {
+    m_pendingHits.clear();
     audioLoadFile(m_currentPath);
 }
 
 void HitSoundModule::onDisable() {
+    m_pendingHits.clear();
     audioUnload();
 }
 
-void HitSoundModule::onAttack(void* target) {
+void HitSoundModule::onAttack(bedrocktools::sdk::Actor* target) {
     if (!enabled) return;
     if (!target || m_currentPath.empty()) return;
 
-    // Debounce: never fire twice for the same press even if the engine calls
-    // the attack path more than once, while still letting repeated swings
-    // (auto-swing, ~4 per second) retrigger the sound.
-    static steady_clock::time_point lastPlay;
     const auto now = steady_clock::now();
-    if (now - lastPlay < milliseconds(40)) return;
-    lastPlay = now;
 
-    // Safety net: if the sound is not in the pool yet (e.g. the module was
-    // enabled before the JVM handle was available) queue the load now.
-    // audioLoadFile() is a cheap no-op when the path is already loaded, and
-    // the decode itself runs off the game thread.
-    audioLoadFile(m_currentPath);
-    audioPlay(m_volume);
+    // The attack hook fires BEFORE the original attack runs, so this is the
+    // victim's pre-swing state: if the hit actually lands its hurt-time gets
+    // bumped to the top of its countdown, which onTickCheck() watches for.
+    const int baseline = target->hurtTime();
+    if (baseline < kHurtTimeMin || baseline > kHurtTimeMax) return;
+
+    // Rapid repeated swings at the same target are normal (auto-swing): fold
+    // them into the same entry instead of stacking duplicates that would play
+    // the sound twice for one confirmed hit.
+    for (auto& pending : m_pendingHits) {
+        if (pending.target == target) {
+            pending.baselineHurtTime = baseline;
+            pending.at = now;
+            return;
+        }
+    }
+
+    if (m_pendingHits.size() >= kMaxPendingHits) m_pendingHits.erase(m_pendingHits.begin());
+    m_pendingHits.push_back(PendingHit{target, baseline, now});
+}
+
+void HitSoundModule::onTickCheck() {
+    if (m_pendingHits.empty()) return;
+
+    const auto now = steady_clock::now();
+    bool played = false;
+
+    for (auto it = m_pendingHits.begin(); it != m_pendingHits.end();) {
+        if (now - it->at > kHitConfirmWindow) {
+            it = m_pendingHits.erase(it);
+            continue;
+        }
+
+        const int hurtTime = it->target->hurtTime();
+
+        // Implausible value: the actor object is gone and its memory has been
+        // recycled. Drop the entry instead of trusting the read.
+        if (hurtTime < kHurtTimeMin || hurtTime > kHurtTimeMax) {
+            it = m_pendingHits.erase(it);
+            continue;
+        }
+
+        // hurtTime counts down after a hit, so a fresh hit only ever shows up
+        // as a jump upwards. This keeps the follow-up ticks (where it counts
+        // back down through the same value we started at) from refiring.
+        if (hurtTime > it->baselineHurtTime) {
+            // Keep the entry (baseline moved up to the current value) so
+            // further hits on the same victim keep triggering until the
+            // window elapses.
+            it->baselineHurtTime = hurtTime;
+            it->at = now;
+            played = true;
+            ++it;
+        } else {
+            // Remember the latest value: it ticks down while the flash fades,
+            // and updating the baseline makes the next jump-up unambiguous.
+            it->baselineHurtTime = hurtTime;
+            ++it;
+        }
+    }
+
+    if (played) {
+        // Safety net: if the sound is not in the pool yet (e.g. the module was
+        // enabled before the JVM handle was available) queue the load now.
+        // audioLoadFile() is a cheap no-op when the path is already loaded,
+        // and the decode itself runs off the game thread.
+        audioLoadFile(m_currentPath);
+        audioPlay(m_volume);
+    }
 }
 
 void HitSoundModule::loadConfig(const nlohmann::json& j) {
