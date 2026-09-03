@@ -204,17 +204,25 @@ void ensureMaterials() {
     // into one-pixel lines. That is why the previous implementation generated
     // wider vertices but Line Thickness still appeared to do nothing.
     //
-    // `selection_overlay_opaque` uses the same current-color shader and depth
-    // test without forcing line primitives, making it the correct material
-    // for the normal thick frame and the front half of the 3D wireframe.
+    // The solid colour for the thick frame must never go through the
+    // `selection_overlay*` family: like `selection_box`, those materials are
+    // built for the game's translucent block highlight, so feeding them filled
+    // quads makes the chosen colour wash out and look transparent as soon as
+    // Line Thickness leaves the hairline (the exact bug this module used to
+    // have, and the same one the Hitbox module already works around by drawing
+    // its wide geometry with a vertex-colour UI fill instead). `g_matOpaqueFill`
+    // is therefore kept only as a fallback and for the depth-tested front half
+    // of the Show 3D wireframe, where staying behind nearer world geometry
+    // matters more than the overlay's translucency.
     if (!g_matOpaqueFill) {
         g_matOpaqueFill = getMaterial("selection_overlay_opaque");
     }
 
-    // A position-only vertex-color fill is the compatibility fallback for
-    // versions/resource packs that do not expose selection_overlay_opaque. It
-    // is also intentionally used for hidden Show 3D edges, which must remain
-    // visible through the selected block.
+    // A position-only vertex-color fill is the primary solid material for the
+    // normal thick frame and the compatibility fallback for versions/resource
+    // packs that do not expose selection_overlay_opaque. It renders the picked
+    // colour fully opaque, and it is also intentionally used for hidden Show 3D
+    // edges, which must remain visible through the selected block.
     if (!g_matFill) {
         static const char* kFillNames[] = {
             "ui_fill_color",
@@ -281,6 +289,16 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     void* matOpaqueFill = g_matOpaqueFill
         ? static_cast<void*>(&g_matOpaqueFill)
         : matFill;
+
+    // The normal thick frame must keep the chosen colour fully opaque. The
+    // vertex-colour UI fill renders solid, whereas the selection-overlay
+    // materials draw it as a translucent block highlight (washed out, exactly
+    // what increasing Line Thickness used to cause). The frame only ever
+    // paints faces that face the eye, so dropping the overlay's depth test is
+    // harmless here and cannot bleed through nearer geometry.
+    void* matSolid = g_matFill
+        ? static_cast<void*>(&g_matFill)
+        : matOpaqueFill;
 
     const float savedColor[4] = {
         colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3]
@@ -427,8 +445,12 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
             // Filled strips must use a fill-capable material. The
             // selection-box material is kept for the line primitive below;
             // using it here is what made the slider appear to do nothing on
-            // RenderDragon even though the wider vertices were generated.
-            g_renderMesh(screenContext, tessellator, matOpaqueFill, meshParams);
+            // RenderDragon even though the wider vertices were generated. And
+            // the solid frame itself goes through the opaque vertex-colour
+            // fill (`matSolid`), never the translucent selection-overlay
+            // material, so raising Line Thickness keeps the colour solid
+            // instead of washing it out.
+            g_renderMesh(screenContext, tessellator, matSolid, meshParams);
         }
     }
 
