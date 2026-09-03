@@ -400,7 +400,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         g_renderMesh(screenContext, tessellator, material, meshParams);
     };
 
-    : keeps the edge crisp and visible even when the
+    //: keeps the edge crisp and visible even when the
     // strips shrink below a pixel at long range. Same visibility set as the
     // thick pass so both stay consistent.
     if (visibleEdgeCount > 0) {
