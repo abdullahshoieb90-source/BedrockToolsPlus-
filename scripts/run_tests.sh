@@ -38,6 +38,12 @@ for source in "${root}"/tests/*_test.cpp; do
     extra_srcs=()
     skip=""
     case "${name}" in
+        blockoutline_render_test)
+            # Includes the production .cpp directly and replaces the game,
+            # hook and JSON dependencies with deterministic host fakes.
+            extra+=(-I "${root}/tests/fakejson" -I "${root}/tests/fakepl"
+                    -I "${root}/tests/fakejni")
+            ;;
         commandhotkey_test)
             if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
                [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then

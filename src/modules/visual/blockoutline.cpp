@@ -134,6 +134,7 @@ LevelGetHitResult g_getHitResult = nullptr;
 
 std::uintptr_t g_renderMaterialGroup = 0;
 MaterialPtr g_matSelection;
+MaterialPtr g_matOpaqueFill;
 MaterialPtr g_matFill;
 
 std::mutex g_targetMutex;
@@ -197,12 +198,23 @@ void ensureMaterials() {
 
     if (!g_matSelection) g_matSelection = getMaterial("selection_box");
 
-    // The hidden back edge pass in "Show 3D" mode needs a vertex-color
-    // material whose depth state lets the far edges show through the block
-    // itself. The selection overlay material is depth-tested (which keeps the
-    // visible frame from X-raying through walls), so it would hide every back
-    // edge. Prefer a vertex-color fill for the 3D edge pass and keep
-    // selection_box for the opaque visible frame.
+    // Every wide outline pass is made from filled quads. `selection_box` is a
+    // line-only material (its material definition forces primitiveMode=Line),
+    // so passing a quad mesh to it turns the four corners of every strip back
+    // into one-pixel lines. That is why the previous implementation generated
+    // wider vertices but Line Thickness still appeared to do nothing.
+    //
+    // `selection_overlay_opaque` uses the same current-color shader and depth
+    // test without forcing line primitives, making it the correct material
+    // for the normal thick frame and the front half of the 3D wireframe.
+    if (!g_matOpaqueFill) {
+        g_matOpaqueFill = getMaterial("selection_overlay_opaque");
+    }
+
+    // A position-only vertex-color fill is the compatibility fallback for
+    // versions/resource packs that do not expose selection_overlay_opaque. It
+    // is also intentionally used for hidden Show 3D edges, which must remain
+    // visible through the selected block.
     if (!g_matFill) {
         static const char* kFillNames[] = {
             "ui_fill_color",
@@ -252,12 +264,11 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     const auto playerRendererAddress = reinterpret_cast<std::uintptr_t>(playerRenderer);
     const auto camera = *reinterpret_cast<const bedrocktools::sdk::Vec3*>(
         playerRendererAddress + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
-    // The game's own selection material is always initialized with the level
-    // renderer and has the depth state expected for a block outline. It keeps
-    // the visible frame from X-raying through walls. The "Show 3D" back edge
-    // pass uses a separate vertex-color fill material instead because that
-    // material lets the far edges show through the block (see
-    // ensureMaterials).
+    // The game's own selection-box material is always initialized with the
+    // level renderer and is used for the crisp hairline. Wide geometry uses
+    // selection_overlay_opaque instead: it preserves the same depth-tested
+    // current-color rendering without selection_box's forced Line primitive.
+    // The "Show 3D" back edge pass uses a separate see-through fill.
     void* overlayMaterial = reinterpret_cast<void*>(
         playerRendererAddress +
         bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
@@ -265,6 +276,11 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     ensureMaterials();
     void* matInner = g_matSelection ? static_cast<void*>(&g_matSelection) : overlayMaterial;
     void* matFill = g_matFill ? static_cast<void*>(&g_matFill) : matInner;
+    // Never feed filled triangles/quads to selection_box. Prefer the
+    // depth-tested solid material and fall back to the proven UI fill.
+    void* matOpaqueFill = g_matOpaqueFill
+        ? static_cast<void*>(&g_matOpaqueFill)
+        : matFill;
 
     const float savedColor[4] = {
         colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3]
@@ -408,13 +424,17 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
                 }
             }
             std::memset(meshParams, 0, sizeof(meshParams));
-            g_renderMesh(screenContext, tessellator, matInner, meshParams);
+            // Filled strips must use a fill-capable material. The
+            // selection-box material is kept for the line primitive below;
+            // using it here is what made the slider appear to do nothing on
+            // RenderDragon even though the wider vertices were generated.
+            g_renderMesh(screenContext, tessellator, matOpaqueFill, meshParams);
         }
     }
 
     // "Show 3D": every one of the twelve edges is drawn as bar geometry, so no
     // edge depends on the eye position. The eye-facing edges go through the
-    // depth-tested selection material (no X-ray through walls), while the
+    // depth-tested opaque fill material (no X-ray through walls), while the
     // hidden edges use the see-through fill material so they still show
     // through the block. The two masks are exact complements, so every edge is
     // drawn by exactly one pass.
@@ -423,7 +443,8 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         const float barWidth =
             bedrocktools::modules::blockoutline::edgeBarWidthForFrame(frameWidth);
         drawEdgeBars(passes.depthTested, barWidth,
-                     bedrocktools::modules::blockoutline::kEdgeBarLift, matInner);
+                     bedrocktools::modules::blockoutline::kEdgeBarLift,
+                     matOpaqueFill);
         drawEdgeBars(passes.seeThrough, barWidth, 0.0f, matFill);
     }
 
