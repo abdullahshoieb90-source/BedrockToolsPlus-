@@ -9,7 +9,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 45 configurable modules
+- 47 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -23,7 +23,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ, Custom Capes
 
-**Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter
+**Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, Hit Sound
 
 ## Wings
 
@@ -50,6 +50,16 @@ The **Custom Capes** module lets you wear any PNG as a classic cape.
 Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
 
 The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
+
+## Hit Sound
+
+The **Hit Sound** module plays a custom sound of your choice every time you land a melee hit on a mob or another player.
+
+1. Put sound files (`.wav`, `.ogg`, `.mp3`, `.m4a` or `.flac` — ideally short one-shot effects; a `Sample Hit.wav` is generated for you on first launch) into the `hitsounds` folder next to your `config.json` (`<mod config dir>/hitsounds`, created automatically on first launch).
+2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Hit Sound**.
+3. Pick a file in the module's **Sound** selector — every audio file in the folder shows up there. Choose `None` to keep the vanilla behavior. The **Volume** slider sets how loud the sound plays.
+
+The sound is a purely client-side overlay: the victim's own hurt sound is not cancelled or replaced, and nothing is sent to the server. Files whose names contain a comma are ignored (the menu picker cannot represent them), and sounds that fail to decode on your device are simply skipped.
 
 ## System Requirements
 

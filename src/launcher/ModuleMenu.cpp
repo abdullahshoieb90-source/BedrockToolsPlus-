@@ -224,6 +224,9 @@ void registerModulesWithLauncher() {
                     kLower.find("color") != std::string::npos ||
                     kLower.find("alpha") != std::string::npos) {
                     maxVal = 1.0f;
+                } else if (kLower.find("volume") != std::string::npos) {
+                    // Hit Sound playback volume: 0.0 (mute) .. 1.0 (full).
+                    maxVal = 1.0f;
                 } else if (kLower.find("iconscale") != std::string::npos) {
                     // Potion-icon size multiplier (Effect Display); the module
                     // clamps to the same range at render time.
