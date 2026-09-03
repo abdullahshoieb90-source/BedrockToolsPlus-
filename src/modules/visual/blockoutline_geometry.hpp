@@ -237,6 +237,22 @@ constexpr FrameQuads makeThickFrame(float x, float y, float z,
 // the outline thicker.
 inline constexpr float kMinimum3DEdgeWidth = 0.02f;
 
+// How far a depth-tested edge bar is lifted off the block surface. A bar quad
+// lies exactly in the plane of one of the two faces meeting at its edge, so
+// without this offset the half of the quad that overlaps the block is coplanar
+// with the block's own surface and z-fights with it. The see-through back edge
+// pass does not need a lift (its material skips the depth test), so it keeps
+// 0.0f and stays exactly where it has always been.
+inline constexpr float kEdgeBarLift = 0.004f;
+
+// Width of the "Show 3D" edge bars: the Line Size frame width when the slider
+// is above hairline, otherwise the minimum bar width. Every edge of the 3D
+// wireframe uses this one value so the front and the back edges stay the same
+// thickness instead of the back edges reading bolder than the front ones.
+constexpr float edgeBarWidthForFrame(float frameWidth) {
+    return frameWidth > 0.0f ? frameWidth : kMinimum3DEdgeWidth;
+}
+
 // Edge bars: real geometry built around an edge of the box instead of strips
 // painted on a face.
 //
@@ -251,6 +267,12 @@ inline constexpr float kMinimum3DEdgeWidth = 0.02f;
 // camera angle at least one of the two is far from edge-on and the edge
 // always covers pixels. Both quads are extended by half the width past each
 // end so neighbouring bars meet at the corners without a gap.
+//
+// "Show 3D" builds its whole twelve-edge wireframe out of bars for exactly
+// this reason: the front edges used to be painted as face strips, so a strip
+// whose face turned edge-on collapsed and that edge lost its thickness at
+// grazing viewing angles while the back edges stayed solid. Bars keep every
+// edge equally present no matter where the eye is.
 inline constexpr std::size_t kMaxEdgeBarQuads = 12 * 2;
 
 struct EdgeBars {
@@ -260,15 +282,33 @@ struct EdgeBars {
 
 constexpr EdgeBars makeEdgeBars(const std::array<Line, 12>& box,
                                 const std::array<bool, 12>& mask,
-                                float width) {
+                                float width,
+                                float lift = 0.0f) {
     EdgeBars out{};
     if (width <= 0.0f) return out;
     if (width > kMaxFrameWidth) width = kMaxFrameWidth;
+    if (lift < 0.0f) lift = 0.0f;
     const float half = width * 0.5f;
 
     auto makePoint = [](float p0, float p1, float p2) {
         return Point{p0, p1, p2};
     };
+
+    // Centre of the box, used to decide which way is "outward" for the lift.
+    // Every edge sits on the boundary, so its two fixed coordinates are each
+    // either the min or the max of the box and the sign is never ambiguous.
+    float lo[3] = {box[0].from.x, box[0].from.y, box[0].from.z};
+    float hi[3] = {lo[0], lo[1], lo[2]};
+    for (const auto& line : box) {
+        const Point verts[2] = {line.from, line.to};
+        for (const Point& v : verts) {
+            const float p[3] = {v.x, v.y, v.z};
+            for (int k = 0; k < 3; ++k) {
+                if (p[k] < lo[k]) lo[k] = p[k];
+                if (p[k] > hi[k]) hi[k] = p[k];
+            }
+        }
+    }
 
     for (std::size_t i = 0; i < box.size(); ++i) {
         if (!mask[i]) continue;
@@ -292,12 +332,22 @@ constexpr EdgeBars makeEdgeBars(const std::array<Line, 12>& box,
 
         const int uAxis = (axis + 1) % 3;
         const int vAxis = (axis + 2) % 3;
-        const float lo = from[axis] < to[axis] ? from[axis] : to[axis];
-        const float hi = from[axis] < to[axis] ? to[axis] : from[axis];
-        const float a0 = lo - half;
-        const float a1 = hi + half;
+        const float loBound = from[axis] < to[axis] ? from[axis] : to[axis];
+        const float hiBound = from[axis] < to[axis] ? to[axis] : from[axis];
+        const float a0 = loBound - half;
+        const float a1 = hiBound + half;
         const float u = from[uAxis];
         const float v = from[vAxis];
+
+        // Push each quad off the face plane it lies in, away from the middle
+        // of the box, so a depth-tested bar never sits coplanar with the
+        // block's own surface. The two quads are lifted along different axes
+        // (each along the normal of the plane it spans), which keeps them
+        // clear of the block and of each other.
+        const float uCentre = (lo[uAxis] + hi[uAxis]) * 0.5f;
+        const float vCentre = (lo[vAxis] + hi[vAxis]) * 0.5f;
+        const float uOut = u > uCentre ? lift : -lift;
+        const float vOut = v > vCentre ? lift : -lift;
 
         auto emit = [&](float uA, float vA, float uB, float vB) {
             float p[3]{};
@@ -316,10 +366,40 @@ constexpr EdgeBars makeEdgeBars(const std::array<Line, 12>& box,
             out.quads[out.count++] = Quad{c0, c1, c2, c3};
         };
 
-        // Quad spread along u (flat in the u/axis plane) ...
-        emit(u - half, v, u + half, v);
-        // ... and its perpendicular partner spread along v.
-        emit(u, v - half, u, v + half);
+        // Quad spread along u (flat in the u/axis plane, so lifted along v) ...
+        emit(u - half, v + vOut, u + half, v + vOut);
+        // ... and its perpendicular partner spread along v (lifted along u).
+        emit(u + uOut, v - half, u + uOut, v + half);
+    }
+    return out;
+}
+
+// "Show 3D" draws all twelve edges as bars, but through the two existing
+// depth passes so the wireframe keeps its intended read: the edges that face
+// the eye go through the depth-tested selection material (so the outline does
+// not X-ray through walls in front of the target), and the hidden edges go
+// through the see-through fill material (so they show through the block
+// itself). The two masks are exact complements, so every edge is drawn by
+// exactly one pass - none is skipped and none is drawn twice - whatever the
+// eye position is, including when the eye sits inside the block and every
+// edge counts as facing it.
+struct EdgeBarPasses {
+    std::array<bool, 12> depthTested{};  // eye-facing edges -> selection material
+    std::array<bool, 12> seeThrough{};   // hidden edges     -> fill material
+    std::size_t depthTestedCount = 0;
+    std::size_t seeThroughCount = 0;
+};
+
+constexpr EdgeBarPasses makeEdgeBarPasses(const std::array<bool, 12>& edgeVisible) {
+    EdgeBarPasses out{};
+    for (std::size_t i = 0; i < edgeVisible.size(); ++i) {
+        out.depthTested[i] = edgeVisible[i];
+        out.seeThrough[i] = !edgeVisible[i];
+        if (edgeVisible[i]) {
+            ++out.depthTestedCount;
+        } else {
+            ++out.seeThroughCount;
+        }
     }
     return out;
 }

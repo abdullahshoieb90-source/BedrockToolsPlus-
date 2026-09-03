@@ -22,11 +22,13 @@ public:
     std::uint32_t outlineColor = 0xFFFFFFFFu;  // white by default
 
     // Opt-in menu toggle ("Show 3D"): draws the targeted block as a full
-    // twelve-edge 3D wireframe instead of a filled box. The ordinary outline
-    // still paints the near edges; this adds the hidden/back edges so the
-    // whole cube silhouette is visible. No face is filled, so the block's own
-    // surface stays visible. Defaults to off, so the plain wireframe is what
-    // players get unless they explicitly enable the 3D edges.
+    // twelve-edge 3D wireframe instead of a filled box. Every edge - the ones
+    // facing the eye and the hidden ones behind the block alike - is built as
+    // an edge bar, so no edge depends on where the camera happens to be and
+    // none of them can collapse and vanish at a grazing viewing angle. No
+    // face is filled, so the block's own surface stays visible. Defaults to
+    // off, so the plain wireframe is what players get unless they explicitly
+    // enable the 3D edges.
     bool show3d = false;
 
     // Rainbow mode ("Rgb" menu toggle): while enabled, the outline color

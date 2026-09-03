@@ -338,94 +338,117 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     const auto faceVisible =
         bedrocktools::modules::blockoutline::makeFaceVisibility(blockFaces, eye);
 
-    // "Show 3D" mode: draw the hidden/back edges of the block so the target
-    // reads as a full twelve-edge 3D wireframe instead of a filled volume.
-    // The visible edges are already painted by the thick/hairline passes
-    // below, so this pass only emits the edges that touch no eye-facing face.
-    //
-    // The hidden edges are emitted as edge bars (a cross of two perpendicular
-    // quads centred on the edge), NOT as strips painted onto the hidden
-    // faces. Face strips vanish whenever their face turns edge-on to the
-    // camera, which is why a back edge could disappear at certain viewing
-    // angles while the same block straight under the player kept all of its
-    // edges. A cross of two perpendicular quads always has one quad clearly
-    // facing the camera, so the edge holds up at every angle.
-    //
-    // Drawn with the vertex-color fill material (rather than the depth-tested
-    // selection overlay) because that lets the back edges show through the
-    // block itself while never filling its interior.
-    if (g_module->show3d) {
-        std::array<bool, 12> hiddenEdges{};
-        int hiddenEdgeCount = 0;
-        for (std::size_t i = 0; i < edgeVisible.size(); ++i) {
-            hiddenEdges[i] = !edgeVisible[i];
-            if (hiddenEdges[i]) ++hiddenEdgeCount;
-        }
-
-        const float edgeWidth = frameWidth > 0.0f
-            ? frameWidth
-            : bedrocktools::modules::blockoutline::kMinimum3DEdgeWidth;
-        const auto bars = bedrocktools::modules::blockoutline::makeEdgeBars(
-            lines, hiddenEdges, edgeWidth);
-
-        if (bars.count > 0) {
-            // Both windings per bar so back-face culling never eats one.
-            g_tessellatorBegin(tessellator, nullptr, kQuadPrimitive,
-                               static_cast<int>(bars.count) * 8, 0);
-            g_tessellatorColor(tessellator, red, green, blue, 1.0f);
-            for (std::size_t i = 0; i < bars.count; ++i) {
-                const auto& q = bars.quads[i];
-                const bedrocktools::sdk::Vec3 verts[4] = {
-                    {q.a.x - camX, q.a.y - camY, q.a.z - camZ},
-                    {q.b.x - camX, q.b.y - camY, q.b.z - camZ},
-                    {q.c.x - camX, q.c.y - camY, q.c.z - camZ},
-                    {q.d.x - camX, q.d.y - camY, q.d.z - camZ},
-                };
-                for (int j = 0; j < 4; ++j) {
-                    g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
-                }
-                for (int j = 3; j >= 0; --j) {
-                    g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
-                }
-            }
-            std::memset(meshParams, 0, sizeof(meshParams));
-            g_renderMesh(screenContext, tessellator, matFill, meshParams);
-        }
-
-        // Hairline pass for the same hidden edges. The bars shrink below a
-        // pixel at distance (and are extremely thin at the default Line Size),
-        // so this keeps the back edges crisp at any range, exactly like the
-        // visible hairline pass does for the front edges.
-        if (hiddenEdgeCount > 0) {
-            g_tessellatorBegin(tessellator, nullptr, kLinePrimitive,
-                               hiddenEdgeCount * 2, 0);
-            g_tessellatorColor(tessellator, red, green, blue, 1.0f);
-            for (std::size_t i = 0; i < lines.size(); ++i) {
-                if (!hiddenEdges[i]) continue;
-                const auto& line = lines[i];
-                g_tessellatorVertex(tessellator,
-                    line.from.x - camX, line.from.y - camY, line.from.z - camZ);
-                g_tessellatorVertex(tessellator,
-                    line.to.x - camX, line.to.y - camY, line.to.z - camZ);
-            }
-            std::memset(meshParams, 0, sizeof(meshParams));
-            g_renderMesh(screenContext, tessellator, matFill, meshParams);
-        }
-    }
-
-    // Thick pass: the frame is painted as flat strips lying on the visible
-    // faces of the block (see makeThickFrame). Nothing leaves the face plane,
-    // so a wide outline is just the classic wireframe drawn bolder - it can
-    // never fill the block or turn into a volume by itself. The full 3D
-    // twelve-edge look is produced only by the "Show 3D" back edge pass
-    // above. When the eye is inside the block every face is "visible"; the
-    // strips would then surround the player, which is fine, but skip the
-    // thick pass and keep the hairline there.
+    // True when the camera sits inside the targeted block. Every edge then
+    // counts as facing the eye, and thick geometry built around the camera
+    // would fill the screen, so both the strip frame and the 3D bars step
+    // aside there and leave the hairline outline on its own.
     const bool eyeInsideBlock =
         camX > static_cast<float>(target.x) && camX < static_cast<float>(target.x) + 1.0f &&
         camY > static_cast<float>(target.y) && camY < static_cast<float>(target.y) + 1.0f &&
         camZ > static_cast<float>(target.z) && camZ < static_cast<float>(target.z) + 1.0f;
-    if (thickLines && !eyeInsideBlock) {
+
+    const bool show3d = g_module->show3d;
+
+    // Emits the selected edges as bars - a cross of two perpendicular quads
+    // centred on each edge - and renders them with `material`. Both windings
+    // are emitted per quad so back-face culling never eats one.
+    auto drawEdgeBars = [&](const std::array<bool, 12>& mask, float width,
+                            float lift, void* material) {
+        const auto bars = bedrocktools::modules::blockoutline::makeEdgeBars(
+            lines, mask, width, lift);
+        if (bars.count == 0) return;
+
+        g_tessellatorBegin(tessellator, nullptr, kQuadPrimitive,
+                           static_cast<int>(bars.count) * 8, 0);
+        g_tessellatorColor(tessellator, red, green, blue, 1.0f);
+        for (std::size_t i = 0; i < bars.count; ++i) {
+            const auto& q = bars.quads[i];
+            const bedrocktools::sdk::Vec3 verts[4] = {
+                {q.a.x - camX, q.a.y - camY, q.a.z - camZ},
+                {q.b.x - camX, q.b.y - camY, q.b.z - camZ},
+                {q.c.x - camX, q.c.y - camY, q.c.z - camZ},
+                {q.d.x - camX, q.d.y - camY, q.d.z - camZ},
+            };
+            for (int j = 0; j < 4; ++j) {
+                g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
+            }
+            for (int j = 3; j >= 0; --j) {
+                g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
+            }
+        }
+        std::memset(meshParams, 0, sizeof(meshParams));
+        g_renderMesh(screenContext, tessellator, material, meshParams);
+    };
+
+    // Hairline pass for the selected edges. The bars shrink below a pixel at
+    // distance (and are extremely thin at the default Line Size), so this
+    // keeps those edges crisp at any range.
+    auto drawEdgeHairlines = [&](const std::array<bool, 12>& mask, int edgeCount,
+                                 void* material) {
+        if (edgeCount <= 0) return;
+
+        g_tessellatorBegin(tessellator, nullptr, kLinePrimitive, edgeCount * 2, 0);
+        g_tessellatorColor(tessellator, red, green, blue, 1.0f);
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            if (!mask[i]) continue;
+            const auto& line = lines[i];
+            g_tessellatorVertex(tessellator,
+                line.from.x - camX, line.from.y - camY, line.from.z - camZ);
+            g_tessellatorVertex(tessellator,
+                line.to.x - camX, line.to.y - camY, line.to.z - camZ);
+        }
+        std::memset(meshParams, 0, sizeof(meshParams));
+        g_renderMesh(screenContext, tessellator, material, meshParams);
+    };
+
+    // "Show 3D" mode: draw the block as a full twelve-edge 3D wireframe.
+    //
+    // Every edge is emitted as an edge bar, front and back alike - never as a
+    // strip painted onto a face. A strip only exists in the plane of its own
+    // face, so as soon as that face turns edge-on to the camera the strip
+    // projects to (nearly) zero pixels and the edge loses its thickness. The
+    // back edges had already been switched to bars; the front edges were still
+    // strips, which is why some edges kept vanishing at grazing viewing angles
+    // while their neighbours stayed solid, and why the wireframe looked like
+    // it was being pulled apart by wherever the eye happened to be. A bar is a
+    // cross of two perpendicular quads, so at any angle at least one of them
+    // is far from edge-on and every edge holds up.
+    //
+    // The two halves still go through different materials: the eye-facing
+    // edges use the depth-tested selection overlay so the outline does not
+    // X-ray through walls in front of the target, and the hidden edges use the
+    // vertex-color fill so they show through the block itself without filling
+    // its interior. The eye-facing bars are lifted off the surface so they
+    // never z-fight with the block they outline.
+    if (show3d) {
+        const auto passes =
+            bedrocktools::modules::blockoutline::makeEdgeBarPasses(edgeVisible);
+        const float edgeWidth =
+            bedrocktools::modules::blockoutline::edgeBarWidthForFrame(frameWidth);
+
+        // Hidden edges: see-through, and left exactly on the face planes
+        // because their material skips the depth test.
+        drawEdgeBars(passes.seeThrough, edgeWidth, 0.0f, matFill);
+        drawEdgeHairlines(passes.seeThrough,
+                          static_cast<int>(passes.seeThroughCount), matFill);
+
+        // Eye-facing edges: depth-tested, lifted clear of the block surface.
+        if (!eyeInsideBlock) {
+            drawEdgeBars(passes.depthTested, edgeWidth,
+                         bedrocktools::modules::blockoutline::kEdgeBarLift,
+                         matInner);
+        }
+    }
+
+    // Thick pass (Show 3D off): the frame is painted as flat strips lying on
+    // the visible faces of the block (see makeThickFrame). Nothing leaves the
+    // face plane, so a wide outline is just the classic wireframe drawn
+    // bolder - it can never fill the block or turn into a volume by itself.
+    // The full 3D twelve-edge look is produced only by the "Show 3D" pass
+    // above, which builds every edge as a bar instead and therefore skips
+    // these strips: drawing both would paint the same edge twice and let the
+    // coplanar strips z-fight with the bars.
+    if (!show3d && thickLines && !eyeInsideBlock) {
         const auto frame = bedrocktools::modules::blockoutline::makeThickFrame(
             static_cast<float>(target.x),
             static_cast<float>(target.y),
