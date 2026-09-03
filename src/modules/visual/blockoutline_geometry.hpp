@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 
 namespace bedrocktools::modules::blockoutline {
 
@@ -227,6 +228,102 @@ constexpr FrameQuads makeThickFrame(float x, float y, float z,
                 makePoint(n, plane, uAxis, r.ua, vAxis, r.vb),
             };
         }
+    }
+    return out;
+}
+
+// Flat view-aligned ribbon for the thick outline. Raising Line Size must make
+// the classic wireframe *bolder*, never turn it into a 3D volume.
+//
+// The face-strip approach (makeThickFrame) painted the frame onto the surface
+// of each visible face. That keeps the strips inside the block's footprint,
+// but a strip on the top face lies in a horizontal plane and a strip on the
+// side face lies in a vertical plane, so from a normal 3/4 view they recede
+// with perspective and the outline reads as a thick 3D box instead of a bold
+// line. The bars built around every edge also carried real depth.
+//
+// A ribbon quad fixes that: for each visible edge we build a quad centred on
+// the edge, spanning the full edge length in one direction and the requested
+// `width` in the perpendicular "side" direction, where side = normalize(edge x
+// view). That keeps the quad's width always presented flat to the camera
+// (exactly like the Hitbox module's thick lines), so the outline stays a
+// crisp bold line from any angle. The ribbon never extends past the edge's
+// end points, so three ribbons meeting at a corner do not overshoot and cannot
+// form a protruding "corner of a box".
+inline constexpr std::size_t kMaxBillboardQuads = 12;
+
+struct BillboardQuads {
+    std::array<Quad, kMaxBillboardQuads> quads{};
+    std::size_t count = 0;
+};
+
+inline BillboardQuads makeBillboardQuads(const std::array<Line, 12>& box,
+                                         const std::array<bool, 12>& mask,
+                                         float width, Point eye) {
+    BillboardQuads out{};
+    if (width <= 0.0f) return out;
+    if (width > kMaxFrameWidth) width = kMaxFrameWidth;
+    const float half = width * 0.5f;
+
+    for (std::size_t i = 0; i < box.size(); ++i) {
+        if (!mask[i]) continue;
+        const Point& a = box[i].from;
+        const Point& b = box[i].to;
+
+        float dx = b.x - a.x;
+        float dy = b.y - a.y;
+        float dz = b.z - a.z;
+        const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1e-5f) continue;  // degenerate edge
+        dx /= len;
+        dy /= len;
+        dz /= len;
+
+        const float mx = (a.x + b.x) * 0.5f;
+        const float my = (a.y + b.y) * 0.5f;
+        const float mz = (a.z + b.z) * 0.5f;
+
+        // View direction from the edge midpoint to the eye.
+        float vx = eye.x - mx;
+        float vy = eye.y - my;
+        float vz = eye.z - mz;
+        const float vl = std::sqrt(vx * vx + vy * vy + vz * vz);
+        if (vl < 1e-5f) continue;
+        vx /= vl;
+        vy /= vl;
+        vz /= vl;
+
+        // side = edge x view: perpendicular to both, so the ribbon always
+        // presents its full width to the camera.
+        float sx = dy * vz - dz * vy;
+        float sy = dz * vx - dx * vz;
+        float sz = dx * vy - dy * vx;
+        float sl = std::sqrt(sx * sx + sy * sy + sz * sz);
+        if (sl < 1e-5f) {
+            // Looking straight down the edge: pick any perpendicular.
+            if (std::fabs(dy) < 0.9f) {
+                sx = -dz; sy = 0.0f; sz = dx;
+            } else {
+                sx = 1.0f; sy = 0.0f; sz = 0.0f;
+            }
+            sl = std::sqrt(sx * sx + sy * sy + sz * sz);
+        }
+        sx = sx / sl * half;
+        sy = sy / sl * half;
+        sz = sz / sl * half;
+
+        const float hx = dx * len * 0.5f;
+        const float hy = dy * len * 0.5f;
+        const float hz = dz * len * 0.5f;
+
+        // Four corners: "from end"/"to end" each offset +- side. The ribbon is
+        // centred on the edge and does not overshoot the corner points.
+        out.quads[out.count++] = Quad{
+            {mx - hx + sx, my - hy + sy, mz - hz + sz},  // from end, +side
+            {mx + hx + sx, my + hy + sy, mz + hz + sz},  // to end,   +side
+            {mx + hx - sx, my + hy - sy, mz + hz - sz},  // to end,   -side
+            {mx - hx - sx, my - hy - sy, mz - hz - sz},  // from end, -side
+        };
     }
     return out;
 }

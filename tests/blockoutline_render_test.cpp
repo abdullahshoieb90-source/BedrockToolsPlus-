@@ -140,11 +140,16 @@ const DrawCall* findCall(int primitive) {
 }
 
 float submittedFrameWidth(const DrawCall* quadCall) {
-    // For the diagonal view, makeThickFrame's first emitted strip runs from
-    // z=0 to z=frameWidth. Both coordinates have the same camera subtraction,
-    // so their absolute delta is the submitted world-space width.
-    if (!quadCall || quadCall->vertices.size() < 2) return -1.0f;
-    return std::fabs(quadCall->vertices[1].z - quadCall->vertices[0].z);
+    // Each visible edge is emitted as a flat camera-facing ribbon. The first
+    // ribbon's corners are a, b, c, d where a = "from end + side" and
+    // d = "from end - side", so the distance between vertices 0 and 3 is the
+    // ribbon's full width (2 * half). The camera is subtracted from every
+    // vertex, so the delta is unaffected by it.
+    if (!quadCall || quadCall->vertices.size() < 4) return -1.0f;
+    const float dx = quadCall->vertices[3].x - quadCall->vertices[0].x;
+    const float dy = quadCall->vertices[3].y - quadCall->vertices[0].y;
+    const float dz = quadCall->vertices[3].z - quadCall->vertices[0].z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 } // namespace
