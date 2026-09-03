@@ -194,8 +194,8 @@ int main() {
     const DrawCall* width2 = findCall(kQuadPrimitive);
     check(width2 != nullptr && !width2->vertices.empty(),
           "thickness 2 submits filled frame vertices");
-    check(width2 && width2->material == static_cast<void*>(&g_matOpaqueFill),
-          "filled frame uses selection_overlay_opaque, not selection_box");
+    check(width2 && width2->material == static_cast<void*>(&g_matFill),
+          "filled frame uses the opaque ui_fill_color so thickness never washes out");
     check(width2 && width2->declaredVertexCount ==
                         static_cast<int>(width2->vertices.size()),
           "filled frame vertex count matches tessellator submission");
