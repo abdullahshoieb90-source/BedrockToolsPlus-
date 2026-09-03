@@ -208,7 +208,6 @@ void ensureMaterials() {
             "ui_fill_color",
             "ui_textured_and_glcolor",
             "debug_filled_box",
-            "selection_box",
         };
         for (const char* name : kFillNames) {
             g_matFill = getMaterial(name);
