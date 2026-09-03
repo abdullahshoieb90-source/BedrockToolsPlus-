@@ -350,7 +350,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
     // The normal visible passes only emit geometry facing the camera. The
     // fill material used by the "Show 3D" back edge pass is not guaranteed to
     // depth-test custom world geometry, so that pass is strictly limited to
-    // the faces that do not face the eye; without this culling the far side
+    // the edges that do not face the eye; without this culling the far side
     // would bleed through the block as a translucent sheet instead of staying
     // a crisp set of hidden edges.
     const bedrocktools::modules::blockoutline::Point eye{camX, camY, camZ};
@@ -360,20 +360,9 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         if (visible) ++visibleEdgeCount;
     }
 
-    // Faces of the block itself (no expansion) and which of them face the
-    // eye. Shared by the thick frame and the "Show 3D" back edge pass so both
-    // agree on what is "in front".
-    const auto blockFaces = bedrocktools::modules::blockoutline::makeFaces(
-        static_cast<float>(target.x),
-        static_cast<float>(target.y),
-        static_cast<float>(target.z),
-        0.0f);
-    const auto faceVisible =
-        bedrocktools::modules::blockoutline::makeFaceVisibility(blockFaces, eye);
-
     // True when the camera sits inside the targeted block. Every edge then
     // counts as facing the eye, and thick geometry built around the camera
-    // would fill the screen, so both the strip frame and the 3D bars step
+    // would fill the screen, so both the ribbon frame and the 3D bars step
     // aside there and leave the hairline outline on its own.
     const bool eyeInsideBlock =
         camX > static_cast<float>(target.x) && camX < static_cast<float>(target.x) + 1.0f &&
@@ -411,17 +400,19 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         g_renderMesh(screenContext, tessellator, material, meshParams);
     };
 
-    // Thick frame from the Line Size slider: flat strips laid on the
-    // eye-facing faces of the block. This is what makes the slider visible on
-    // screen - without it the outline would stay a one-pixel hairline no
-    // matter what the setting says. It shares the lift used by the depth
-    // tested edge bars so the strips never z-fight with the block surface.
+    // Thick frame from the Line Size slider. The wide outline must stay a bold
+    // 2D line, not a 3D volume: each visible edge becomes a flat ribbon quad
+    // that is always presented side-on to the camera (side = edge x view), so
+    // raising the slider only makes the classic wireframe bolder. Painting the
+    // frame onto the block's faces instead (the old makeThickFrame strips) let
+    // the top strip lie in a horizontal plane and the side strip in a vertical
+    // one, which receded with perspective and made the outline read as a 3D
+    // block. This is also why the ribbon is rendered through the opaque
+    // vertex-colour fill (`matSolid`), never the translucent selection-overlay
+    // material, so the colour stays solid at every thickness.
     if (thickLines && !eyeInsideBlock && !g_module->show3d) {
-        const auto frame = bedrocktools::modules::blockoutline::makeThickFrame(
-            static_cast<float>(target.x),
-            static_cast<float>(target.y),
-            static_cast<float>(target.z),
-            faceVisible, frameWidth, bedrocktools::modules::blockoutline::kEdgeBarLift);
+        const auto frame = bedrocktools::modules::blockoutline::makeBillboardQuads(
+            lines, edgeVisible, frameWidth, eye);
         if (frame.count > 0) {
             g_tessellatorBegin(tessellator, nullptr, kQuadPrimitive,
                                static_cast<int>(frame.count) * 8, 0);

@@ -223,6 +223,124 @@ int main() {
         static_assert(makeThickFrame(0.0f, 0.0f, 0.0f, top, 0.0f).count == 0);
     }
 
+    // --- Thick frame (flat camera-facing ribbons) --------------------------
+    // The wide outline is now drawn as flat ribbons centred on each visible
+    // edge, always presented side-on to the camera. Unlike the old face
+    // strips (which lie in the plane of a block face and recede with
+    // perspective), a ribbon keeps its full width facing the eye, so a thick
+    // outline stays a bold 2D line instead of reading as a 3D block.
+    using bedrocktools::modules::blockoutline::makeBillboardQuads;
+
+    {
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f, 0.0f);
+        constexpr std::array<bool, 12> none{};
+        assert(makeBillboardQuads(box, none, 0.1f, Point{0.5f, 0.5f, 2.0f}).count == 0);
+
+        constexpr std::array<bool, 12> all = {true, true, true, true, true, true,
+                                              true, true, true, true, true, true};
+        // Hairline width means "no ribbons"; the line pass covers that case.
+        assert(makeBillboardQuads(box, all, 0.0f, Point{0.5f, 0.5f, 2.0f}).count == 0);
+    }
+
+    // Every ribbon spans exactly one edge: its two "side" spans equal the
+    // requested width, its two "length" spans equal the unit edge length, and
+    // it does not overshoot the edge's end points.
+    {
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f, 0.0f);
+        constexpr std::array<bool, 12> all = {true, true, true, true, true, true,
+                                              true, true, true, true, true, true};
+        constexpr float w = 0.1f;
+        constexpr Point eye{0.5f, 0.5f, 2.0f};
+        const auto ribbons = makeBillboardQuads(box, all, w, eye);
+        assert(ribbons.count == 12);
+
+        const auto dist = [](const Point& p, const Point& q) {
+            const float dx = p.x - q.x, dy = p.y - q.y, dz = p.z - q.z;
+            return std::sqrt(dx * dx + dy * dy + dz * dz);
+        };
+        for (std::size_t i = 0; i < ribbons.count; ++i) {
+            const auto& q = ribbons.quads[i];
+            const Point& a = q.a;
+            const Point& b = q.b;
+            const Point& c = q.c;
+            const Point& d = q.d;
+
+            // The short sides (a-d and b-c) are the ribbon width.
+            assert(std::fabs(dist(a, d) - w) < 1e-6f);
+            assert(std::fabs(dist(b, c) - w) < 1e-6f);
+            // The long sides (a-b and c-d) are the full unit edge length.
+            assert(std::fabs(dist(a, b) - 1.0f) < 1e-6f);
+            assert(std::fabs(dist(c, d) - 1.0f) < 1e-6f);
+
+            // The ribbon is centred on the edge: the edge's running axis keeps
+            // the from/to coordinate at the from/to end exactly (no overshoot
+            // towards the neighbouring edges).
+            const auto& line = box[i];
+            int axis = 0;
+            float best = -1.0f;
+            for (int k = 0; k < 3; ++k) {
+                const float delta = (k == 0) ? (line.to.x - line.from.x)
+                                  : (k == 1) ? (line.to.y - line.from.y)
+                                             : (line.to.z - line.from.z);
+                const float len = delta < 0.0f ? -delta : delta;
+                if (len > best) { best = len; axis = k; }
+            }
+            const float fromCoord = (axis == 0) ? line.from.x
+                                  : (axis == 1) ? line.from.y : line.from.z;
+            const float toCoord = (axis == 0) ? line.to.x
+                                : (axis == 1) ? line.to.y : line.to.z;
+            const auto coord = [&](const Point& p) {
+                return (axis == 0) ? p.x : (axis == 1) ? p.y : p.z;
+            };
+            assert(std::fabs(coord(a) - fromCoord) < 1e-6f);
+            assert(std::fabs(coord(d) - fromCoord) < 1e-6f);
+            assert(std::fabs(coord(b) - toCoord) < 1e-6f);
+            assert(std::fabs(coord(c) - toCoord) < 1e-6f);
+        }
+    }
+
+    // The ribbon faces the camera: its width direction (a->d) is perpendicular
+    // to both the edge and the view ray, so the full width is presented from
+    // any ordinary angle (unlike a strip lying in the plane of a block face,
+    // which foreshortens as that face turns away).
+    {
+        constexpr auto box = makeBox(0.0f, 0.0f, 0.0f, 0.0f);
+        constexpr std::array<bool, 12> all = {true, true, true, true, true, true,
+                                              true, true, true, true, true, true};
+        constexpr float w = 0.1f;
+        constexpr Point eye{0.5f, 0.5f, 2.0f};
+        const auto ribbons = makeBillboardQuads(box, all, w, eye);
+
+        for (std::size_t i = 0; i < ribbons.count; ++i) {
+            const auto& q = ribbons.quads[i];
+            const auto& line = box[i];
+            const float mx = (line.from.x + line.to.x) * 0.5f;
+            const float my = (line.from.y + line.to.y) * 0.5f;
+            const float mz = (line.from.z + line.to.z) * 0.5f;
+
+            // Edge direction (unit).
+            float ex = line.to.x - line.from.x;
+            float ey = line.to.y - line.from.y;
+            float ez = line.to.z - line.from.z;
+            const float el = std::sqrt(ex * ex + ey * ey + ez * ez);
+            ex /= el; ey /= el; ez /= el;
+
+            // View vector (edge midpoint -> eye), unit.
+            float vx = eye.x - mx, vy = eye.y - my, vz = eye.z - mz;
+            const float vl = std::sqrt(vx * vx + vy * vy + vz * vz);
+            vx /= vl; vy /= vl; vz /= vl;
+
+            // Ribbon width direction (a -> d), unit.
+            float wx = q.d.x - q.a.x, wy = q.d.y - q.a.y, wz = q.d.z - q.a.z;
+            const float wl = std::sqrt(wx * wx + wy * wy + wz * wz);
+            wx /= wl; wy /= wl; wz /= wl;
+
+            // Width is perpendicular to the edge and to the view ray.
+            assert(std::fabs(wx * ex + wy * ey + wz * ez) < 1e-4f);
+            assert(std::fabs(wx * vx + wy * vy + wz * vz) < 1e-4f);
+        }
+    }
+
     // --- Hidden back edges ("Show 3D") -----------------------------------
     // The "Show 3D" mode draws the hidden/back edges so the target reads as a
     // full twelve-edge 3D wireframe. Those edges are emitted as edge bars (a
