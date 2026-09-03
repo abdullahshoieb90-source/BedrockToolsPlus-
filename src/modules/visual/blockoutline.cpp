@@ -347,7 +347,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         camY > static_cast<float>(target.y) && camY < static_cast<float>(target.y) + 1.0f &&
         camZ > static_cast<float>(target.z) && camZ < static_cast<float>(target.z) + 1.0f;
 
-    const bool show3d = g_module->show3d;
+    
 
     // Emits the selected edges as bars - a cross of two perpendicular quads
     // centred on each edge - and renders them with `material`. Both windings
@@ -401,87 +401,7 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
         g_renderMesh(screenContext, tessellator, material, meshParams);
     };
 
-    // "Show 3D" mode: draw the block as a full twelve-edge 3D wireframe.
-    //
-    // Every edge is emitted as an edge bar, front and back alike - never as a
-    // strip painted onto a face. A strip only exists in the plane of its own
-    // face, so as soon as that face turns edge-on to the camera the strip
-    // projects to (nearly) zero pixels and the edge loses its thickness. The
-    // back edges had already been switched to bars; the front edges were still
-    // strips, which is why some edges kept vanishing at grazing viewing angles
-    // while their neighbours stayed solid, and why the wireframe looked like
-    // it was being pulled apart by wherever the eye happened to be. A bar is a
-    // cross of two perpendicular quads, so at any angle at least one of them
-    // is far from edge-on and every edge holds up.
-    //
-    // The two halves still go through different materials: the eye-facing
-    // edges use the depth-tested selection overlay so the outline does not
-    // X-ray through walls in front of the target, and the hidden edges use the
-    // vertex-color fill so they show through the block itself without filling
-    // its interior. The eye-facing bars are lifted off the surface so they
-    // never z-fight with the block they outline.
-    if (show3d) {
-        const auto passes =
-            bedrocktools::modules::blockoutline::makeEdgeBarPasses(edgeVisible);
-        const float edgeWidth =
-            bedrocktools::modules::blockoutline::edgeBarWidthForFrame(frameWidth);
-
-        // Hidden edges: see-through, and left exactly on the face planes
-        // because their material skips the depth test.
-        drawEdgeBars(passes.seeThrough, edgeWidth, 0.0f, matFill);
-        drawEdgeHairlines(passes.seeThrough,
-                          static_cast<int>(passes.seeThroughCount), matFill);
-
-        // Eye-facing edges: depth-tested, lifted clear of the block surface.
-        if (!eyeInsideBlock) {
-            drawEdgeBars(passes.depthTested, edgeWidth,
-                         bedrocktools::modules::blockoutline::kEdgeBarLift,
-                         matInner);
-        }
-    }
-
-    // Thick pass (Show 3D off): the frame is painted as flat strips lying on
-    // the visible faces of the block (see makeThickFrame). Nothing leaves the
-    // face plane, so a wide outline is just the classic wireframe drawn
-    // bolder - it can never fill the block or turn into a volume by itself.
-    // The full 3D twelve-edge look is produced only by the "Show 3D" pass
-    // above, which builds every edge as a bar instead and therefore skips
-    // these strips: drawing both would paint the same edge twice and let the
-    // coplanar strips z-fight with the bars.
-    if (!show3d && thickLines && !eyeInsideBlock) {
-        const auto frame = bedrocktools::modules::blockoutline::makeThickFrame(
-            static_cast<float>(target.x),
-            static_cast<float>(target.y),
-            static_cast<float>(target.z),
-            faceVisible,
-            frameWidth);
-
-        if (frame.count > 0) {
-            // Both windings per strip so back-face culling never eats one.
-            g_tessellatorBegin(tessellator, nullptr, kQuadPrimitive,
-                               static_cast<int>(frame.count) * 8, 0);
-            g_tessellatorColor(tessellator, red, green, blue, 1.0f);
-            for (std::size_t i = 0; i < frame.count; ++i) {
-                const auto& q = frame.quads[i];
-                const bedrocktools::sdk::Vec3 verts[4] = {
-                    {q.a.x - camX, q.a.y - camY, q.a.z - camZ},
-                    {q.b.x - camX, q.b.y - camY, q.b.z - camZ},
-                    {q.c.x - camX, q.c.y - camY, q.c.z - camZ},
-                    {q.d.x - camX, q.d.y - camY, q.d.z - camZ},
-                };
-                for (int j = 0; j < 4; ++j) {
-                    g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
-                }
-                for (int j = 3; j >= 0; --j) {
-                    g_tessellatorVertex(tessellator, verts[j].x, verts[j].y, verts[j].z);
-                }
-            }
-            std::memset(meshParams, 0, sizeof(meshParams));
-            g_renderMesh(screenContext, tessellator, matInner, meshParams);
-        }
-    }
-
-    // Core hairline pass: keeps the edge crisp and visible even when the
+    : keeps the edge crisp and visible even when the
     // strips shrink below a pixel at long range. Same visibility set as the
     // thick pass so both stay consistent.
     if (visibleEdgeCount > 0) {
@@ -583,13 +503,6 @@ void BlockOutlineModule::loadConfig(const nlohmann::json& json) {
     auto readBool = [&](const char* key, bool& out) {
         if (json.contains(key) && json[key].is_boolean()) out = json[key].get<bool>();
     };
-    if (json.contains("show3d")) {
-        readBool("show3d", show3d);
-    } else if (json.contains("block3d")) {
-        readBool("block3d", show3d);
-    } else {
-        readBool("outline3d", show3d);
-    }
     readBool("rgb", rgb);
 
     if (json.contains("lineThickness")) {
@@ -654,7 +567,6 @@ void BlockOutlineModule::saveConfig(nlohmann::json& json) {
     std::snprintf(hex, sizeof(hex), "%06X", outlineColor & 0x00FFFFFFu);
     json["outlineColor"] = std::string("#") + hex;
 
-    json["show3d"] = show3d;
     json["rgb"] = rgb;
     json["lineThickness"] = lineThickness;
 }

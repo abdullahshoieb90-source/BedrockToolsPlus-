@@ -29,7 +29,6 @@ public:
     // face is filled, so the block's own surface stays visible. Defaults to
     // off, so the plain wireframe is what players get unless they explicitly
     // enable the 3D edges.
-    bool show3d = false;
 
     // Rainbow mode ("Rgb" menu toggle): while enabled, the outline color
     // cycles continuously through the RGB spectrum and overrides the static
