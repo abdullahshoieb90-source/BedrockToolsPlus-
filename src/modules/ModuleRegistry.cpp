@@ -52,7 +52,6 @@
 #include <bedrocktools/modules/visual/wings.hpp>
 #include "player/autosprint.hpp"
 #include "hud/armorhud.hpp"
-#include "hud/inventoryhud.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -161,5 +160,4 @@ void registerAllModules() {
     registry.emplace<AutoSprintModule>();
     registry.emplace<CustomCapesModule>();
     registry.emplace<ArmorHudModule>();
-    registry.emplace<InventoryHudModule>();
 }
