@@ -12,8 +12,8 @@
 // (sweepPx) and the tapered far edge (taperPx). They are documented on
 // WingBone in wings_shape.hpp.
 //
-// Kept in a header (like blockoutline_geometry.hpp) so the host tests and
-// tools/wings_preview.cpp build the exact same wings the game draws.
+// Kept in a header so the host tests and tools/wings_preview.cpp build the
+// exact same wings the game draws.
 
 #include "modules/visual/wings_shape.hpp"
 
