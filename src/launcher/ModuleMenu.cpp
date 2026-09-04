@@ -98,8 +98,7 @@ static void onModuleConfigChanged(std::string_view module_id, std::string_view k
     mod->loadConfig(j);
 
     if (module_id == "bedrocktoolsplus.CommentKey" ||
-        module_id == "bedrocktoolsplus.Command Hotkey" ||
-        module_id == "bedrocktoolsplus.Hotbar Slots") {
+        module_id == "bedrocktoolsplus.Command Hotkey") {
         // Refresh the Java view in place. It replaces the button definition
         // and reapplies its label without hiding the overlay.
         bedrocktools::launcher::refreshExternalButtonsForModule(module_id);

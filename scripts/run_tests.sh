@@ -68,12 +68,6 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
-        hotbarslots_test)
-            # Builds the real module as a second translation unit against the
-            # host fakes; no xmake packages needed.
-            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
-            extra_srcs+=("${root}/src/modules/hud/hotbarslots.cpp")
-            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
