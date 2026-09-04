@@ -21,6 +21,11 @@
 // production ExternalButtonRefresh.cpp translation unit is compiled and
 // exercised directly on the host.
 //
+// A second section covers queryButtonGeometry (used by the Hotbar Slots
+// "Draw Icons On Buttons" mode): the fake android.view.View reports a scripted
+// screen position/size/visibility, and the tests assert that only visible,
+// measured buttons owned by the module produce geometry entries.
+//
 // Build and run standalone:
 //     g++ -std=c++20 -Wall -Wextra -I src -I tests/fakejni \
 //         tests/externalbuttonrefresh_test.cpp -o /tmp/externalbuttonrefresh_test
@@ -62,6 +67,16 @@ struct FakeObject : _jobject {
     int configureCalls = 0;          // configureOverlayView(view) invocations
     jobject configureViewArg = nullptr;
 
+    // Per-view records (what the real android.view.View would report).
+    jint viewFlags = 0;  // mViewFlags bitmask (0 == VISIBLE)
+    jint viewWidth = 0;  // getWidth()
+    jint viewHeight = 0; // getHeight()
+    jint screenX = 0;    // getLocationOnScreen()[0]
+    jint screenY = 0;    // getLocationOnScreen()[1]
+
+    // Payload of fake jintArray objects.
+    std::vector<jint> ints;
+
     FakeObject() = default;
     FakeObject(std::string k, std::string t = {}) : kind(std::move(k)), text(std::move(t)) {}
 };
@@ -92,6 +107,7 @@ FakeClass gButtonClass{"ExternalButton", nullptr, {"buttonId", "moduleId"}};
 FakeClass gOverlayBase{"ExternalOverlayBase", nullptr, {"overlayView"}};
 FakeClass gOverlayClass{"ExternalButtonOverlay", &gOverlayBase, {"button"}};
 FakeClass gMapClass{"java/util/Map", nullptr, {}};
+FakeClass gViewClass{"android/view/View", nullptr, {"mViewFlags"}};
 
 FakeMethod mGetInstance{"getInstance"};
 FakeMethod mGetCount{"getExternalButtonCount"};
@@ -99,12 +115,16 @@ FakeMethod mGetButton{"getExternalButton"};
 FakeMethod mMapGet{"get"};
 FakeMethod mApplyChanges{"applyConfigurationChanges"};
 FakeMethod mConfigure{"configureOverlayView"};
+FakeMethod mGetLocation{"getLocationOnScreen"};
+FakeMethod mGetWidth{"getWidth"};
+FakeMethod mGetHeight{"getHeight"};
 
 FakeField fOverlays{"externalButtonOverlayMap"};
 FakeField fButtonId{"buttonId"};
 FakeField fModuleId{"moduleId"};
 FakeField fOverlayButton{"button"};
 FakeField fOverlayView{"overlayView"};
+FakeField fViewFlags{"mViewFlags"};
 
 // Instances: two buttons registered in the bridge, one for Command Hotkey and
 // one owned by an unrelated module (Zoom), each with its own overlay.
@@ -144,6 +164,7 @@ jclass hk_FindClass(JNIEnv*, const char* name) {
     if (std::strstr(name, "ExternalButtonOverlay")) return &gOverlayClass;
     if (std::strstr(name, "ExternalModBridge")) return &gBridgeClass;
     if (std::strcmp(name, "java/util/Map") == 0) return &gMapClass;
+    if (std::strcmp(name, "android/view/View") == 0) return &gViewClass;
     return nullptr;
 }
 
@@ -158,6 +179,9 @@ jmethodID hk_GetMethodID(JNIEnv*, jclass c, const char* name, const char*) {
     if (c == &gMapClass && std::strcmp(name, "get") == 0) return &mMapGet;
     if (c == &gOverlayClass && std::strcmp(name, "applyConfigurationChanges") == 0) return &mApplyChanges;
     if (c == &gOverlayClass && std::strcmp(name, "configureOverlayView") == 0) return &mConfigure;
+    if (c == &gViewClass && std::strcmp(name, "getLocationOnScreen") == 0) return &mGetLocation;
+    if (c == &gViewClass && std::strcmp(name, "getWidth") == 0) return &mGetWidth;
+    if (c == &gViewClass && std::strcmp(name, "getHeight") == 0) return &mGetHeight;
     return nullptr;
 }
 
@@ -170,6 +194,7 @@ jfieldID hk_GetFieldID(JNIEnv*, jclass c, const char* name, const char*) {
                 return std::strcmp(name, "buttonId") == 0 ? &fButtonId : &fModuleId;
             if (fc == &gOverlayClass) return &fOverlayButton;
             if (fc == &gOverlayBase) return &fOverlayView;
+            if (fc == &gViewClass) return &fViewFlags;
         }
     return nullptr; // field not declared on this class -> walk continues
 }
@@ -204,13 +229,44 @@ jobject hk_CallObjectMethod(JNIEnv*, jobject o, jmethodID m, va_list ap) {
     return nullptr;
 }
 
+jint hk_CallIntMethod(JNIEnv*, jobject o, jmethodID m, va_list) {
+    const FakeObject* view = asFake(o);
+    if (m == &mGetWidth) return view->viewWidth;
+    if (m == &mGetHeight) return view->viewHeight;
+    return 0;
+}
+
+jint hk_GetIntField(JNIEnv*, jobject o, jfieldID f) {
+    if (f == &fViewFlags) return asFake(o)->viewFlags;
+    return 0;
+}
+
+jintArray hk_NewIntArray(JNIEnv*, jsize len) {
+    static std::vector<FakeObject*> pool;
+    pool.push_back(new FakeObject{});
+    pool.back()->kind = "intarray";
+    pool.back()->ints.assign(static_cast<std::size_t>(len), 0);
+    return pool.back();
+}
+
+void hk_GetIntArrayRegion(JNIEnv*, jintArray a, jsize start, jsize len, jint* buf) {
+    const auto& ints = asFake(a)->ints;
+    for (jsize i = 0; i < len; ++i) buf[i] = ints[static_cast<std::size_t>(start + i)];
+}
+
 void hk_CallVoidMethod(JNIEnv*, jobject o, jmethodID m, va_list ap) {
-    FakeObject* overlay = asFake(o);
+    FakeObject* target = asFake(o);
     if (m == &mApplyChanges) {
-        ++overlay->applyChangesCalls;
+        ++target->applyChangesCalls;
     } else if (m == &mConfigure) {
-        ++overlay->configureCalls;
-        overlay->configureViewArg = va_arg(ap, jobject);
+        ++target->configureCalls;
+        target->configureViewArg = va_arg(ap, jobject);
+    } else if (m == &mGetLocation) {
+        FakeObject* array = asFake(va_arg(ap, jobject));
+        if (array->ints.size() >= 2) {
+            array->ints[0] = target->screenX;
+            array->ints[1] = target->screenY;
+        }
     }
 }
 
@@ -292,8 +348,10 @@ void installHooks() {
     e.CallStaticObjectMethodVFn = hk_CallStaticObjectMethod;
     e.CallStaticIntMethodVFn = hk_CallStaticIntMethod;
     e.CallObjectMethodVFn = hk_CallObjectMethod;
+    e.CallIntMethodVFn = hk_CallIntMethod;
     e.CallVoidMethodVFn = hk_CallVoidMethod;
     e.GetObjectFieldFn = hk_GetObjectField;
+    e.GetIntFieldFn = hk_GetIntField;
     e.SetObjectFieldFn = hk_SetObjectField;
     e.NewStringUTFFn = hk_NewStringUTF;
     e.GetStringUTFLengthFn = hk_GetStringUTFLength;
@@ -303,6 +361,8 @@ void installHooks() {
     e.ExceptionClearFn = hk_ExceptionClear;
     e.DeleteLocalRefFn = hk_DeleteLocalRef;
     e.IsSameObjectFn = hk_IsSameObject;
+    e.NewIntArrayFn = hk_NewIntArray;
+    e.GetIntArrayRegionFn = hk_GetIntArrayRegion;
 
     g_vm.GetEnvFn = hk_GetEnv;
     g_vm.AttachCurrentThreadFn = hk_AttachCurrentThread;
@@ -323,6 +383,17 @@ void resetWorld() {
     gOverlayZoom.applyChangesCalls = 0;
     gOverlayZoom.configureCalls = 0;
     gOverlayZoom.configureViewArg = nullptr;
+
+    gView.viewFlags = 0; // VISIBLE
+    gView.viewWidth = 96;
+    gView.viewHeight = 96;
+    gView.screenX = 120;
+    gView.screenY = 240;
+    gViewZoom.viewFlags = 0;
+    gViewZoom.viewWidth = 64;
+    gViewZoom.viewHeight = 64;
+    gViewZoom.screenX = 10;
+    gViewZoom.screenY = 20;
 }
 
 bool attachHappenedBeforeFirstJniCall() {
@@ -395,6 +466,64 @@ int main() {
     bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
     check(g_attachCalls == 0 && g_detachCalls == 0,
           "no VM registered -> no-op without crashing");
+    bedrocktools::launcher::setJavaVm(&g_vm);
+
+    std::printf("button geometry query\n");
+    resetWorld();
+    g_envMode = EnvMode::Attached;
+    {
+        const auto geometries =
+            bedrocktools::launcher::queryButtonGeometry("bedrocktoolsplus.Command Hotkey");
+        check(geometries.size() == 1, "one geometry entry for the module's visible button");
+        if (!geometries.empty()) {
+            check(geometries[0].buttonId == "bedrocktoolsplus.CommandHotkey.Button1",
+                  "geometry carries the overlay button id");
+            check(geometries[0].x == 120.0f && geometries[0].y == 240.0f,
+                  "geometry position comes from getLocationOnScreen");
+            check(geometries[0].width == 96.0f && geometries[0].height == 96.0f,
+                  "geometry size comes from getWidth/getHeight");
+        }
+    }
+    check(g_attachCalls == 0 && g_detachCalls == 0,
+          "query on an attached thread needs no attach/detach");
+
+    // A button that is not visible (or has no size yet) reports no entry, so
+    // the caller falls back to its strip position.
+    resetWorld();
+    g_envMode = EnvMode::Attached;
+    gView.viewFlags = 4; // android.view.View.INVISIBLE
+    check(bedrocktools::launcher::queryButtonGeometry("bedrocktoolsplus.Command Hotkey").empty(),
+          "invisible button view is skipped");
+
+    resetWorld();
+    g_envMode = EnvMode::Attached;
+    gView.viewWidth = 0; // laid out but not measured yet
+    check(bedrocktools::launcher::queryButtonGeometry("bedrocktoolsplus.Command Hotkey").empty(),
+          "zero-size button view is skipped");
+
+    std::printf("button geometry query (threading and failure modes)\n");
+    resetWorld();
+    g_envMode = EnvMode::Detached;
+    {
+        const auto geometries =
+            bedrocktools::launcher::queryButtonGeometry("bedrocktoolsplus.Command Hotkey");
+        check(geometries.size() == 1, "detached thread still resolves the geometry");
+    }
+    check(g_attachCalls == 1 && g_detachCalls == 1,
+          "query attaches and detaches a detached thread exactly once");
+
+    resetWorld();
+    g_envMode = EnvMode::Detached;
+    g_classesReachable = false; // launcher classes not found on this build
+    check(bedrocktools::launcher::queryButtonGeometry("bedrocktoolsplus.Command Hotkey").empty(),
+          "missing launcher classes yield no geometry");
+    check(g_attachCalls == 1 && g_detachCalls == 1,
+          "early query return still detaches (no leaked attachment)");
+
+    resetWorld();
+    bedrocktools::launcher::setJavaVm(nullptr);
+    check(bedrocktools::launcher::queryButtonGeometry("bedrocktoolsplus.Command Hotkey").empty(),
+          "no VM registered -> empty geometry without crashing");
     bedrocktools::launcher::setJavaVm(&g_vm);
 
     std::printf(g_failures == 0 ? "ALL TESTS PASSED\n" : "%d TEST(S) FAILED\n", g_failures);
