@@ -131,6 +131,8 @@ enum class SignatureId : std::uint16_t {
     BlockOccluderUpdateRenderFace,
     ItemInHandRendererRenderFirstPerson,
     MobGetModifiedSwingDuration,
+    ContainerScreenControllerHandleAutoPlace,
+    ActorGetOffhandSlot,
     Count
 };
 
