@@ -32,7 +32,7 @@ namespace {
 using namespace bedrocktools::sdk::offsets;
 
 // ---------------------------------------------------------------------------
-// RenderLevel hook plumbing (same pattern as Hitbox/Breadcrumbs/BlockOutline)
+// RenderLevel hook plumbing (same pattern as Hitbox/Breadcrumbs)
 // ---------------------------------------------------------------------------
 
 typedef void (*Tessellator_begin_t)(void* tessellator, void* debugCallback, int primitiveMode, int vertexCount, int noIndices);
