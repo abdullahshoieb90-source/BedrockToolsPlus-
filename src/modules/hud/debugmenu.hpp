@@ -3,6 +3,9 @@
 #include "../Module.hpp"
 #include <bedrocktools/sdk/Types.hpp>
 #include <string>
+#include <chrono>
+
+class TimeChangerModule;
 
 class DebugMenuModule : public Module {
 public:
@@ -16,17 +19,26 @@ public:
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j)       override;
     
+    void updateFrameTiming(std::chrono::steady_clock::time_point now);
     void updateData(float yaw, float pitch, const bedrocktools::sdk::Vec3& pos);
 
     void* m_level = nullptr;
     bool  m_levelInitHooked = false;
     bool  m_levelDtorHooked = false;
     int   m_entityCount = -1;
+    int   m_worldTime = 0;
+    bool  m_worldTimeValid = false;
 
 public:
     bedrocktools::sdk::Vec3  m_lastPos = {0.f, 0.f, 0.f};
     bool  m_firstTick = true;
     float m_speed = 0.f;
+    float m_frameTimeMs = 0.f;
+    int m_fps = -1;
+    unsigned int m_frameCount = 0;
+    std::chrono::steady_clock::time_point m_sampleStart{};
+    std::chrono::steady_clock::time_point m_lastFrameTime{};
+    bool m_hasFrameTime = false;
 
     float m_yaw = 0.f;
     float m_pitch = 0.f;
@@ -63,4 +75,5 @@ public:
     std::string m_cachedAbi;
     unsigned long m_totalMemMb = 0;
     unsigned long m_usedMemMb = 0;
+    TimeChangerModule* m_timeChanger = nullptr;
 };

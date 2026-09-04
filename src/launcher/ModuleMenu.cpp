@@ -60,6 +60,10 @@ static void onModuleKeybind(std::string_view module_id, std::string_view key, bo
 static void onModuleConfigChanged(std::string_view module_id, std::string_view key, std::string_view value) {
     auto* mod = ModuleRegistry::get().find(module_id);
     if (!mod) return;
+    if (mod->onMenuConfigChanged(key, value)) {
+        bedrocktools::config::ConfigManager::get().save();
+        return;
+    }
 
     nlohmann::json j;
     mod->saveConfig(j);
@@ -147,7 +151,7 @@ void registerModulesWithLauncher() {
             std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(), ::tolower);
             const bool isHudPosition = keyLower.rfind("hud", 0) == 0 &&
                 (keyLower.ends_with("posx") || keyLower.ends_with("posy"));
-            if (isBase || isHudPosition) continue;
+            if (isBase || isHudPosition || !mod->showInLegacyMenu(k)) continue;
             
             std::string displayName;
             std::string sourceKey = k;
@@ -336,6 +340,6 @@ void registerModulesWithLauncher() {
             builder.config(entry.key, entry.displayName, entry.type, entry.default_value, entry.min_value, entry.max_value, entry.depends_on);
         }
 
-        (void)builder.registerModule();
+        if (builder.registerModule()) mod->onMenuRegistered();
     }
 }

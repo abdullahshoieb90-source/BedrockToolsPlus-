@@ -15,6 +15,7 @@ public:
     void saveConfig(nlohmann::json& j) override;
 
     int getCustomTime() const;
+    int getRealTime(void* level);
     void updateRealTime(int newTime);
 
 private:

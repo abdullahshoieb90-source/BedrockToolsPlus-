@@ -49,6 +49,13 @@ int TimeChangerModule::getCustomTime() const {
     return m_customTime;
 }
 
+int TimeChangerModule::getRealTime(void* level) {
+    if (level && _getTime_orig) {
+        return _getTime_orig(level);
+    }
+    return m_realTime;
+}
+
 void TimeChangerModule::updateRealTime(int newTime) {
     m_realTime = newTime;
 }

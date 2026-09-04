@@ -7,11 +7,15 @@
 #include "visual/tnttimer.hpp"
 #include "visual/nofog.hpp"
 #include "hud/pingcounter.hpp"
+#include "hud/worldtime.hpp"
+#include "hud/totemcounter.hpp"
+#include "hud/arrowcounter.hpp"
 #include "hud/reachcounter.hpp"
 #include "hud/breakindicator.hpp"
 #include "hud/playercoords.hpp"
 #include "hud/compass.hpp"
 #include "player/timechanger.hpp"
+#include "player/quickloot.hpp"
 #include "player/weatherchanger.hpp"
 #include "player/nick.hpp"
 #include "misc/nodisconnect.hpp"
@@ -20,6 +24,7 @@
 #include "misc/forceglobalrp.hpp"
 #include "misc/cpslimiter.hpp"
 #include "misc/hitsound.hpp"
+#include "misc/hiveutils.hpp"
 #include "hud/speeddisplay.hpp"
 #include "hud/effectdisplay.hpp"
 #include "hud/debugmenu.hpp"
@@ -114,7 +119,10 @@ void registerAllModules() {
     registry.emplace<BreakIndicatorModule>();
     registry.emplace<PlayerCoordsModule>();
     registry.emplace<CompassModule>();
+    registry.emplace<TotemCounterModule>();
+    registry.emplace<ArrowCounterModule>();
     registry.emplace<TimeChangerModule>();
+    registry.emplace<WorldTimeModule>();
     registry.emplace<WeatherChangerModule>();
     registry.emplace<NickModule>();
     registry.emplace<NoDisconnectModule>();
@@ -135,8 +143,10 @@ void registerAllModules() {
     registry.emplace<ZoomModule>();
     registry.emplace<BreadcrumbsModule>();
     registry.emplace<SkinStealerModule>();
+    registry.emplace<QuickLootModule>();
     registry.emplace<AutoGG>();
     registry.emplace<AutoReQ>();
+    registry.emplace<HiveUtilsModule>();
     registry.emplace<FPSUnlockerModule>();
     registry.emplace<LightOverlayModule>();
     registry.emplace<ShulkerPreviewModule>();
