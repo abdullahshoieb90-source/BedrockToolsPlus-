@@ -22,7 +22,9 @@
 //     Minecraft;
 //   * the item icons are drawn natively from the HudCameraRenderer hook using
 //     the game's ItemRenderer, like the ArmorHUD module does, so they can be
-//     placed and sized independently in the HUD editor.
+//     placed and sized independently in the HUD editor. Icons are now drawn
+//     inset inside the slot frame together with optional stack count and
+//     durability bar, so each hotbar slot visibly shows the item it holds.
 class HotbarSlotsModule final : public Module {
 public:
     static constexpr std::size_t SlotCount = bedrocktools::hotbar::SlotCount;
@@ -48,11 +50,16 @@ private:
         bool itemIcons = true;
         bool slotNumbers = true;
         bool highlightSelected = true;
+        bool showCount = true;
+        bool showDurability = true;
+        bool showSlotBackground = true;
         bedrocktools::hotbar::StripLayout layout{};
         float buttonScale = 1.0f;
         float numberTextSize = 12.0f;
         std::uint32_t numberColor = 0xFFFFFFFFu;
         std::uint32_t highlightColor = 0x66FFFFFFu;
+        float countTextSize = 9.0f;
+        std::uint32_t countColor = 0xFFFFFFFFu;
         float gridSize = 16.0f;
         float gridGap = 4.0f;
         float snapThreshold = 12.0f;
@@ -64,9 +71,13 @@ private:
     void syncOverlayButtons();
     void unregisterOverlayButtons();
     static std::string buttonId(std::size_t index);
+    void storeRuntime(std::size_t index, void* stack, void* item);
 
     mutable std::mutex m_configMutex;
     std::array<std::atomic_bool, SlotCount> m_hasItem{};
+    std::array<std::atomic_int, SlotCount> m_stackCount{};
+    std::array<std::atomic_int, SlotCount> m_damage{};
+    std::array<std::atomic_int, SlotCount> m_maxDamage{};
     std::atomic_int m_selectedSlot{-1};
 
     std::array<bool, SlotCount> m_slotEnabled{};
@@ -74,6 +85,9 @@ private:
     bool m_itemIcons = true;
     bool m_slotNumbers = true;
     bool m_highlightSelected = true;
+    bool m_showCount = true;
+    bool m_showDurability = true;
+    bool m_showSlotBackground = true;
     bool m_vertical = false;
 
     float hudPosX = 24.0f;
@@ -85,6 +99,8 @@ private:
     std::string m_numberColor = "#FFFFFF";
     std::string m_highlightColor = "#FFFFFF";
     float m_highlightOpacity = 0.4f;
+    float m_countTextSize = 9.0f;
+    std::string m_countColor = "#FFFFFF";
 
     float m_gridSize = 16.0f;
     float m_gridGap = 4.0f;

@@ -67,6 +67,20 @@ constexpr const char* slotButtonActiveSvg = R"svg(<svg viewBox="0 0 64 64" xmlns
     </g>
 </svg>)svg";
 
+// Durability bar helpers (same proportions as Inventory HUD / vanilla)
+inline float durabilityRatio(int damage, int maxDamage) {
+    if (maxDamage <= 0) return 1.0f;
+    const int safeDamage = std::clamp(damage, 0, maxDamage);
+    return static_cast<float>(maxDamage - safeDamage) / static_cast<float>(maxDamage);
+}
+
+inline std::uint32_t durabilityColor(float ratio) {
+    const float r = std::clamp(ratio, 0.0f, 1.0f);
+    const auto red = static_cast<std::uint32_t>((1.0f - r) * 255.0f + 0.5f);
+    const auto green = static_cast<std::uint32_t>(r * 255.0f + 0.5f);
+    return 0xFF000000u | (red << 16) | (green << 8);
+}
+
 } // namespace
 
 HotbarSlotsModule::HotbarSlotsModule()
@@ -140,6 +154,9 @@ HotbarSlotsModule::ConfigSnapshot HotbarSlotsModule::snapshotConfig() const {
     config.itemIcons = m_itemIcons;
     config.slotNumbers = m_slotNumbers;
     config.highlightSelected = m_highlightSelected;
+    config.showCount = m_showCount;
+    config.showDurability = m_showDurability;
+    config.showSlotBackground = m_showSlotBackground;
     config.layout.x = hudPosX;
     config.layout.y = hudPosY;
     config.layout.slotSize = m_slotSize;
@@ -149,6 +166,8 @@ HotbarSlotsModule::ConfigSnapshot HotbarSlotsModule::snapshotConfig() const {
     config.numberTextSize = m_numberTextSize;
     config.numberColor = huditems::parseColor(m_numberColor, 0xFFFFFFFFu);
     config.highlightColor = huditems::withOpacity(huditems::parseColor(m_highlightColor, 0xFFFFFFFFu), m_highlightOpacity);
+    config.countTextSize = m_countTextSize;
+    config.countColor = huditems::parseColor(m_countColor, 0xFFFFFFFFu);
     config.gridSize = m_gridSize;
     config.gridGap = m_gridGap;
     config.snapThreshold = m_snapThreshold;
@@ -161,7 +180,30 @@ HotbarSlotsModule::ConfigSnapshot HotbarSlotsModule::snapshotConfig() const {
 
 void HotbarSlotsModule::clearRuntime() {
     for (auto& slot : m_hasItem) slot.store(false, std::memory_order_release);
+    for (auto& slot : m_stackCount) slot.store(0, std::memory_order_release);
+    for (auto& slot : m_damage) slot.store(0, std::memory_order_release);
+    for (auto& slot : m_maxDamage) slot.store(0, std::memory_order_release);
     m_selectedSlot.store(-1, std::memory_order_release);
+}
+
+void HotbarSlotsModule::storeRuntime(std::size_t index, void* stack, void* item) {
+    if (index >= SlotCount) return;
+    const bool has = item != nullptr;
+    m_hasItem[index].store(has, std::memory_order_release);
+    if (!has) {
+        m_stackCount[index].store(0, std::memory_order_release);
+        m_damage[index].store(0, std::memory_order_release);
+        m_maxDamage[index].store(0, std::memory_order_release);
+        return;
+    }
+    m_stackCount[index].store(static_cast<int>(huditems::stackCount(stack)), std::memory_order_release);
+    const int maxDmg = huditems::itemMaxDamage(item);
+    m_maxDamage[index].store(maxDmg, std::memory_order_release);
+    if (maxDmg > 0) {
+        m_damage[index].store(huditems::stackDamage(stack), std::memory_order_release);
+    } else {
+        m_damage[index].store(0, std::memory_order_release);
+    }
 }
 
 void HotbarSlotsModule::renderNative(void* context, void* client) {
@@ -177,16 +219,46 @@ void HotbarSlotsModule::renderNative(void* context, void* client) {
     const auto stacks = getHotbarStacks(localPlayer);
     m_selectedSlot.store(selectedSlotFor(localPlayer, stacks), std::memory_order_release);
 
+    // Always publish runtime so onFrame can show count/durability even if icons are disabled
     for (std::size_t i = 0; i < SlotCount; ++i) {
         void* stack = stacks[i];
         void* item = huditems::stackItem(stack);
-        m_hasItem[i].store(item != nullptr, std::memory_order_release);
+        storeRuntime(i, stack, item);
+    }
 
-        if (!config.slots[i] || !item || !painter.ready()) continue;
+    if (!config.itemIcons || !painter.ready()) return;
 
+    // First pass: dyed leather and other tinted items need HUD opacity fix
+    if (painter.supportsOpacityFix()) {
+        painter.beginOpacityFixPass();
+        for (std::size_t i = 0; i < SlotCount; ++i) {
+            if (!config.slots[i]) continue;
+            void* stack = stacks[i];
+            if (!stack || !huditems::needsTextureOpacityPass(stack)) continue;
+            void* item = huditems::stackItem(stack);
+            if (!item) continue;
+            const SlotRect rect = bedrocktools::hotbar::slotRect(config.layout, i);
+            if (rect.size <= 0.0f) continue;
+            const float unit = rect.size / 16.0f;
+            const float pad = unit; // 1px at vanilla 16px scale keeps slot border visible
+            const float iconSize = std::max(1.0f, rect.size - 2.0f * pad);
+            painter.drawOpacityFix(stack, item, rect.x + pad, rect.y + pad, iconSize);
+        }
+        painter.endOpacityFixPass();
+    }
+
+    // Main item icons - inset inside the slot frame so the border stays visible
+    for (std::size_t i = 0; i < SlotCount; ++i) {
+        if (!config.slots[i]) continue;
+        void* stack = stacks[i];
+        void* item = huditems::stackItem(stack);
+        if (!item) continue;
         const SlotRect rect = bedrocktools::hotbar::slotRect(config.layout, i);
         if (rect.size <= 0.0f) continue;
-        painter.draw(stack, item, rect.x, rect.y, rect.size);
+        const float unit = rect.size / 16.0f;
+        const float pad = unit;
+        const float iconSize = std::max(1.0f, rect.size - 2.0f * pad);
+        painter.draw(stack, item, rect.x + pad, rect.y + pad, iconSize);
     }
 }
 
@@ -218,12 +290,59 @@ void HotbarSlotsModule::onFrame() {
     pl::modmenu::submitHudEditorElements(moduleId, elements);
 
     std::vector<pl::modmenu::DrawCommand> commands;
+    commands.reserve(visible * 5);
     const int selected = m_selectedSlot.load(std::memory_order_acquire);
 
     for (std::size_t i = 0; i < SlotCount; ++i) {
         if (!config.slots[i]) continue;
         const SlotRect rect = bedrocktools::hotbar::slotRect(config.layout, i);
+        if (rect.size <= 0.0f) continue;
 
+        // Slot background / border - drawn as an outline so the interior stays
+        // transparent and the native item icon shows through. Two thin rects
+        // mimic the Minecraft bevel (dark outer, light inner) without obscuring
+        // the icon center.
+        if (config.showSlotBackground) {
+            // Outer dark border
+            {
+                pl::modmenu::DrawCommand border;
+                border.type = pl::modmenu::DrawCommandType::Rect;
+                border.x = rect.x;
+                border.y = rect.y;
+                border.w = rect.size;
+                border.h = rect.size;
+                border.color = 0xFF373737u;
+                border.size = 1.2f;
+                commands.push_back(std::move(border));
+            }
+            // Inner light bevel (slightly inset) - also outline only
+            {
+                pl::modmenu::DrawCommand bevel;
+                bevel.type = pl::modmenu::DrawCommandType::Rect;
+                bevel.x = rect.x + 1.0f;
+                bevel.y = rect.y + 1.0f;
+                bevel.w = std::max(1.0f, rect.size - 2.0f);
+                bevel.h = std::max(1.0f, rect.size - 2.0f);
+                bevel.color = 0xFF8B8B8Bu;
+                bevel.size = 0.8f;
+                commands.push_back(std::move(bevel));
+            }
+            // Subtle slot fill - very translucent so icon remains dominant but
+            // empty slots are still visible as a faint square
+            const bool hasItem = m_hasItem[i].load(std::memory_order_acquire);
+            if (!hasItem) {
+                pl::modmenu::DrawCommand fill;
+                fill.type = pl::modmenu::DrawCommandType::RectFilled;
+                fill.x = rect.x + 1.0f;
+                fill.y = rect.y + 1.0f;
+                fill.w = std::max(1.0f, rect.size - 2.0f);
+                fill.h = std::max(1.0f, rect.size - 2.0f);
+                fill.color = 0x33000000u;
+                commands.push_back(std::move(fill));
+            }
+        }
+
+        // Highlight for selected slot - semi-transparent fill on top of the icon
         if (config.highlightSelected && selected == static_cast<int>(i)) {
             pl::modmenu::DrawCommand highlight;
             highlight.type = pl::modmenu::DrawCommandType::RectFilled;
@@ -233,6 +352,66 @@ void HotbarSlotsModule::onFrame() {
             highlight.h = rect.size;
             highlight.color = config.highlightColor;
             commands.push_back(std::move(highlight));
+        }
+
+        const bool hasItem = m_hasItem[i].load(std::memory_order_acquire);
+        if (hasItem) {
+            // Durability bar - drawn over the icon like vanilla hotbar
+            if (config.showDurability) {
+                const int dmg = m_damage[i].load(std::memory_order_acquire);
+                const int maxDmg = m_maxDamage[i].load(std::memory_order_acquire);
+                if (maxDmg > 0 && dmg >= 0) {
+                    const float ratio = durabilityRatio(dmg, maxDmg);
+                    if (ratio < 1.0f) {
+                        const float unit = rect.size / 16.0f;
+                        const float barW = 13.0f * unit;
+                        const float barH = std::max(1.0f, 2.0f * unit);
+                        const float fillH = std::max(1.0f, unit);
+                        const float barX = rect.x + 2.0f * unit;
+                        const float barY = rect.y + 13.0f * unit;
+                        // background
+                        {
+                            pl::modmenu::DrawCommand bg;
+                            bg.type = pl::modmenu::DrawCommandType::RectFilled;
+                            bg.x = barX;
+                            bg.y = barY;
+                            bg.w = barW;
+                            bg.h = barH;
+                            bg.color = 0xFF000000u;
+                            commands.push_back(std::move(bg));
+                        }
+                        const float fillW = barW * std::clamp(ratio, 0.0f, 1.0f);
+                        if (fillW > 0.5f) {
+                            pl::modmenu::DrawCommand fill;
+                            fill.type = pl::modmenu::DrawCommandType::RectFilled;
+                            fill.x = barX;
+                            fill.y = barY;
+                            fill.w = fillW;
+                            fill.h = fillH;
+                            fill.color = durabilityColor(ratio);
+                            commands.push_back(std::move(fill));
+                        }
+                    }
+                }
+            }
+
+            // Stack count - bottom-right corner of the slot
+            if (config.showCount) {
+                const int count = m_stackCount[i].load(std::memory_order_acquire);
+                if (count > 1) {
+                    const float unit = rect.size / 16.0f;
+                    pl::modmenu::DrawCommand text;
+                    text.type = pl::modmenu::DrawCommandType::Text;
+                    // right-aligned at bottom-right, small shadow is handled by launcher
+                    text.x = rect.x + rect.size - unit;
+                    text.y = rect.y + rect.size - unit;
+                    text.w = -1.0f; // right-aligned
+                    text.color = config.countColor;
+                    text.size = config.countTextSize;
+                    text.text = std::to_string(count);
+                    commands.push_back(std::move(text));
+                }
+            }
         }
 
         if (config.slotNumbers) {
@@ -299,15 +478,28 @@ void HotbarSlotsModule::onMenuRegistered() {
     auto features = node("slot_features_group", "Show", "slots", ConfigControlTypeV2::ToggleGroup);
     features.key.clear();
     features.section = "slot_features";
-    features.description = "On-screen buttons select the slot; the HUD strip shows what each slot holds.";
+    features.description = "On-screen buttons select the slot; the HUD strip shows what each slot holds directly on the slot.";
     features.choiceStyle = ConfigChoiceStyleV2::Checklist;
     features.options = {
         {"buttons", "On-Screen Buttons", {}, "m_buttons"},
-        {"icons", "Item Icons", {}, "m_itemIcons"},
+        {"icons", "Item Icons on Slots", {}, "m_itemIcons"},
         {"numbers", "Slot Numbers", {}, "m_slotNumbers"},
         {"highlight", "Highlight Selected Slot", {}, "m_highlightSelected"}
     };
     schema.node(std::move(features));
+
+    section("slot_details", "Slot Details", "slots");
+    auto details = node("slot_details_group", "Icon Details", "slots", ConfigControlTypeV2::ToggleGroup);
+    details.key.clear();
+    details.section = "slot_details";
+    details.description = "Stack count and durability are drawn on top of the item icon inside the slot.";
+    details.choiceStyle = ConfigChoiceStyleV2::Checklist;
+    details.options = {
+        {"count", "Stack Count", {}, "m_showCount"},
+        {"durability", "Durability Bar", {}, "m_showDurability"},
+        {"background", "Slot Frame", {}, "m_showSlotBackground"}
+    };
+    schema.node(std::move(details));
 
     section("strip", "Slot Strip", "appearance");
     auto orientation = node("m_vertical", "Vertical Strip", "appearance", ConfigControlTypeV2::Toggle);
@@ -328,10 +520,16 @@ void HotbarSlotsModule::onMenuRegistered() {
     highlightColor.defaultValue = "#FFFFFF";
     schema.node(std::move(highlightColor));
     slider("m_highlightOpacity", "Highlight Opacity", "appearance", "strip_text", "0", "1", "");
+    slider("m_countTextSize", "Stack Count Size", "appearance", "strip_text", "6", "20");
+    auto countColor = node("m_countColor", "Stack Count Color", "appearance", ConfigControlTypeV2::Color);
+    countColor.section = "strip_text";
+    countColor.defaultValue = "#FFFFFF";
+    countColor.visibleWhen = {{"m_showCount", ConfigConditionOpV2::Truthy, {}}};
+    schema.node(std::move(countColor));
 
     auto help = node("editor_help", "Move The Strip In The HUD Editor", "editor", ConfigControlTypeV2::Info);
     help.key.clear();
-    help.description = "Open the HUD Editor to drag the slot strip. The on-screen buttons keep their own positions.";
+    help.description = "Open the HUD Editor to drag the slot strip. The item icon now renders inset inside each slot frame. On-screen buttons keep their own positions.";
     schema.node(std::move(help));
     section("snapping", "Snapping", "editor");
     auto snapping = node("snap_targets", "Snap To", "editor", ConfigControlTypeV2::ToggleGroup);
@@ -368,6 +566,9 @@ void HotbarSlotsModule::loadConfig(const nlohmann::json& j) {
         if (j.contains("m_itemIcons")) m_itemIcons = j["m_itemIcons"].get<bool>();
         if (j.contains("m_slotNumbers")) m_slotNumbers = j["m_slotNumbers"].get<bool>();
         if (j.contains("m_highlightSelected")) m_highlightSelected = j["m_highlightSelected"].get<bool>();
+        if (j.contains("m_showCount")) m_showCount = j["m_showCount"].get<bool>();
+        if (j.contains("m_showDurability")) m_showDurability = j["m_showDurability"].get<bool>();
+        if (j.contains("m_showSlotBackground")) m_showSlotBackground = j["m_showSlotBackground"].get<bool>();
         if (j.contains("m_vertical")) m_vertical = j["m_vertical"].get<bool>();
         if (j.contains("hudPosX")) hudPosX = std::clamp(j["hudPosX"].get<float>(), 0.0f, 4000.0f);
         if (j.contains("hudPosY")) hudPosY = std::clamp(j["hudPosY"].get<float>(), 0.0f, 4000.0f);
@@ -380,6 +581,9 @@ void HotbarSlotsModule::loadConfig(const nlohmann::json& j) {
         if (j.contains("m_highlightColor")) m_highlightColor = j["m_highlightColor"].get<std::string>();
         if (j.contains("m_highlightOpacity"))
             m_highlightOpacity = std::clamp(j["m_highlightOpacity"].get<float>(), 0.0f, 1.0f);
+        if (j.contains("m_countTextSize"))
+            m_countTextSize = std::clamp(j["m_countTextSize"].get<float>(), 6.0f, 20.0f);
+        if (j.contains("m_countColor")) m_countColor = j["m_countColor"].get<std::string>();
         if (j.contains("m_gridSize")) m_gridSize = std::clamp(j["m_gridSize"].get<float>(), 1.0f, 100.0f);
         if (j.contains("m_gridGap")) m_gridGap = std::clamp(j["m_gridGap"].get<float>(), 0.0f, 100.0f);
         if (j.contains("m_snapThreshold")) m_snapThreshold = std::clamp(j["m_snapThreshold"].get<float>(), 1.0f, 100.0f);
@@ -406,6 +610,9 @@ void HotbarSlotsModule::saveConfig(nlohmann::json& j) {
     j["m_itemIcons"] = m_itemIcons;
     j["m_slotNumbers"] = m_slotNumbers;
     j["m_highlightSelected"] = m_highlightSelected;
+    j["m_showCount"] = m_showCount;
+    j["m_showDurability"] = m_showDurability;
+    j["m_showSlotBackground"] = m_showSlotBackground;
     j["m_vertical"] = m_vertical;
     j["hudPosX"] = hudPosX;
     j["hudPosY"] = hudPosY;
@@ -416,6 +623,8 @@ void HotbarSlotsModule::saveConfig(nlohmann::json& j) {
     j["m_numberColor"] = m_numberColor;
     j["m_highlightColor"] = m_highlightColor;
     j["m_highlightOpacity"] = m_highlightOpacity;
+    j["m_countTextSize"] = m_countTextSize;
+    j["m_countColor"] = m_countColor;
     j["m_gridSize"] = m_gridSize;
     j["m_gridGap"] = m_gridGap;
     j["m_snapThreshold"] = m_snapThreshold;
