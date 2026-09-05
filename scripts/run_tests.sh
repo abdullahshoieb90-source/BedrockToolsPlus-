@@ -55,28 +55,14 @@ for source in "${root}"/tests/*_test.cpp; do
             ;;
         effectdisplay_test)
             # Also needs entt from the xmake packages; fmt and <android/log.h>
-            # are covered by the host fakes in tests/fakejni. The test pulls
-            # in the real effectdisplay.cpp as a single translation unit, so
-            # the No Potion Bar module it references is linked in as a second
-            # source file.
+            # are covered by the host fakes in tests/fakejni.
             if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
                [ -n "${json_inc}" ] && [ -d "${json_inc}" ] &&
                [ -n "${entt_inc}" ] && [ -d "${entt_inc}" ]; then
                 extra+=(-I "${preloader_inc}" -I "${json_inc}" -I "${entt_inc}"
                         -I "${root}/tests/fakejni")
-                extra_srcs+=("${root}/src/modules/hud/nopotionbar.cpp")
             else
                 skip="preloader/nlohmann_json/entt headers (set PRE_LOADER_INCLUDE, JSON_INCLUDE and ENTT_INCLUDE)"
-            fi
-            ;;
-        nopotionbar_test)
-            # Builds the real module as a second translation unit; Module.hpp
-            # needs nlohmann_json (host fake when the package is missing).
-            extra_srcs+=("${root}/src/modules/hud/nopotionbar.cpp")
-            if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
-                extra+=(-I "${json_inc}")
-            else
-                extra+=(-I "${root}/tests/fakejson")
             fi
             ;;
         externalbuttonrefresh_test)

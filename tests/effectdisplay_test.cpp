@@ -20,12 +20,8 @@
 //     ENTT=$(echo ~/.xmake/packages/e/entt/v3.16.0/*/include)
 //     FMT=$(echo ~/.xmake/packages/f/fmt/12.2.0/*/include)
 //     g++ -std=c++20 -I include -I src -I "$PRE_LOADER" -I "$JSON" \
-//         -I "$ENTT" -I "$FMT" tests/effectdisplay_test.cpp \
-//         src/modules/hud/nopotionbar.cpp -o /tmp/effectdisplay_test
+//         -I "$ENTT" -I "$FMT" tests/effectdisplay_test.cpp -o /tmp/effectdisplay_test
 //     /tmp/effectdisplay_test
-//
-// (effectdisplay.cpp references the No Potion Bar module that shares its
-// vanilla potion-bar hook, so that module is compiled alongside.)
 
 #include <algorithm>
 #include <cstdio>
