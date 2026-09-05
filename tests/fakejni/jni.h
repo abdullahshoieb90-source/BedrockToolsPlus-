@@ -64,11 +64,6 @@ struct JNIEnv {
     void (*ExceptionClearFn)(JNIEnv *) = nullptr;
     void (*DeleteLocalRefFn)(JNIEnv *, jobject) = nullptr;
     jboolean (*IsSameObjectFn)(JNIEnv *, jobject, jobject) = nullptr;
-    jboolean (*IsInstanceOfFn)(JNIEnv *, jobject, jclass) = nullptr;
-    jclass (*GetObjectClassFn)(JNIEnv *, jobject) = nullptr;
-    jint (*GetIntFieldFn)(JNIEnv *, jobject, jfieldID) = nullptr;
-    jboolean (*GetBooleanFieldFn)(JNIEnv *, jobject, jfieldID) = nullptr;
-    jint (*CallIntMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
 
     // Same call syntax as the real header.
     jclass FindClass(const char *name) { return FindClassFn(this, name); }
@@ -87,10 +82,6 @@ struct JNIEnv {
     void ExceptionClear() { ExceptionClearFn(this); }
     void DeleteLocalRef(jobject o) { DeleteLocalRefFn(this, o); }
     jboolean IsSameObject(jobject a, jobject b) { return IsSameObjectFn(this, a, b); }
-    jboolean IsInstanceOf(jobject o, jclass c) { return IsInstanceOfFn(this, o, c); }
-    jclass GetObjectClass(jobject o) { return GetObjectClassFn(this, o); }
-    jint GetIntField(jobject o, jfieldID f) { return GetIntFieldFn(this, o, f); }
-    jboolean GetBooleanField(jobject o, jfieldID f) { return GetBooleanFieldFn(this, o, f); }
     jobject GetObjectField(jobject o, jfieldID f) { return GetObjectFieldFn(this, o, f); }
     void SetObjectField(jobject o, jfieldID f, jobject v) { return SetObjectFieldFn(this, o, f, v); }
     jstring NewStringUTF(const char *s) { return NewStringUTFFn(this, s); }
@@ -120,13 +111,6 @@ struct JNIEnv {
         va_list ap;
         va_start(ap, m);
         jobject r = CallObjectMethodVFn(this, o, m, ap);
-        va_end(ap);
-        return r;
-    }
-    jint CallIntMethod(jobject o, jmethodID m, ...) {
-        va_list ap;
-        va_start(ap, m);
-        jint r = CallIntMethodVFn(this, o, m, ap);
         va_end(ap);
         return r;
     }

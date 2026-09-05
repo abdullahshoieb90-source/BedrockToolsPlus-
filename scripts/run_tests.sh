@@ -68,12 +68,6 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
-        externalbuttongeometry_test)
-            # Compiles the Android JNI geometry reader against the host fake
-            # and links the JavaVM holder from ExternalButtonRefresh.cpp.
-            extra+=(-I "${root}/tests/fakejni" -D__ANDROID__)
-            extra_srcs+=("${root}/src/launcher/ExternalButtonRefresh.cpp")
-            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
