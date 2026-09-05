@@ -35,6 +35,7 @@
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/stb_image_write.h>
 
 #include <cstdio>
