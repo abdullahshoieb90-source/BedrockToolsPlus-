@@ -39,7 +39,6 @@ struct _jfieldID {};
 using jobject = _jobject *;
 using jclass = _jclass *;
 using jstring = _jobject *; // real JNI strings are opaque; pointer identity is enough here
-using jintArray = _jobject *; // same: the test attaches the int payload to the fake
 using jmethodID = _jmethodID *;
 using jfieldID = _jfieldID *;
 
@@ -54,10 +53,8 @@ struct JNIEnv {
     jobject (*CallStaticObjectMethodVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jint (*CallStaticIntMethodVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jobject (*CallObjectMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
-    jint (*CallIntMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
     void (*CallVoidMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
     jobject (*GetObjectFieldFn)(JNIEnv *, jobject, jfieldID) = nullptr;
-    jint (*GetIntFieldFn)(JNIEnv *, jobject, jfieldID) = nullptr;
     void (*SetObjectFieldFn)(JNIEnv *, jobject, jfieldID, jobject) = nullptr;
     jstring (*NewStringUTFFn)(JNIEnv *, const char *) = nullptr;
     jsize (*GetStringUTFLengthFn)(JNIEnv *, jstring) = nullptr;
@@ -67,8 +64,6 @@ struct JNIEnv {
     void (*ExceptionClearFn)(JNIEnv *) = nullptr;
     void (*DeleteLocalRefFn)(JNIEnv *, jobject) = nullptr;
     jboolean (*IsSameObjectFn)(JNIEnv *, jobject, jobject) = nullptr;
-    jintArray (*NewIntArrayFn)(JNIEnv *, jsize) = nullptr;
-    void (*GetIntArrayRegionFn)(JNIEnv *, jintArray, jsize, jsize, jint *) = nullptr;
 
     // Same call syntax as the real header.
     jclass FindClass(const char *name) { return FindClassFn(this, name); }
@@ -88,12 +83,7 @@ struct JNIEnv {
     void DeleteLocalRef(jobject o) { DeleteLocalRefFn(this, o); }
     jboolean IsSameObject(jobject a, jobject b) { return IsSameObjectFn(this, a, b); }
     jobject GetObjectField(jobject o, jfieldID f) { return GetObjectFieldFn(this, o, f); }
-    jint GetIntField(jobject o, jfieldID f) { return GetIntFieldFn(this, o, f); }
     void SetObjectField(jobject o, jfieldID f, jobject v) { return SetObjectFieldFn(this, o, f, v); }
-    jintArray NewIntArray(jsize len) { return NewIntArrayFn(this, len); }
-    void GetIntArrayRegion(jintArray a, jsize start, jsize len, jint *buf) {
-        GetIntArrayRegionFn(this, a, start, len, buf);
-    }
     jstring NewStringUTF(const char *s) { return NewStringUTFFn(this, s); }
     jsize GetStringUTFLength(jstring s) { return GetStringUTFLengthFn(this, s); }
     const char *GetStringUTFChars(jstring s, jboolean *isCopy) {
@@ -121,13 +111,6 @@ struct JNIEnv {
         va_list ap;
         va_start(ap, m);
         jobject r = CallObjectMethodVFn(this, o, m, ap);
-        va_end(ap);
-        return r;
-    }
-    jint CallIntMethod(jobject o, jmethodID m, ...) {
-        va_list ap;
-        va_start(ap, m);
-        jint r = CallIntMethodVFn(this, o, m, ap);
         va_end(ap);
         return r;
     }
