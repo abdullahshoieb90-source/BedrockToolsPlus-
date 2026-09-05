@@ -2,6 +2,7 @@
 
 #include "huditems.hpp"
 #include "modules/ModuleRegistry.hpp"
+#include "core/GameHooks.hpp"
 
 #include <pl/ModMenu.hpp>
 #include <pl/ModMenuConfig.hpp>
@@ -228,7 +229,6 @@ void HotbarSlotsModule::syncOverlayButtons() {
                 const void* inventoryProxy = nullptr;
                 {
                     // Read inventory proxy from player object via SDK offset.
-                    const std::uintptr_t playerAddr = reinterpret_cast<std::uintptr_t>(localPlayer);
                     inventoryProxy = read<const void*>(localPlayer, 0x570); // PlayerInventory offset from SDK offsets.
                     if (inventoryProxy) {
                         const void* container = read<const void*>(inventoryProxy, 0xB8); // PlayerInventoryContainer offset.
