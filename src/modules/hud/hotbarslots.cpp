@@ -3,10 +3,6 @@
 #include "huditems.hpp"
 #include "modules/ModuleRegistry.hpp"
 
-#include <bedrocktools/events/EventBus.hpp>
-#include <bedrocktools/memory/Signatures.hpp>
-#include <bedrocktools/sdk/Offsets.hpp>
-
 #include <pl/ModMenu.hpp>
 #include <pl/ModMenuConfig.hpp>
 
@@ -15,8 +11,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <chrono>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -33,40 +27,6 @@ constexpr std::size_t SlotCount = HotbarSlotsModule::SlotCount;
 constexpr int AndroidKeyCode1 = 8;
 
 constexpr const char* HudElementId = "bedrocktools.hotbarslots.strip";
-
-namespace sdkoffsets = bedrocktools::sdk::offsets;
-
-// ---- Auto Build plumbing ---------------------------------------------------
-//
-// Placing a block is GameMode::useItemOn on the block the player is looking
-// at. The GameMode pointer is not reachable from a stable offset, so it is
-// picked up from the GameModeActionEvent the core hooks already publish for
-// every attack / use / build the player performs.
-
-struct InteractionResultValue {
-    std::uint8_t value;
-};
-
-using LevelGetHitResultFn = void* (*)(void*);
-using UseItemOnFn = InteractionResultValue (*)(void*, void*, const void*, std::uint8_t,
-                                               const void*, const void*, bool);
-
-LevelGetHitResultFn g_levelGetHitResult = nullptr;
-UseItemOnFn g_gameModeUseItemOn = nullptr;
-std::atomic<void*> g_gameMode{nullptr};
-
-double nowMs() {
-    return std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-// Android key codes 1-9 map onto the hotbar slots, both for the launcher
-// overlay buttons (they forward their key code) and for a real keyboard.
-int slotForKeyCode(int keyCode) {
-    const int index = keyCode - AndroidKeyCode1;
-    if (index < 0 || index >= static_cast<int>(SlotCount)) return -1;
-    return index;
-}
 
 // The first nine slots of the player inventory are the hotbar.
 std::array<void*, SlotCount> getHotbarStacks(void* player) {
@@ -86,11 +46,6 @@ int selectedSlotFor(void* player, const std::array<void*, SlotCount>& stacks) {
         if (stacks[i] && stacks[i] == carried) return static_cast<int>(i);
     }
     return -1;
-}
-
-void tickListener(void* player, void* user) {
-    auto* module = static_cast<HotbarSlotsModule*>(user);
-    if (module && module->enabled) module->onLocalPlayerTick(player);
 }
 
 void renderListener(void* context, void* client, void* user) {
@@ -118,9 +73,6 @@ HotbarSlotsModule::HotbarSlotsModule()
     : Module("Hotbar Slots",
              "Adds separate 1-9 buttons for selecting hotbar slots, with optional item icons on the HUD.") {
     m_slotEnabled.fill(true);
-    // Auto Build is opt-in and, by default, only armed for slot 1.
-    m_autoBuildSlots.fill(false);
-    m_autoBuildSlots[0] = true;
 }
 
 HotbarSlotsModule::~HotbarSlotsModule() {
@@ -135,31 +87,7 @@ std::string HotbarSlotsModule::buttonId(std::size_t index) {
 void HotbarSlotsModule::onInit() {
     huditems::initialize();
     huditems::addRenderListener(renderListener, this);
-    resolveAutoBuildFunctions();
-
-    // Auto Build needs the live GameMode pointer; the core hooks hand one out
-    // with every game-mode action the player performs.
-    bedrocktools::events::bus().subscribe<bedrocktools::events::GameModeActionEvent>(
-        [](auto& event) {
-            if (event.gameMode) g_gameMode.store(event.gameMode, std::memory_order_release);
-        });
-    bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
-        [this](auto& event) { tickListener(event.player, this); });
-
     syncOverlayButtons();
-}
-
-bool HotbarSlotsModule::resolveAutoBuildFunctions() {
-    using bedrocktools::memory::SignatureId;
-    if (!g_levelGetHitResult) {
-        g_levelGetHitResult = reinterpret_cast<LevelGetHitResultFn>(
-            bedrocktools::memory::resolve(SignatureId::LevelGetHitResult));
-    }
-    if (!g_gameModeUseItemOn) {
-        g_gameModeUseItemOn = reinterpret_cast<UseItemOnFn>(
-            bedrocktools::memory::resolve(SignatureId::GameModeUseItemOn));
-    }
-    return g_levelGetHitResult && g_gameModeUseItemOn;
 }
 
 void HotbarSlotsModule::onEnable() {
@@ -224,10 +152,6 @@ HotbarSlotsModule::ConfigSnapshot HotbarSlotsModule::snapshotConfig() const {
     config.gridSize = m_gridSize;
     config.gridGap = m_gridGap;
     config.snapThreshold = m_snapThreshold;
-    config.autoBuild.enabled = m_autoBuild;
-    config.autoBuild.slots = m_autoBuildSlots;
-    config.autoBuild.holdDelayMs = m_autoBuildHoldDelay;
-    config.autoBuild.intervalMs = m_autoBuildInterval;
     config.snapFlags =
         (m_snapToGrid ? pl::modmenu::HudSnapGrid : pl::modmenu::HudSnapNone) |
         (m_snapToElements ? pl::modmenu::HudSnapElements : pl::modmenu::HudSnapNone) |
@@ -237,93 +161,7 @@ HotbarSlotsModule::ConfigSnapshot HotbarSlotsModule::snapshotConfig() const {
 
 void HotbarSlotsModule::clearRuntime() {
     for (auto& slot : m_hasItem) slot.store(false, std::memory_order_release);
-    for (auto& slot : m_hasBlock) slot.store(false, std::memory_order_release);
     m_selectedSlot.store(-1, std::memory_order_release);
-    std::lock_guard lock(m_autoBuildMutex);
-    m_autoBuildState.reset();
-}
-
-// A slot button (or the matching keyboard key) went down / up. The event is
-// never consumed: Minecraft must still perform the normal slot selection, the
-// module only starts or stops its own hold timer on top of it.
-bool HotbarSlotsModule::onKeyEvent(int key, bool isDown) {
-    if (!enabled) return false;
-    const int slot = slotForKeyCode(key);
-    if (slot < 0) return false;
-
-    const ConfigSnapshot config = snapshotConfig();
-    if (!config.autoBuild.enabled) {
-        std::lock_guard lock(m_autoBuildMutex);
-        m_autoBuildState.reset();
-        return false;
-    }
-    // Chat / container screens own the keyboard while they are open.
-    if (ModuleRegistry::get().keybindBlocked()) {
-        std::lock_guard lock(m_autoBuildMutex);
-        m_autoBuildState.reset();
-        return false;
-    }
-
-    const double now = nowMs();
-    std::lock_guard lock(m_autoBuildMutex);
-    if (isDown) m_autoBuildState.pressed(config.autoBuild, static_cast<std::size_t>(slot), now);
-    else m_autoBuildState.released(static_cast<std::size_t>(slot), now);
-    return false;
-}
-
-// Runs on the game thread once per local player tick.
-void HotbarSlotsModule::onLocalPlayerTick(void* player) {
-    if (!player) return;
-    const ConfigSnapshot config = snapshotConfig();
-    if (!config.autoBuild.enabled) return;
-
-    std::size_t slot = 0;
-    {
-        std::lock_guard lock(m_autoBuildMutex);
-        if (!m_autoBuildState.held()) return;
-        slot = m_autoBuildState.slot();
-        if (slot >= SlotCount) return;
-        // Only a slot that is currently selected *and* holds a placeable block
-        // may build; anything else silently keeps behaving like vanilla.
-        const bool placeable =
-            m_selectedSlot.load(std::memory_order_acquire) == static_cast<int>(slot) &&
-            m_hasBlock[slot].load(std::memory_order_acquire);
-        if (!m_autoBuildState.shouldPlace(config.autoBuild, nowMs(), placeable)) return;
-    }
-
-    placeHeldBlock(player, slot);
-}
-
-// GameMode::useItemOn against the block the player is looking at, i.e. exactly
-// what tapping the build button would do.
-bool HotbarSlotsModule::placeHeldBlock(void* player, std::size_t slot) {
-    (void)slot;
-    if (!resolveAutoBuildFunctions()) return false;
-
-    void* gameMode = g_gameMode.load(std::memory_order_acquire);
-    if (!gameMode) return false;
-
-    void* level = *reinterpret_cast<void**>(
-        reinterpret_cast<std::uintptr_t>(player) + sdkoffsets::Actor::mLevel);
-    if (reinterpret_cast<std::uintptr_t>(level) < 0x1000) return false;
-
-    void* hit = g_levelGetHitResult(level);
-    if (!hit) return false;
-
-    const auto hitAddress = reinterpret_cast<std::uintptr_t>(hit);
-    const int type = *reinterpret_cast<int*>(hitAddress + sdkoffsets::HitResult::mType);
-    if (type != sdkoffsets::HitResult::TypeBlock) return false;
-
-    const auto* blockPos = reinterpret_cast<const void*>(hitAddress + sdkoffsets::HitResult::mBlockPos);
-    const auto face = *reinterpret_cast<std::uint8_t*>(hitAddress + sdkoffsets::HitResult::mFacing);
-    const auto* clickPos = reinterpret_cast<const void*>(hitAddress + sdkoffsets::HitResult::mPos);
-
-    void* stack = huditems::getCarriedItem(player);
-    if (!huditems::stackPlacesBlock(stack)) return false;
-
-    const InteractionResultValue result =
-        g_gameModeUseItemOn(gameMode, stack, blockPos, face, clickPos, nullptr, true);
-    return (result.value & 1u) != 0;
 }
 
 void HotbarSlotsModule::renderNative(void* context, void* client) {
@@ -343,8 +181,6 @@ void HotbarSlotsModule::renderNative(void* context, void* client) {
         void* stack = stacks[i];
         void* item = huditems::stackItem(stack);
         m_hasItem[i].store(item != nullptr, std::memory_order_release);
-        m_hasBlock[i].store(item != nullptr && huditems::stackPlacesBlock(stack),
-                            std::memory_order_release);
 
         if (!config.slots[i] || !item || !painter.ready()) continue;
 
@@ -419,7 +255,6 @@ void HotbarSlotsModule::onMenuRegistered() {
     ConfigSchemaBuilder schema;
     schema.defaultCategory("slots")
         .category("slots", "Slots", "Choose which hotbar slots are shown")
-        .category("autobuild", "Auto Build", "Hold a slot button to keep placing its block")
         .category("appearance", "Appearance", "Size, spacing and colors of the slot strip")
         .category("editor", "HUD Editor", "Placement and snapping while editing the HUD");
 
@@ -473,26 +308,6 @@ void HotbarSlotsModule::onMenuRegistered() {
         {"highlight", "Highlight Selected Slot", {}, "m_highlightSelected"}
     };
     schema.node(std::move(features));
-
-    section("autobuild_main", "Auto Build", "autobuild");
-    auto autoBuild = node("m_autoBuild", "Enable Auto Build", "autobuild", ConfigControlTypeV2::Toggle);
-    autoBuild.section = "autobuild_main";
-    autoBuild.description =
-        "Tap a slot button to select it as usual. Keep holding it and, if the slot holds a "
-        "placeable block, blocks are placed automatically without pressing the build button.";
-    schema.node(std::move(autoBuild));
-
-    auto autoSlots = node("autobuild_slots", "Auto Build Slots", "autobuild", ConfigControlTypeV2::ToggleGroup);
-    autoSlots.key.clear();
-    autoSlots.section = "autobuild_main";
-    autoSlots.choiceStyle = ConfigChoiceStyleV2::Chips;
-    for (std::size_t i = 0; i < SlotCount; ++i) {
-        const std::string key = "m_autoBuildSlot" + std::to_string(i + 1);
-        autoSlots.options.push_back({key, std::to_string(i + 1), {}, key});
-    }
-    schema.node(std::move(autoSlots));
-    slider("m_autoBuildHoldDelay", "Hold Before Building", "autobuild", "autobuild_main", "50", "1000", " ms");
-    slider("m_autoBuildInterval", "Delay Between Blocks", "autobuild", "autobuild_main", "20", "1000", " ms");
 
     section("strip", "Slot Strip", "appearance");
     auto orientation = node("m_vertical", "Vertical Strip", "appearance", ConfigControlTypeV2::Toggle);
@@ -554,15 +369,6 @@ void HotbarSlotsModule::loadConfig(const nlohmann::json& j) {
         if (j.contains("m_slotNumbers")) m_slotNumbers = j["m_slotNumbers"].get<bool>();
         if (j.contains("m_highlightSelected")) m_highlightSelected = j["m_highlightSelected"].get<bool>();
         if (j.contains("m_vertical")) m_vertical = j["m_vertical"].get<bool>();
-        if (j.contains("m_autoBuild")) m_autoBuild = j["m_autoBuild"].get<bool>();
-        for (std::size_t i = 0; i < SlotCount; ++i) {
-            const std::string key = "m_autoBuildSlot" + std::to_string(i + 1);
-            if (j.contains(key) && j[key].is_boolean()) m_autoBuildSlots[i] = j[key].get<bool>();
-        }
-        if (j.contains("m_autoBuildHoldDelay"))
-            m_autoBuildHoldDelay = std::clamp(j["m_autoBuildHoldDelay"].get<float>(), 50.0f, 1000.0f);
-        if (j.contains("m_autoBuildInterval"))
-            m_autoBuildInterval = std::clamp(j["m_autoBuildInterval"].get<float>(), 20.0f, 1000.0f);
         if (j.contains("hudPosX")) hudPosX = std::clamp(j["hudPosX"].get<float>(), 0.0f, 4000.0f);
         if (j.contains("hudPosY")) hudPosY = std::clamp(j["hudPosY"].get<float>(), 0.0f, 4000.0f);
         if (j.contains("m_slotSize")) m_slotSize = std::clamp(j["m_slotSize"].get<float>(), 8.0f, 100.0f);
@@ -601,11 +407,6 @@ void HotbarSlotsModule::saveConfig(nlohmann::json& j) {
     j["m_slotNumbers"] = m_slotNumbers;
     j["m_highlightSelected"] = m_highlightSelected;
     j["m_vertical"] = m_vertical;
-    j["m_autoBuild"] = m_autoBuild;
-    for (std::size_t i = 0; i < SlotCount; ++i)
-        j["m_autoBuildSlot" + std::to_string(i + 1)] = m_autoBuildSlots[i];
-    j["m_autoBuildHoldDelay"] = m_autoBuildHoldDelay;
-    j["m_autoBuildInterval"] = m_autoBuildInterval;
     j["hudPosX"] = hudPosX;
     j["hudPosY"] = hudPosY;
     j["m_slotSize"] = m_slotSize;
