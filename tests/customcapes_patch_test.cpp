@@ -35,8 +35,7 @@
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 
-// The implementation is compiled once inside customcapes.cpp (linked below as
-// a second translation unit), so the test must not define it again.
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/stb_image_write.h>
 
 #include <cstdio>

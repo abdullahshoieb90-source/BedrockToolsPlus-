@@ -52,9 +52,6 @@ private:
 
     // Detour used to suppress the vanilla status-effect (potion) bar. It is a
     // static member so it can read private state (m_hideVanillaHud) directly.
-    // The same detour also serves the standalone No Potion Bar module, whose
-    // enabled flag is OR-ed into the suppression condition (see
-    // nopotionbar.hpp).
     static void renderPotionEffectsDetour(void* self, void* renderContext, void* screenView, float posX, float posY);
 
     std::mutex m_mutex;
@@ -99,8 +96,7 @@ private:
 
     // Vanilla potion-bar hook (installed once in onInit). The hook itself is
     // kept installed for the whole session; the detour decides per-frame
-    // whether to skip the vanilla draw call, both for this module and for the
-    // No Potion Bar module that shares it.
+    // whether to skip the vanilla draw call.
     bedrocktools::hooks::State* m_vanillaBarHook = nullptr;
     bool m_vanillaBarHooked = false;
 };

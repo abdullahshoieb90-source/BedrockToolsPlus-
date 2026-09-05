@@ -1,7 +1,6 @@
 #include "ModuleRegistry.hpp"
 #include "misc/hitsound.hpp"
 #include "hud/effectdisplay.hpp"
-#include "hud/nopotionbar.hpp"
 #include "visual/hitbox.hpp"
 #include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
@@ -67,7 +66,6 @@ void registerAllModules() {
     if (!registry.modules().empty()) return;
     registry.emplace<HitSoundModule>();
     registry.emplace<EffectDisplayModule>();
-    registry.emplace<NoPotionBarModule>();
     registry.emplace<HitboxModule>();
     registry.emplace<CustomCapesModule>();
     registry.emplace<CommentKey>();

@@ -3,7 +3,6 @@
 #include "effectformat.hpp"
 #include "effecti18n.hpp"
 #include "effectlayout.hpp"
-#include "nopotionbar.hpp"
 #include "core/Runtime.hpp"
 #include "core/memory/Hooks.hpp"
 #include "modules/ModuleRegistry.hpp"
@@ -1175,10 +1174,6 @@ void effectTickCallback(bedrocktools::sdk::Player* player) {
 // float, float)`. Hooking it lets this module skip the draw call entirely, so
 // the vanilla bar cannot overlap this module's own panel.
 //
-// The hook is shared with the standalone No Potion Bar module, which removes
-// the default bar without drawing anything in its place: its detour condition
-// is simply OR-ed in below (NoPotionBarModule::suppressesVanillaBar()).
-//
 // The address is located through `SignatureId::RenderPotionEffects` (see
 // src/core/memory/Signatures.cpp). The pattern registered there is a clearly
 // marked placeholder: until it is replaced with the real ARM64 byte pattern of
@@ -1198,11 +1193,9 @@ RenderPotionEffectsFn g_origRenderPotionEffects = nullptr;
 
 void EffectDisplayModule::renderPotionEffectsDetour(void* self, void* renderContext, void* screenView, float posX, float posY) {
     // Suppress the vanilla potion bar while the module is enabled and the
-    // "hide vanilla HUD" option is active, or while the standalone No Potion
-    // Bar module asks for the default bar to be removed. Return immediately
-    // so the game never reaches its own drawing code for the bar.
-    if (NoPotionBarModule::suppressesVanillaBar() ||
-        (g_effectDisplay && g_effectDisplay->enabled && g_effectDisplay->m_hideVanillaHud)) {
+    // "hide vanilla HUD" option is active. Return immediately so the game
+    // never reaches its own drawing code for the bar.
+    if (g_effectDisplay && g_effectDisplay->enabled && g_effectDisplay->m_hideVanillaHud) {
         return;
     }
 
