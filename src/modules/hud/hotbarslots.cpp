@@ -1,7 +1,6 @@
 #include "hotbarslots.hpp"
 
 #include "huditems.hpp"
-#include "launcher/ExternalButtonGeometry.hpp"
 #include "modules/ModuleRegistry.hpp"
 
 #include <pl/ModMenu.hpp>
@@ -18,10 +17,8 @@
 namespace {
 
 namespace huditems = bedrocktools::huditems;
-using bedrocktools::hotbar::ButtonRect;
 using bedrocktools::hotbar::SlotRect;
 using bedrocktools::hotbar::StripLayout;
-using bedrocktools::hotbar::SurfaceMapping;
 
 constexpr std::size_t SlotCount = HotbarSlotsModule::SlotCount;
 
@@ -141,10 +138,6 @@ HotbarSlotsModule::ConfigSnapshot HotbarSlotsModule::snapshotConfig() const {
     config.slots = m_slotEnabled;
     config.buttons = m_buttons;
     config.itemIcons = m_itemIcons;
-    config.placement = m_iconPlacement == static_cast<int>(IconPlacement::Buttons)
-                           ? IconPlacement::Buttons
-                           : IconPlacement::Strip;
-    config.iconScale = m_iconScale;
     config.slotNumbers = m_slotNumbers;
     config.highlightSelected = m_highlightSelected;
     config.layout.x = hudPosX;
@@ -169,44 +162,6 @@ HotbarSlotsModule::ConfigSnapshot HotbarSlotsModule::snapshotConfig() const {
 void HotbarSlotsModule::clearRuntime() {
     for (auto& slot : m_hasItem) slot.store(false, std::memory_order_release);
     m_selectedSlot.store(-1, std::memory_order_release);
-    std::lock_guard lock(m_geometryMutex);
-    m_buttonRects.fill(ButtonRect{});
-    m_surface = SurfaceMapping{};
-}
-
-// Asks the launcher where each slot button currently is. Only needed while
-// the icons are painted on the buttons; the query touches JNI, so it runs
-// once per frame from onFrame() and never from the render thread.
-void HotbarSlotsModule::refreshButtonGeometry(const ConfigSnapshot& config) {
-    if (config.placement != IconPlacement::Buttons || !config.itemIcons || !config.buttons) {
-        std::lock_guard lock(m_geometryMutex);
-        m_buttonRects.fill(ButtonRect{});
-        m_surface = SurfaceMapping{};
-        return;
-    }
-
-    std::array<ButtonRect, SlotCount> rects{};
-    SurfaceMapping surface{};
-    const pl::modmenu::HudSurfaceSize hud = pl::modmenu::getHudSurfaceSize();
-    surface.hudWidth = hud.width;
-    surface.hudHeight = hud.height;
-
-    for (std::size_t i = 0; i < SlotCount; ++i) {
-        if (!config.slots[i]) continue;
-        bedrocktools::launcher::ExternalButtonGeometry geometry;
-        if (!bedrocktools::launcher::queryExternalButtonGeometry(buttonId(i), geometry)) continue;
-        rects[i].x = geometry.x;
-        rects[i].y = geometry.y;
-        rects[i].width = geometry.width;
-        rects[i].height = geometry.height;
-        rects[i].visible = geometry.visible;
-        surface.screenWidth = geometry.screenWidth;
-        surface.screenHeight = geometry.screenHeight;
-    }
-
-    std::lock_guard lock(m_geometryMutex);
-    m_buttonRects = rects;
-    m_surface = surface;
 }
 
 void HotbarSlotsModule::renderNative(void* context, void* client) {
@@ -222,14 +177,6 @@ void HotbarSlotsModule::renderNative(void* context, void* client) {
     const auto stacks = getHotbarStacks(localPlayer);
     m_selectedSlot.store(selectedSlotFor(localPlayer, stacks), std::memory_order_release);
 
-    std::array<ButtonRect, SlotCount> buttonRects{};
-    SurfaceMapping surface{};
-    if (config.placement == IconPlacement::Buttons) {
-        std::lock_guard lock(m_geometryMutex);
-        buttonRects = m_buttonRects;
-        surface = m_surface;
-    }
-
     for (std::size_t i = 0; i < SlotCount; ++i) {
         void* stack = stacks[i];
         void* item = huditems::stackItem(stack);
@@ -237,19 +184,7 @@ void HotbarSlotsModule::renderNative(void* context, void* client) {
 
         if (!config.slots[i] || !item || !painter.ready()) continue;
 
-        SlotRect rect;
-        if (config.placement == IconPlacement::Buttons) {
-            // Paint the icon inside the slot button's inner window, the same
-            // way the launcher's own "Use item icons from hotbar" option does.
-            if (!buttonRects[i].visible) continue;
-            const float inset =
-                std::clamp((bedrocktools::hotbar::IconWindowEnd - bedrocktools::hotbar::IconWindowStart) *
-                               config.iconScale,
-                           0.05f, 1.0f);
-            rect = bedrocktools::hotbar::buttonIconRect(buttonRects[i], surface, inset);
-        } else {
-            rect = bedrocktools::hotbar::slotRect(config.layout, i);
-        }
+        const SlotRect rect = bedrocktools::hotbar::slotRect(config.layout, i);
         if (rect.size <= 0.0f) continue;
         painter.draw(stack, item, rect.x, rect.y, rect.size);
     }
@@ -259,25 +194,12 @@ void HotbarSlotsModule::onFrame() {
     if (!enabled) return;
 
     const ConfigSnapshot config = snapshotConfig();
-    refreshButtonGeometry(config);
-    const bool onButtons = config.placement == IconPlacement::Buttons;
-
-    std::array<ButtonRect, SlotCount> buttonRects{};
-    SurfaceMapping surface{};
-    if (onButtons) {
-        std::lock_guard lock(m_geometryMutex);
-        buttonRects = m_buttonRects;
-        surface = m_surface;
-    }
 
     std::size_t visible = 0;
     for (bool slot : config.slots) visible += slot ? 1 : 0;
 
-    // With the icons living on the buttons there is no separate strip to drag,
-    // so the HUD editor element is withdrawn (the buttons keep their own
-    // launcher-managed positions).
     std::vector<pl::modmenu::HudEditorElement> elements;
-    if (visible > 0 && !onButtons) {
+    if (visible > 0) {
         pl::modmenu::HudEditorElement element;
         element.elementId = HudElementId;
         element.displayName = "Hotbar Slots";
@@ -300,16 +222,7 @@ void HotbarSlotsModule::onFrame() {
 
     for (std::size_t i = 0; i < SlotCount; ++i) {
         if (!config.slots[i]) continue;
-        SlotRect rect;
-        if (onButtons) {
-            // Highlight/number follow the button, so they stay on the slot the
-            // player actually taps instead of on a now-hidden strip.
-            if (!buttonRects[i].visible) continue;
-            rect = bedrocktools::hotbar::buttonIconRect(buttonRects[i], surface, 1.0f);
-            if (rect.size <= 0.0f) continue;
-        } else {
-            rect = bedrocktools::hotbar::slotRect(config.layout, i);
-        }
+        const SlotRect rect = bedrocktools::hotbar::slotRect(config.layout, i);
 
         if (config.highlightSelected && selected == static_cast<int>(i)) {
             pl::modmenu::DrawCommand highlight;
@@ -396,21 +309,6 @@ void HotbarSlotsModule::onMenuRegistered() {
     };
     schema.node(std::move(features));
 
-    section("icon_placement", "Item Icons", "slots");
-    auto placement = node("m_iconPlacement", "Icon Placement", "slots", ConfigControlTypeV2::Choice);
-    placement.section = "icon_placement";
-    placement.choiceStyle = ConfigChoiceStyleV2::Segmented;
-    placement.description =
-        "Draw the item of each hotbar slot on the on-screen slot button (like the launcher's "
-        "\"Use item icons from hotbar\"), or on a separate HUD strip you can move in the HUD Editor.";
-    placement.defaultValue = "1";
-    placement.options = {
-        {"0", "HUD Strip", "A separate row/column placed with the HUD Editor.", {}},
-        {"1", "On Slot Buttons", "Paint the icon inside the on-screen slot button.", {}}
-    };
-    schema.node(std::move(placement));
-    slider("m_iconScale", "Icon Size On Button", "slots", "icon_placement", "0.2", "1.5", "x");
-
     section("strip", "Slot Strip", "appearance");
     auto orientation = node("m_vertical", "Vertical Strip", "appearance", ConfigControlTypeV2::Toggle);
     orientation.section = "strip";
@@ -468,21 +366,6 @@ void HotbarSlotsModule::loadConfig(const nlohmann::json& j) {
         }
         if (j.contains("m_buttons")) m_buttons = j["m_buttons"].get<bool>();
         if (j.contains("m_itemIcons")) m_itemIcons = j["m_itemIcons"].get<bool>();
-        if (j.contains("m_iconPlacement")) {
-            // Choice values arrive as "index,Label,Label" strings.
-            try {
-                if (j["m_iconPlacement"].is_string()) {
-                    std::string value = j["m_iconPlacement"].get<std::string>();
-                    const std::size_t separator = value.find(',');
-                    if (separator != std::string::npos) value.resize(separator);
-                    m_iconPlacement = std::clamp(std::stoi(value), 0, 1);
-                } else {
-                    m_iconPlacement = std::clamp(j["m_iconPlacement"].get<int>(), 0, 1);
-                }
-            } catch (...) {
-            }
-        }
-        if (j.contains("m_iconScale")) m_iconScale = std::clamp(j["m_iconScale"].get<float>(), 0.2f, 1.5f);
         if (j.contains("m_slotNumbers")) m_slotNumbers = j["m_slotNumbers"].get<bool>();
         if (j.contains("m_highlightSelected")) m_highlightSelected = j["m_highlightSelected"].get<bool>();
         if (j.contains("m_vertical")) m_vertical = j["m_vertical"].get<bool>();
@@ -521,8 +404,6 @@ void HotbarSlotsModule::saveConfig(nlohmann::json& j) {
     for (std::size_t i = 0; i < SlotCount; ++i) j["m_slot" + std::to_string(i + 1)] = m_slotEnabled[i];
     j["m_buttons"] = m_buttons;
     j["m_itemIcons"] = m_itemIcons;
-    j["m_iconPlacement"] = std::to_string(m_iconPlacement) + ",HUD Strip,On Slot Buttons";
-    j["m_iconScale"] = m_iconScale;
     j["m_slotNumbers"] = m_slotNumbers;
     j["m_highlightSelected"] = m_highlightSelected;
     j["m_vertical"] = m_vertical;

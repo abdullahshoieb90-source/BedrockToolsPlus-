@@ -49,44 +49,6 @@ int main() {
     expectNear("vertical strip width", stripWidth(vertical), 32.0f);
     expectNear("vertical strip height", stripHeight(vertical), 9 * 32.0f + 8 * 4.0f);
 
-    // ---- Icons painted on the launcher slot buttons -----------------------
-    //
-    // The button rectangle arrives in screen pixels; the item painter draws in
-    // HUD units, so the mapping has to rescale it and keep the icon square and
-    // centred inside the button's inner slot window.
-    ButtonRect button;
-    button.x = 200.0f;
-    button.y = 400.0f;
-    button.width = 100.0f;
-    button.height = 100.0f;
-    button.visible = true;
-
-    SurfaceMapping surface;
-    surface.screenWidth = 1000.0f;
-    surface.screenHeight = 500.0f;
-    surface.hudWidth = 500.0f;   // half the screen width
-    surface.hudHeight = 250.0f;  // half the screen height
-
-    const SlotRect icon = buttonIconRect(button, surface, 0.5f);
-    expectNear("button icon size", icon.size, 25.0f);        // 50 HUD px * 0.5
-    expectNear("button icon x", icon.x, 100.0f + 12.5f);     // centred in the button
-    expectNear("button icon y", icon.y, 200.0f + 12.5f);
-
-    // A non-square button still gets a square icon (shortest side wins).
-    ButtonRect wide = button;
-    wide.width = 200.0f;
-    const SlotRect wideIcon = buttonIconRect(wide, surface, 1.0f);
-    expectNear("wide button icon size", wideIcon.size, 50.0f);
-    expectNear("wide button icon x", wideIcon.x, 100.0f + (100.0f - 50.0f) * 0.5f);
-
-    // Unusable inputs never produce a rectangle to draw into.
-    expectNear("no surface", buttonIconRect(button, SurfaceMapping{}, 1.0f).size, 0.0f);
-    expectNear("no button", buttonIconRect(ButtonRect{}, surface, 1.0f).size, 0.0f);
-    expectNear("zero inset", buttonIconRect(button, surface, 0.0f).size, 0.0f);
-    // Oversized insets clamp to the whole button instead of overflowing it.
-    expectNear("clamped inset", buttonIconRect(button, surface, 5.0f).size,
-               buttonIconRect(button, surface, 1.0f).size);
-
     if (failures == 0) {
         std::printf("hotbarslots_layout_test: all checks passed\n");
         return 0;

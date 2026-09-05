@@ -42,18 +42,10 @@ public:
     void renderNative(void* context, void* client);
 
 private:
-    // Where the item icon of a slot is painted.
-    enum class IconPlacement : int {
-        Strip = 0,  // on the separate HUD strip the HUD editor positions
-        Buttons = 1 // on top of the on-screen slot buttons (launcher parity)
-    };
-
     struct ConfigSnapshot {
         std::array<bool, SlotCount> slots{};
         bool buttons = true;
         bool itemIcons = true;
-        IconPlacement placement = IconPlacement::Strip;
-        float iconScale = 1.0f;
         bool slotNumbers = true;
         bool highlightSelected = true;
         bedrocktools::hotbar::StripLayout layout{};
@@ -68,8 +60,6 @@ private:
     };
 
     ConfigSnapshot snapshotConfig() const;
-    // Refreshes the cached launcher button rectangles (JNI, main-ish thread).
-    void refreshButtonGeometry(const ConfigSnapshot& config);
     void clearRuntime();
     void syncOverlayButtons();
     void unregisterOverlayButtons();
@@ -79,18 +69,9 @@ private:
     std::array<std::atomic_bool, SlotCount> m_hasItem{};
     std::atomic_int m_selectedSlot{-1};
 
-    // Screen rectangles of the launcher slot buttons, refreshed on the game
-    // thread in onFrame() and consumed by the render thread. Guarded by its
-    // own mutex so a slow JNI query never blocks a config read.
-    mutable std::mutex m_geometryMutex;
-    std::array<bedrocktools::hotbar::ButtonRect, SlotCount> m_buttonRects{};
-    bedrocktools::hotbar::SurfaceMapping m_surface{};
-
     std::array<bool, SlotCount> m_slotEnabled{};
     bool m_buttons = true;
     bool m_itemIcons = true;
-    int m_iconPlacement = static_cast<int>(IconPlacement::Buttons);
-    float m_iconScale = 1.0f;
     bool m_slotNumbers = true;
     bool m_highlightSelected = true;
     bool m_vertical = false;
