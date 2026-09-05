@@ -67,4 +67,69 @@ inline float stripHeight(const StripLayout& layout, std::size_t visibleSlots = S
     return layout.vertical ? span : layout.slotSize;
 }
 
+// ---------------------------------------------------------------------------
+// Mapping an on-screen launcher button onto the HUD surface
+// ---------------------------------------------------------------------------
+//
+// When "Use item icons from hotbar" paints the icons on the slot *buttons*
+// (like the LeviLauncher built-in mod does) the module needs the button
+// rectangle, which the launcher reports in screen pixels, expressed in the
+// HUD units the item painter draws in.
+
+// Geometry of one launcher overlay button, in screen pixels.
+struct ButtonRect {
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    bool visible = false;
+
+    bool valid() const { return width > 0.0f && height > 0.0f; }
+};
+
+// Size of the surface the button coordinates are relative to (the game's
+// decor view) and of the launcher HUD overlay, both in their own units.
+struct SurfaceMapping {
+    float screenWidth = 0.0f;
+    float screenHeight = 0.0f;
+    float hudWidth = 0.0f;
+    float hudHeight = 0.0f;
+
+    bool valid() const {
+        return screenWidth > 0.0f && screenHeight > 0.0f && hudWidth > 0.0f && hudHeight > 0.0f;
+    }
+};
+
+// The button artwork is a Minecraft slot frame whose inner (item) window only
+// covers the middle of the bitmap; these are the same proportions the
+// launcher's HotbarSlotOverlay uses (93..419 of a 512 px sprite).
+inline constexpr float IconWindowStart = 93.0f / 512.0f;
+inline constexpr float IconWindowEnd = 419.0f / 512.0f;
+
+// Square, centred icon rectangle for a button, in HUD units. `inset` shrinks
+// the icon towards the middle of the button (1.0 = full button).
+inline SlotRect buttonIconRect(const ButtonRect& button, const SurfaceMapping& surface,
+                               float inset = IconWindowEnd - IconWindowStart) {
+    SlotRect rect;
+    if (!button.valid() || !surface.valid()) return rect;
+    if (inset <= 0.0f) return rect;
+    if (inset > 1.0f) inset = 1.0f;
+
+    const float scaleX = surface.hudWidth / surface.screenWidth;
+    const float scaleY = surface.hudHeight / surface.screenHeight;
+
+    const float hudX = button.x * scaleX;
+    const float hudY = button.y * scaleY;
+    const float hudW = button.width * scaleX;
+    const float hudH = button.height * scaleY;
+
+    // A square keeps the item icon undistorted even when the launcher button
+    // was scaled non-uniformly.
+    const float size = (hudW < hudH ? hudW : hudH) * inset;
+    rect.size = size;
+    rect.x = hudX + (hudW - size) * 0.5f;
+    rect.y = hudY + (hudH - size) * 0.5f;
+    return rect;
+}
+
 } // namespace bedrocktools::hotbar
