@@ -74,6 +74,18 @@ for source in "${root}"/tests/*_test.cpp; do
             extra+=(-I "${root}/tests/fakejni" -D__ANDROID__)
             extra_srcs+=("${root}/src/launcher/ExternalButtonRefresh.cpp")
             ;;
+        hotbarslots_module_test)
+            # Builds the real module as a second translation unit against the
+            # recording preloader fake (tests/fakepl); the Android-only item
+            # rendering and JNI geometry queries are stubbed by the test.
+            if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
+                extra+=(-I "${json_inc}")
+            else
+                extra+=(-I "${root}/tests/fakejson")
+            fi
+            extra+=(-I "${root}/tests/fakepl")
+            extra_srcs+=("${root}/src/modules/hud/hotbarslots.cpp")
+            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
