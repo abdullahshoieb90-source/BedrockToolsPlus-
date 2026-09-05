@@ -1,5 +1,6 @@
 #include "hotbarslots.hpp"
 
+#include "hotbarslots_buttons.hpp"
 #include "huditems.hpp"
 #include "launcher/ExternalButtonGeometry.hpp"
 #include "modules/ModuleRegistry.hpp"
@@ -56,19 +57,10 @@ void renderListener(void* context, void* client, void* user) {
     if (module && module->enabled) module->renderNative(context, client);
 }
 
-// Minecraft-style slot frame, matching the look of the launcher's hotbar
-// buttons (a light bevel around a darker face).
-constexpr const char* slotButtonSvg = R"svg(<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-    <path fill="#C6C6C6" stroke="#373737" stroke-width="2" d="M2,2 L62,2 L62,62 L2,62 Z M4,4 L60,4 L60,60 L4,60 Z"/>
-    <path fill="#8B8B8B" stroke="#5B5B5B" stroke-width="2" d="M6,6 L58,6 L58,58 L6,58 Z M8,8 L56,8 L56,56 L8,56 Z"/>
-</svg>)svg";
-
-constexpr const char* slotButtonActiveSvg = R"svg(<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-    <path fill="#C6C6C6" stroke="#373737" stroke-width="2" d="M2,2 L62,2 L62,62 L2,62 Z M4,4 L60,4 L60,60 L4,60 Z"/>
-    <g transform="translate(32, 32) scale(0.85) translate(-32, -32)">
-        <path fill="#8B8B8B" stroke="#5B5B5B" stroke-width="2" d="M6,6 L58,6 L58,58 L6,58 Z M8,8 L56,8 L56,56 L8,56 Z"/>
-    </g>
-</svg>)svg";
+// The slot frame artwork (Minecraft-style, matching the launcher's own hotbar
+// buttons) lives in hotbarslots_buttons.hpp: the "On Slot Buttons" placement
+// needs the item window cut out of it, and the host tests rasterize that
+// markup to prove the icon stays visible.
 
 } // namespace
 
@@ -110,15 +102,27 @@ void HotbarSlotsModule::unregisterOverlayButtons() {
 
 void HotbarSlotsModule::syncOverlayButtons() {
     unregisterOverlayButtons();
-    if (!m_buttons) return;
 
-    const float scale = std::clamp(m_buttonScale, 0.5f, 2.0f);
+    const ConfigSnapshot config = snapshotConfig();
+    if (!config.buttons) return;
+
+    // With the icons painted on the buttons the launcher must not draw anything
+    // opaque over them: the artwork gets the item window cut out (the launcher's
+    // own HotbarSlotOverlay clears the same region of its bitmap) and the button
+    // label is dropped, since its text would sit right on top of the icon.
+    const bool onButtons = config.placement == IconPlacement::Buttons;
+    const std::string frameSvg = bedrocktools::hotbar::slotButtonSvg(onButtons);
+    const std::string frameActiveSvg = bedrocktools::hotbar::slotButtonActiveSvg(onButtons);
+
+    const float scale = std::clamp(config.buttonScale, 0.5f, 2.0f);
     for (std::size_t i = 0; i < SlotCount; ++i) {
-        if (!m_slotEnabled[i]) continue;
+        if (!config.slots[i]) continue;
         const std::string label = std::to_string(i + 1);
         pl::modmenu::ButtonBuilder builder(buttonId(i), "Hotbar Slot " + label);
         builder.moduleId(moduleId)
-            .label(label)
+            // The slot number is optional; the module paints it itself so it can
+            // be styled and hidden from the HUD editor like the rest of the HUD.
+            .label(onButtons ? std::string{} : label)
             // The launcher delivers this key code to Minecraft, which selects
             // the matching hotbar slot exactly like a hardware keyboard would.
             .androidKeyCode(AndroidKeyCode1 + static_cast<int>(i))
@@ -126,10 +130,12 @@ void HotbarSlotsModule::syncOverlayButtons() {
             .defaultVisible(true)
             .stylePreset(pl::modmenu::ButtonStylePreset::Accent)
             .styleColors(0x00000001, 0x00000001, 0x00000001)
-            .svgIcon(slotButtonSvg, false)
-            .activeSvgIcon(slotButtonActiveSvg)
-            .textColor(0xFF373737u)
-            .activeTextColor(0xFF1F1F1Fu)
+            .svgIcon(frameSvg.c_str(), false)
+            .activeSvgIcon(frameActiveSvg.c_str())
+            // Fully transparent as well, so no launcher text can end up over
+            // the icon even if an empty label falls back to the button name.
+            .textColor(onButtons ? 0x00000000u : 0xFF373737u)
+            .activeTextColor(onButtons ? 0x00000000u : 0xFF1F1F1Fu)
             .sizeScale(scale, scale);
         (void)builder.registerButton();
     }
@@ -242,11 +248,10 @@ void HotbarSlotsModule::renderNative(void* context, void* client) {
             // Paint the icon inside the slot button's inner window, the same
             // way the launcher's own "Use item icons from hotbar" option does.
             if (!buttonRects[i].visible) continue;
-            const float inset =
-                std::clamp((bedrocktools::hotbar::IconWindowEnd - bedrocktools::hotbar::IconWindowStart) *
-                               config.iconScale,
-                           0.05f, 1.0f);
-            rect = bedrocktools::hotbar::buttonIconRect(buttonRects[i], surface, inset);
+            // The inset matches the window the button artwork is cut with, so
+            // the icon lands inside the hole instead of under the frame.
+            rect = bedrocktools::hotbar::buttonIconRect(buttonRects[i], surface,
+                                                        bedrocktools::hotbar::iconInset(config.iconScale));
         } else {
             rect = bedrocktools::hotbar::slotRect(config.layout, i);
         }
@@ -406,7 +411,11 @@ void HotbarSlotsModule::onMenuRegistered() {
     placement.defaultValue = "1";
     placement.options = {
         {"0", "HUD Strip", "A separate row/column placed with the HUD Editor.", {}},
-        {"1", "On Slot Buttons", "Paint the icon inside the on-screen slot button.", {}}
+        {"1",
+         "On Slot Buttons",
+         "Paint the icon inside the on-screen slot button. The button face is cut open where the "
+         "icon goes and the launcher's own number is hidden, so the icon stays visible.",
+         {}}
     };
     schema.node(std::move(placement));
     slider("m_iconScale", "Icon Size On Button", "slots", "icon_placement", "0.2", "1.5", "x");
@@ -459,6 +468,7 @@ void HotbarSlotsModule::loadConfig(const nlohmann::json& j) {
     const auto previousSlots = m_slotEnabled;
     const bool previousButtons = m_buttons;
     const float previousScale = m_buttonScale;
+    const int previousPlacement = m_iconPlacement;
 
     {
         std::lock_guard lock(m_configMutex);
@@ -507,8 +517,11 @@ void HotbarSlotsModule::loadConfig(const nlohmann::json& j) {
 
     // Registering the launcher buttons again is only needed when something the
     // launcher itself renders changed; unrelated edits must not churn the
-    // button registry (and reset the user's button placement).
-    bool overlayChanged = previousButtons != m_buttons || previousScale != m_buttonScale;
+    // button registry (and reset the user's button placement). The icon
+    // placement is part of that: it decides whether the buttons are registered
+    // with the cut-open artwork and without a label.
+    bool overlayChanged = previousButtons != m_buttons || previousScale != m_buttonScale ||
+                          previousPlacement != m_iconPlacement;
     for (std::size_t i = 0; i < SlotCount && !overlayChanged; ++i)
         overlayChanged = previousSlots[i] != m_slotEnabled[i];
     if (overlayChanged) syncOverlayButtons();
