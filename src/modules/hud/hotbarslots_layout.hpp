@@ -102,22 +102,9 @@ struct SurfaceMapping {
 
 // The button artwork is a Minecraft slot frame whose inner (item) window only
 // covers the middle of the bitmap; these are the same proportions the
-// launcher's HotbarSlotOverlay uses (93..419 of a 512 px sprite). The window
-// is also the hole the button artwork is cut with (see hotbarslots_buttons.hpp),
-// so the icon and the transparent area always line up.
+// launcher's HotbarSlotOverlay uses (93..419 of a 512 px sprite).
 inline constexpr float IconWindowStart = 93.0f / 512.0f;
 inline constexpr float IconWindowEnd = 419.0f / 512.0f;
-
-// Inset buttonIconRect() is called with for a given icon size setting: 1.0
-// fills the whole button, IconWindowEnd - IconWindowStart fills exactly the
-// artwork's window. Larger settings grow the icon past the window, where the
-// button frame covers its edges again.
-inline float iconInset(float iconScale) {
-    const float inset = (IconWindowEnd - IconWindowStart) * iconScale;
-    if (inset < 0.05f) return 0.05f;
-    if (inset > 1.0f) return 1.0f;
-    return inset;
-}
 
 // Square, centred icon rectangle for a button, in HUD units. `inset` shrinks
 // the icon towards the middle of the button (1.0 = full button).
