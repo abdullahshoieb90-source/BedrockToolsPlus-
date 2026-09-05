@@ -1,12 +1,10 @@
 #pragma once
 
 #include "../Module.hpp"
-#include "../../launcher/ExternalButtonRefresh.hpp"
 #include "hotbarslots_layout.hpp"
 
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -25,11 +23,6 @@
 //   * the item icons are drawn natively from the HudCameraRenderer hook using
 //     the game's ItemRenderer, like the ArmorHUD module does, so they can be
 //     placed and sized independently in the HUD editor.
-//   * optionally ("Draw Icons On Buttons"), each icon is painted inside its
-//     own on-screen button instead of the strip. The button rectangles are
-//     read from the launcher's overlay manager over JNI and refreshed a few
-//     times per second; any slot whose button is missing, hidden, or has no
-//     size yet automatically falls back to the strip rectangle.
 class HotbarSlotsModule final : public Module {
 public:
     static constexpr std::size_t SlotCount = bedrocktools::hotbar::SlotCount;
@@ -53,11 +46,8 @@ private:
         std::array<bool, SlotCount> slots{};
         bool buttons = true;
         bool itemIcons = true;
-        bool iconsOnButtons = false;
         bool slotNumbers = true;
         bool highlightSelected = true;
-        std::array<bedrocktools::launcher::ButtonGeometry, SlotCount> buttonGeometry{};
-        std::array<bool, SlotCount> buttonGeometryValid{};
         bedrocktools::hotbar::StripLayout layout{};
         float buttonScale = 1.0f;
         float numberTextSize = 12.0f;
@@ -71,7 +61,6 @@ private:
 
     ConfigSnapshot snapshotConfig() const;
     void clearRuntime();
-    void refreshButtonGeometryIfDue();
     void syncOverlayButtons();
     void unregisterOverlayButtons();
     static std::string buttonId(std::size_t index);
@@ -83,10 +72,6 @@ private:
     std::array<bool, SlotCount> m_slotEnabled{};
     bool m_buttons = true;
     bool m_itemIcons = true;
-    bool m_iconsOnButtons = false;
-    std::array<bedrocktools::launcher::ButtonGeometry, SlotCount> m_buttonGeometry{};
-    std::array<bool, SlotCount> m_buttonGeometryValid{};
-    std::chrono::steady_clock::time_point m_geometryRefreshAt{};
     bool m_slotNumbers = true;
     bool m_highlightSelected = true;
     bool m_vertical = false;
