@@ -5,7 +5,6 @@
 
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -69,12 +68,6 @@ private:
     mutable std::mutex m_configMutex;
     std::array<std::atomic_bool, SlotCount> m_hasItem{};
     std::atomic_int m_selectedSlot{-1};
-
-    // Double-tap state for slots 1-9 (0-based index 0..8).
-    std::array<std::chrono::steady_clock::time_point, SlotCount> m_slotLastPress{};
-    std::array<bool, SlotCount> m_slotDoubleTapActive{};
-    int m_previousSlot = -1;
-    static constexpr std::chrono::milliseconds DoubleTapTimeout{300};
 
     std::array<bool, SlotCount> m_slotEnabled{};
     bool m_buttons = true;
