@@ -12,5 +12,9 @@ inline constexpr std::size_t ItemStackValid = 0x23;
 inline constexpr std::size_t ItemGetDescriptionIdVtableIndex = 5;
 inline constexpr std::size_t FillingContainerItems = 0x140;
 inline constexpr std::size_t ItemStackSize = 0x98;
+// ItemStack::mBlock, the const Block* the game caches for items that place a
+// block. It stays null for everything that is not placeable, which is how the
+// Hotbar Slots auto-build feature tells a block apart from a tool or food.
+inline constexpr std::size_t ItemStackBlock = 0x88;
 
 }

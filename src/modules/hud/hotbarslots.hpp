@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Module.hpp"
+#include "hotbarslots_autobuild.hpp"
 #include "hotbarslots_layout.hpp"
 
 #include <array>
@@ -35,11 +36,16 @@ public:
     void onDisable() override;
     void onFrame() override;
     void onMenuRegistered() override;
+    bool onKeyEvent(int key, bool isDown) override;
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j) override;
 
     // Called from the HudCameraRenderer detour.
     void renderNative(void* context, void* client);
+
+    // Called from the LocalPlayerTickEvent subscription: places a block while
+    // an armed slot button is held down.
+    void onLocalPlayerTick(void* player);
 
 private:
     struct ConfigSnapshot {
@@ -57,9 +63,12 @@ private:
         float gridGap = 4.0f;
         float snapThreshold = 12.0f;
         std::uint32_t snapFlags = 0;
+        bedrocktools::hotbar::AutoBuildSettings autoBuild{};
     };
 
     ConfigSnapshot snapshotConfig() const;
+    static bool resolveAutoBuildFunctions();
+    bool placeHeldBlock(void* player, std::size_t slot);
     void clearRuntime();
     void syncOverlayButtons();
     void unregisterOverlayButtons();
@@ -67,6 +76,10 @@ private:
 
     mutable std::mutex m_configMutex;
     std::array<std::atomic_bool, SlotCount> m_hasItem{};
+    // True when the slot holds an item that places a block (auto build only
+    // triggers for those). Written on the render thread, read on the game
+    // thread.
+    std::array<std::atomic_bool, SlotCount> m_hasBlock{};
     std::atomic_int m_selectedSlot{-1};
 
     std::array<bool, SlotCount> m_slotEnabled{};
@@ -75,6 +88,17 @@ private:
     bool m_slotNumbers = true;
     bool m_highlightSelected = true;
     bool m_vertical = false;
+
+    // ---- Auto Build ----------------------------------------------------
+    // Holding an armed slot button keeps placing the block it holds, so the
+    // player never has to reach for the build button. A short tap still just
+    // selects the slot.
+    bool m_autoBuild = false;
+    std::array<bool, SlotCount> m_autoBuildSlots{};
+    float m_autoBuildHoldDelay = 250.0f;
+    float m_autoBuildInterval = 100.0f;
+    bedrocktools::hotbar::AutoBuildState m_autoBuildState{};
+    std::mutex m_autoBuildMutex;
 
     float hudPosX = 24.0f;
     float hudPosY = 520.0f;

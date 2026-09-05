@@ -307,6 +307,24 @@ void* stackItem(void* stack) {
     return read<void*>(counter, offsets::ShulkerPreview::SharedCounterPointer);
 }
 
+void* stackBlock(void* stack) {
+    // Only stacks that actually hold an item can carry a block pointer; the
+    // field of an empty slot is stale memory.
+    if (!stack || !stackItem(stack)) return nullptr;
+    void* block = read<void*>(stack, offsets::Inventory::ItemStackBlock);
+    // Reject obviously bogus pointers (unmapped low addresses / misalignment)
+    // instead of trusting a field that moves between game versions.
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    if (address < 0x1000 || address % alignof(void*) != 0) return nullptr;
+    // A Block always has a vtable; that is the cheapest extra sanity check.
+    if (!getVtable(block)) return nullptr;
+    return block;
+}
+
+bool stackPlacesBlock(void* stack) {
+    return stackBlock(stack) != nullptr;
+}
+
 std::uint8_t stackCount(void* stack) {
     if (!stack) return 0;
     return read<std::uint8_t>(stack, offsets::Inventory::ItemStackCount);
