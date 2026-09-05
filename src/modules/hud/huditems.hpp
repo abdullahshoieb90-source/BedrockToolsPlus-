@@ -69,6 +69,11 @@ EquipmentStacks getEquipmentStacks(void* player);
 // ---- ItemStack inspection ---------------------------------------------------
 
 void* stackItem(void* stack);         // Item*, nullptr for an empty slot
+// const Block* of a stack that places a block (ItemStackBase::mBlock),
+// nullptr for tools, food and everything else that is not placeable. The
+// pointer is sanity-checked before it is handed out.
+void* stackBlock(void* stack);
+bool stackPlacesBlock(void* stack);   // stackBlock(stack) != nullptr
 std::uint8_t stackCount(void* stack); // ItemStackBase::mCount
 int stackDamage(void* stack);         // ItemStackBase::getDamageValue, >= 0
 int itemMaxDamage(void* item);        // Item::getMaxDamage, 0 when unbreakable
