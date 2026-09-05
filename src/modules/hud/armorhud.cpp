@@ -1,12 +1,8 @@
 #include "armorhud.hpp"
 
-#include "core/memory/Hooks.hpp"
+#include "huditems.hpp"
 #include "modules/ModuleRegistry.hpp"
 
-#include <bedrocktools/memory/Signatures.hpp>
-#include <bedrocktools/sdk/Offsets.hpp>
-#include <bedrocktools/sdk/input/MoveInput.hpp>
-#include <pl/memory/Vtable.hpp>
 #include <pl/ModMenuConfig.hpp>
 
 #include <algorithm>
@@ -15,78 +11,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <vector>
-
-struct ActorEquipmentComponent {
-    void* hand;
-    void* armorContainer;
-};
-
-static_assert(sizeof(ActorEquipmentComponent) == 0x10);
 
 namespace {
 
+namespace huditems = bedrocktools::huditems;
+
 constexpr std::size_t SlotCount = 6;
-constexpr std::size_t FillingContainerItemsOffset = bedrocktools::sdk::offsets::Inventory::FillingContainerItems;
-constexpr std::size_t ItemStackSize = bedrocktools::sdk::offsets::Inventory::ItemStackSize;
-constexpr std::size_t MaxContainerSlots = 64;
-constexpr float VanillaItemSize = 16.0f;
-constexpr const char* MinecraftLibrary = "libminecraftpe.so";
-
-struct RectangleArea {
-    float x0;
-    float x1;
-    float y0;
-    float y1;
-};
-
-struct Color {
-    float r;
-    float g;
-    float b;
-    float a;
-};
-
-class HashedString {
-public:
-    std::uint64_t hash;
-    std::string value;
-    mutable const HashedString* lastMatch;
-
-    explicit HashedString(const char* text)
-        : hash(computeHash(text ? std::string_view(text) : std::string_view())),
-          value(text ? text : ""),
-          lastMatch(nullptr) {}
-
-private:
-    static std::uint64_t computeHash(std::string_view text) {
-        if (text.empty()) return 0;
-        constexpr std::uint64_t offset = 0xCBF29CE484222325ULL;
-        constexpr std::uint64_t prime = 0x100000001B3ULL;
-        std::uint64_t result = offset;
-        for (char character : text) {
-            result = static_cast<std::uint64_t>(static_cast<unsigned char>(character)) ^ (prime * result);
-        }
-        return result;
-    }
-};
-
-using HudCameraRendererFn = void (*)(void*, void*, void*, void*, int);
-using BaseActorRenderContextCtorFn = void (*)(void*, void*, void*, void*);
-using ItemStackBaseGetDamageValueFn = int (*)(void*);
-using ItemStackBaseGetRawNameIdFn = std::string (*)(void*);
-using ItemRendererRenderGuiItemNewFn = std::uint64_t (*)(
-    void*, void*, void*, unsigned int, unsigned char, std::uint64_t,
-    float, float, float, float, float);
-
-HudCameraRendererFn hudCameraRendererOriginal = nullptr;
-BaseActorRenderContextCtorFn baseActorRenderContextCtor = nullptr;
-ItemStackBaseGetDamageValueFn itemStackBaseGetDamageValue = nullptr;
-ItemStackBaseGetRawNameIdFn itemStackBaseGetRawNameId = nullptr;
-ItemRendererRenderGuiItemNewFn itemRendererRenderGuiItemNew = nullptr;
-ArmorHudModule* moduleInstance = nullptr;
-bedrocktools::hooks::Handle hudRendererHook = nullptr;
 
 constexpr std::array<const char*, SlotCount> HudElementIds{
     "bedrocktools.armorhud.helmet",
@@ -109,213 +40,32 @@ constexpr std::array<const char*, SlotCount> HudYKeys{
     "hudHelmetPosY", "hudChestplatePosY", "hudLeggingsPosY", "hudBootsPosY", "hudOffhandPosY", "hudMainhandPosY"
 };
 
-void** getVtable(void* object) {
-    return object ? *reinterpret_cast<void***>(object) : nullptr;
-}
-
-void* getLocalPlayer(void* client) {
-    void** vtable = getVtable(client);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetLocalPlayer]) return nullptr;
-    return reinterpret_cast<void* (*)(void*)>(vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetLocalPlayer])(client);
-}
-
-void* getCarriedItem(void* player) {
-    void** vtable = getVtable(player);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::PlayerGetCarriedItem]) return nullptr;
-    return reinterpret_cast<void* (*)(void*)>(vtable[bedrocktools::sdk::offsets::VTable::PlayerGetCarriedItem])(player);
-}
-
-void* getMinecraftGame(void* client) {
-    if (!client) return nullptr;
-    void** vtable = getVtable(client);
-    if (vtable && vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetMinecraftGame]) {
-        void* game = reinterpret_cast<void* (*)(void*)>(vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetMinecraftGame])(client);
-        if (game) return game;
-    }
-    return *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(client) + bedrocktools::sdk::offsets::ShulkerPreview::ClientInstanceMinecraftGame);
-}
-
-void* getStackItem(void* stack) {
-    if (!stack) return nullptr;
-    void* counter = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(stack) + bedrocktools::sdk::offsets::ShulkerPreview::ItemStackBaseItem);
-    if (!counter) return nullptr;
-    return *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(counter) + bedrocktools::sdk::offsets::ShulkerPreview::SharedCounterPointer);
-}
-
-short getMaxDamage(void* item) {
-    void** vtable = getVtable(item);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::ItemGetMaxDamage]) return 0;
-    return reinterpret_cast<short (*)(void*)>(vtable[bedrocktools::sdk::offsets::VTable::ItemGetMaxDamage])(item);
-}
-
-unsigned int getItemAnimationFrame(void* item, void* localPlayer, void* stack) {
-    if (!item || !localPlayer || !stack) return 0;
-    void** vtable = getVtable(item);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::ItemGetAnimationFrameFor]) return 0;
-    using Fn = unsigned int (*)(void*, void*, int, void*, int);
-    return reinterpret_cast<Fn>(vtable[bedrocktools::sdk::offsets::VTable::ItemGetAnimationFrameFor])(item, localPlayer, 0, stack, 1);
-}
-
-RectangleArea getFullClippingRectangle(void* context) {
-    RectangleArea result{};
-    void** vtable = getVtable(context);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextGetFullClippingRectangle]) return result;
-    using Fn = RectangleArea (*)(void*);
-    return reinterpret_cast<Fn>(vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextGetFullClippingRectangle])(context);
-}
-
-void flushImages(void* context) {
-    void** vtable = getVtable(context);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextFlushImages]) return;
-    using Fn = void (*)(void*, const Color&, float, const HashedString&);
-    static const HashedString material("ui_flush");
-    static constexpr Color color{1.0f, 1.0f, 1.0f, 1.0f};
-    reinterpret_cast<Fn>(vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextFlushImages])(context, color, 1.0f, material);
-}
-
-void setHudOpacity(void* context, float opacity) {
-    if (!context) return;
-    void* screenContext = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(context) + bedrocktools::sdk::offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext);
-    if (!screenContext) return;
-    auto* constantBuffers = *reinterpret_cast<std::byte**>(reinterpret_cast<std::byte*>(screenContext) + 0x20);
-    if (!constantBuffers) return;
-    auto* shaderConstantBuffer = *reinterpret_cast<std::byte**>(constantBuffers + 0x150);
-    if (!shaderConstantBuffer) return;
-    auto* opacityPtr = *reinterpret_cast<float**>(shaderConstantBuffer + 0x30);
-    if (!opacityPtr) return;
-    if (*opacityPtr != opacity) {
-        *opacityPtr = opacity;
-        *reinterpret_cast<std::uint8_t*>(shaderConstantBuffer + 0x29) = 1;
-    }
-}
-
-bool needsTextureOpacityPass(void* stack) {
-    if (!stack || !itemStackBaseGetRawNameId) return false;
-    const std::string name = itemStackBaseGetRawNameId(stack);
-    return name == "leather_helmet" ||
-           name == "leather_chestplate" ||
-           name == "leather_leggings" ||
-           name == "leather_boots" ||
-           name == "firework_star" ||
-           name == "leather_horse_armor";
-}
-
-bool validRectangle(const RectangleArea& area) {
-    return std::isfinite(area.x0) && std::isfinite(area.x1) && std::isfinite(area.y0) && std::isfinite(area.y1) &&
-           area.x1 > area.x0 && area.y1 > area.y0;
-}
-
-void destroyBaseActorRenderContext(void* context) {
-    void** vtable = getVtable(context);
-    if (vtable && vtable[0]) reinterpret_cast<void (*)(void*)>(vtable[0])(context);
-}
-
-std::size_t containerSize(void* container) {
-    if (!container) return 0;
-    auto* bytes = reinterpret_cast<std::byte*>(container);
-    const auto begin = *reinterpret_cast<std::uintptr_t*>(bytes + FillingContainerItemsOffset);
-    const auto end = *reinterpret_cast<std::uintptr_t*>(bytes + FillingContainerItemsOffset + sizeof(void*));
-    if (!begin || end < begin) return 0;
-    const auto span = end - begin;
-    if (span % ItemStackSize != 0) return 0;
-    const auto count = span / ItemStackSize;
-    return count <= MaxContainerSlots ? count : 0;
-}
-
-void* containerStack(void* container, std::size_t slot) {
-    if (!container) return nullptr;
-    auto* bytes = reinterpret_cast<std::byte*>(container);
-    const auto begin = *reinterpret_cast<std::uintptr_t*>(bytes + FillingContainerItemsOffset);
-    const auto end = *reinterpret_cast<std::uintptr_t*>(bytes + FillingContainerItemsOffset + sizeof(void*));
-    if (!begin || end < begin) return nullptr;
-    const auto span = end - begin;
-    if (span % ItemStackSize != 0) return nullptr;
-    const auto count = span / ItemStackSize;
-    if (slot >= count || count > MaxContainerSlots) return nullptr;
-    return reinterpret_cast<void*>(begin + slot * ItemStackSize);
-}
-
-int getStackDamage(void* stack) {
-    if (!stack || !itemStackBaseGetDamageValue) return 0;
-    return std::max(0, itemStackBaseGetDamageValue(stack));
-}
-
-ActorEquipmentComponent* getEquipment(void* player) {
-    if (!player) return nullptr;
-    auto* context = reinterpret_cast<EntityContext*>(
-        reinterpret_cast<std::uintptr_t>(player) + bedrocktools::sdk::offsets::Actor::mEntityContext);
-    return context->tryGetComponent<ActorEquipmentComponent>();
-}
-
 std::array<void*, SlotCount> getHudStacks(void* player) {
-    std::array<void*, SlotCount> stacks{};
-    ActorEquipmentComponent* equipment = getEquipment(player);
-    if (!equipment) return stacks;
-    void* armor = equipment->armorContainer;
-    void* hand = equipment->hand;
-    if (containerSize(armor) >= 4) {
-        stacks[0] = containerStack(armor, 0);
-        stacks[1] = containerStack(armor, 1);
-        stacks[2] = containerStack(armor, 2);
-        stacks[3] = containerStack(armor, 3);
-    }
-    if (containerSize(hand) >= 2) stacks[4] = containerStack(hand, 1);
-    stacks[5] = getCarriedItem(player);
-    return stacks;
+    const huditems::EquipmentStacks equipment = huditems::getEquipmentStacks(player);
+    return {
+        equipment.armor[0], equipment.armor[1], equipment.armor[2], equipment.armor[3],
+        equipment.offhand, equipment.mainhand
+    };
 }
 
-std::uint32_t parseColor(const std::string& value) {
-    if (value.empty()) return 0xFFFFFFFFu;
-    const std::string hex = value[0] == '#' ? value.substr(1) : value;
-    try {
-        if (hex.size() == 6) return 0xFF000000u | static_cast<std::uint32_t>(std::stoul(hex, nullptr, 16));
-        if (hex.size() == 8) return static_cast<std::uint32_t>(std::stoul(hex, nullptr, 16));
-    } catch (...) {
-    }
-    return 0xFFFFFFFFu;
-}
-
-void hudCameraRendererDetour(void* self, void* context, void* client, void* value, int pass) {
-    if (hudCameraRendererOriginal) hudCameraRendererOriginal(self, context, client, value, pass);
-    if (moduleInstance && moduleInstance->enabled) moduleInstance->renderNative(context, client);
+void renderListener(void* context, void* client, void* user) {
+    auto* module = static_cast<ArmorHudModule*>(user);
+    if (module && module->enabled) module->renderNative(context, client);
 }
 
 }
 
 ArmorHudModule::ArmorHudModule()
     : Module("ArmorHUD", "Displays armor, offhand, and main-hand items with configurable durability information.") {
-    moduleInstance = this;
 }
 
 ArmorHudModule::~ArmorHudModule() {
-    if (hudRendererHook) {
-        bedrocktools::hooks::remove(hudRendererHook);
-        hudRendererHook = nullptr;
-        hudCameraRendererOriginal = nullptr;
-    }
-    if (moduleInstance == this) moduleInstance = nullptr;
+    huditems::removeRenderListener(renderListener, this);
 }
 
 void ArmorHudModule::onInit() {
-    baseActorRenderContextCtor = reinterpret_cast<BaseActorRenderContextCtorFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::BaseActorRenderContextCtor));
-    itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
-    itemStackBaseGetRawNameId = reinterpret_cast<ItemStackBaseGetRawNameIdFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetRawNameId));
-    itemRendererRenderGuiItemNew = reinterpret_cast<ItemRendererRenderGuiItemNewFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemRendererRenderGuiItemNew));
-
-    const std::uintptr_t hudRenderer = pl::memory::resolveVtableFunction(
-        "17HudCameraRenderer",
-        bedrocktools::sdk::offsets::VTable::HudCameraRendererRender,
-        MinecraftLibrary);
-    if (hudRenderer && !hudRendererHook) {
-        hudRendererHook = bedrocktools::hooks::install(
-            reinterpret_cast<void*>(hudRenderer),
-            reinterpret_cast<void*>(hudCameraRendererDetour),
-            reinterpret_cast<void**>(&hudCameraRendererOriginal));
-    }
+    huditems::initialize();
+    huditems::addRenderListener(renderListener, this);
 }
 
 void ArmorHudModule::onMenuRegistered() {
@@ -465,7 +215,7 @@ ArmorHudModule::ConfigSnapshot ArmorHudModule::snapshotConfig() const {
         m_durabilityTextSize,
         m_durabilityTextPosition,
         m_durabilityTextGap,
-        parseColor(m_textColor),
+        huditems::parseColor(m_textColor),
         m_gridSize,
         m_gridGap,
         m_snapThreshold,
@@ -508,12 +258,8 @@ void ArmorHudModule::submitEditorElements(const ConfigSnapshot& config) {
 }
 
 void ArmorHudModule::renderNative(void* context, void* client) {
-    if (!context || !client || !baseActorRenderContextCtor || !itemRendererRenderGuiItemNew) {
-        clearRuntime();
-        return;
-    }
-
-    void* localPlayer = getLocalPlayer(client);
+    huditems::IconPainter painter(context, client);
+    void* localPlayer = painter.player();
     if (!localPlayer) {
         clearRuntime();
         return;
@@ -521,102 +267,38 @@ void ArmorHudModule::renderNative(void* context, void* client) {
 
     const ConfigSnapshot config = snapshotConfig();
     const auto stacks = getHudStacks(localPlayer);
-    const pl::modmenu::HudSurfaceSize surface = pl::modmenu::getHudSurfaceSize();
-    const RectangleArea full = getFullClippingRectangle(context);
-    const bool canRender = surface.width > 0.0f && surface.height > 0.0f && validRectangle(full);
 
-    alignas(16) std::byte baseActorRenderContext[bedrocktools::sdk::offsets::ShulkerPreview::BaseActorRenderContextStorageSize]{};
-    void* itemRenderer = nullptr;
-    if (canRender) {
-        void* screenContext = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(context) + bedrocktools::sdk::offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext);
-        void* game = getMinecraftGame(client);
-        if (screenContext && game) {
-            baseActorRenderContextCtor(baseActorRenderContext, screenContext, client, game);
-            itemRenderer = *reinterpret_cast<void**>(baseActorRenderContext + bedrocktools::sdk::offsets::ShulkerPreview::BaseActorRenderContextItemRenderer);
-        }
-    }
-
-    const float uiWidth = full.x1 - full.x0;
-    const float uiHeight = full.y1 - full.y0;
-    bool renderedAny = false;
-
-    if (itemRenderer && canRender && itemStackBaseGetRawNameId) {
-        bool renderedTexturePass = false;
-        setHudOpacity(context, 90.0f);
+    // Dyed leather needs the opacity fix pass before the regular icons.
+    if (painter.supportsOpacityFix()) {
+        painter.beginOpacityFixPass();
         for (std::size_t i = 0; i < SlotCount; ++i) {
             const SlotConfig& slot = config.slots[i];
             void* stack = stacks[i];
-            void* item = getStackItem(stack);
-            if (!slot.enabled || !item || slot.size <= 0.0f || !needsTextureOpacityPass(stack)) continue;
-
-            const float x = full.x0 + slot.x * uiWidth / surface.width;
-            const float y = full.y0 + slot.y * uiHeight / surface.height;
-            const float width = slot.size * uiWidth / surface.width;
-            const float height = slot.size * uiHeight / surface.height;
-            const float iconSize = std::max(1.0f, std::min(width, height));
-            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(iconSize)) continue;
-
-            const unsigned int animationFrame = getItemAnimationFrame(item, localPlayer, stack);
-            itemRendererRenderGuiItemNew(
-                itemRenderer,
-                baseActorRenderContext,
-                stack,
-                animationFrame,
-                0,
-                0,
-                x,
-                y,
-                1.0f,
-                20.0f,
-                iconSize / VanillaItemSize);
-            renderedTexturePass = true;
+            void* item = huditems::stackItem(stack);
+            if (!slot.enabled || !item || slot.size <= 0.0f || !huditems::needsTextureOpacityPass(stack)) continue;
+            painter.drawOpacityFix(stack, item, slot.x, slot.y, slot.size);
         }
-        if (renderedTexturePass) flushImages(context);
-        setHudOpacity(context, 1.0f);
+        painter.endOpacityFixPass();
     }
 
     for (std::size_t i = 0; i < SlotCount; ++i) {
         void* stack = stacks[i];
-        void* item = getStackItem(stack);
+        void* item = huditems::stackItem(stack);
         const bool hasItem = item != nullptr;
         int damage = 0;
         int maxDamage = 0;
         if (hasItem) {
-            damage = std::max(0, getStackDamage(stack));
-            maxDamage = std::max(0, static_cast<int>(getMaxDamage(item)));
+            damage = huditems::stackDamage(stack);
+            maxDamage = huditems::itemMaxDamage(item);
         }
         m_runtime[i].hasItem.store(hasItem, std::memory_order_release);
         m_runtime[i].damage.store(damage, std::memory_order_release);
         m_runtime[i].maxDamage.store(maxDamage, std::memory_order_release);
 
         const SlotConfig& slot = config.slots[i];
-        if (!slot.enabled || !hasItem || !itemRenderer || !canRender || slot.size <= 0.0f) continue;
-
-        const float x = full.x0 + slot.x * uiWidth / surface.width;
-        const float y = full.y0 + slot.y * uiHeight / surface.height;
-        const float width = slot.size * uiWidth / surface.width;
-        const float height = slot.size * uiHeight / surface.height;
-        const float iconSize = std::max(1.0f, std::min(width, height));
-        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(iconSize)) continue;
-
-        const unsigned int animationFrame = getItemAnimationFrame(item, localPlayer, stack);
-        itemRendererRenderGuiItemNew(
-            itemRenderer,
-            baseActorRenderContext,
-            stack,
-            animationFrame,
-            0,
-            0,
-            x,
-            y,
-            1.0f,
-            1.0f,
-            iconSize / VanillaItemSize);
-        renderedAny = true;
+        if (!slot.enabled || !hasItem || slot.size <= 0.0f) continue;
+        painter.draw(stack, item, slot.x, slot.y, slot.size);
     }
-
-    if (itemRenderer) destroyBaseActorRenderContext(baseActorRenderContext);
-    if (renderedAny) flushImages(context);
 }
 
 void ArmorHudModule::onFrame() {

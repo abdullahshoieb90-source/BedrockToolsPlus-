@@ -1,13 +1,10 @@
 #include "hotbarslots.hpp"
 
-#include "core/memory/Hooks.hpp"
+#include "huditems.hpp"
 #include "modules/ModuleRegistry.hpp"
 
-#include <bedrocktools/memory/Signatures.hpp>
-#include <bedrocktools/sdk/Offsets.hpp>
 #include <pl/ModMenu.hpp>
 #include <pl/ModMenuConfig.hpp>
-#include <pl/memory/Vtable.hpp>
 
 #include <algorithm>
 #include <array>
@@ -19,181 +16,23 @@
 
 namespace {
 
+namespace huditems = bedrocktools::huditems;
 using bedrocktools::hotbar::SlotRect;
 using bedrocktools::hotbar::StripLayout;
 
 constexpr std::size_t SlotCount = HotbarSlotsModule::SlotCount;
-constexpr std::size_t FillingContainerItemsOffset = bedrocktools::sdk::offsets::Inventory::FillingContainerItems;
-constexpr std::size_t ItemStackSize = bedrocktools::sdk::offsets::Inventory::ItemStackSize;
-constexpr std::size_t MaxContainerSlots = 64;
-constexpr float VanillaItemSize = 16.0f;
-constexpr const char* MinecraftLibrary = "libminecraftpe.so";
 
 // android.view.KeyEvent.KEYCODE_1. The launcher forwards the key code of an
 // overlay button straight to the game, which maps 1-9 to the hotbar slots.
 constexpr int AndroidKeyCode1 = 8;
 
-struct RectangleArea {
-    float x0;
-    float x1;
-    float y0;
-    float y1;
-};
-
-struct Color {
-    float r;
-    float g;
-    float b;
-    float a;
-};
-
-class HashedString {
-public:
-    std::uint64_t hash;
-    std::string value;
-    mutable const HashedString* lastMatch;
-
-    explicit HashedString(const char* text)
-        : hash(computeHash(text ? std::string_view(text) : std::string_view())),
-          value(text ? text : ""),
-          lastMatch(nullptr) {}
-
-private:
-    static std::uint64_t computeHash(std::string_view text) {
-        if (text.empty()) return 0;
-        constexpr std::uint64_t offset = 0xCBF29CE484222325ULL;
-        constexpr std::uint64_t prime = 0x100000001B3ULL;
-        std::uint64_t result = offset;
-        for (char character : text) {
-            result = static_cast<std::uint64_t>(static_cast<unsigned char>(character)) ^ (prime * result);
-        }
-        return result;
-    }
-};
-
-using HudCameraRendererFn = void (*)(void*, void*, void*, void*, int);
-using BaseActorRenderContextCtorFn = void (*)(void*, void*, void*, void*);
-using ItemRendererRenderGuiItemNewFn = std::uint64_t (*)(
-    void*, void*, void*, unsigned int, unsigned char, std::uint64_t,
-    float, float, float, float, float);
-
-HudCameraRendererFn hudCameraRendererOriginal = nullptr;
-BaseActorRenderContextCtorFn baseActorRenderContextCtor = nullptr;
-ItemRendererRenderGuiItemNewFn itemRendererRenderGuiItemNew = nullptr;
-HotbarSlotsModule* moduleInstance = nullptr;
-bedrocktools::hooks::Handle hudRendererHook = nullptr;
-
 constexpr const char* HudElementId = "bedrocktools.hotbarslots.strip";
 
-void** getVtable(void* object) {
-    return object ? *reinterpret_cast<void***>(object) : nullptr;
-}
-
-void* getLocalPlayer(void* client) {
-    void** vtable = getVtable(client);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetLocalPlayer]) return nullptr;
-    return reinterpret_cast<void* (*)(void*)>(
-        vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetLocalPlayer])(client);
-}
-
-void* getCarriedItem(void* player) {
-    void** vtable = getVtable(player);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::PlayerGetCarriedItem]) return nullptr;
-    return reinterpret_cast<void* (*)(void*)>(
-        vtable[bedrocktools::sdk::offsets::VTable::PlayerGetCarriedItem])(player);
-}
-
-void* getMinecraftGame(void* client) {
-    if (!client) return nullptr;
-    void** vtable = getVtable(client);
-    if (vtable && vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetMinecraftGame]) {
-        void* game = reinterpret_cast<void* (*)(void*)>(
-            vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetMinecraftGame])(client);
-        if (game) return game;
-    }
-    return *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(client) +
-        bedrocktools::sdk::offsets::ShulkerPreview::ClientInstanceMinecraftGame);
-}
-
-void* getStackItem(void* stack) {
-    if (!stack) return nullptr;
-    void* counter = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(stack) +
-        bedrocktools::sdk::offsets::ShulkerPreview::ItemStackBaseItem);
-    if (!counter) return nullptr;
-    return *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(counter) +
-        bedrocktools::sdk::offsets::ShulkerPreview::SharedCounterPointer);
-}
-
-unsigned int getItemAnimationFrame(void* item, void* localPlayer, void* stack) {
-    if (!item || !localPlayer || !stack) return 0;
-    void** vtable = getVtable(item);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::ItemGetAnimationFrameFor]) return 0;
-    using Fn = unsigned int (*)(void*, void*, int, void*, int);
-    return reinterpret_cast<Fn>(
-        vtable[bedrocktools::sdk::offsets::VTable::ItemGetAnimationFrameFor])(item, localPlayer, 0, stack, 1);
-}
-
-RectangleArea getFullClippingRectangle(void* context) {
-    RectangleArea result{};
-    void** vtable = getVtable(context);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextGetFullClippingRectangle])
-        return result;
-    using Fn = RectangleArea (*)(void*);
-    return reinterpret_cast<Fn>(
-        vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextGetFullClippingRectangle])(context);
-}
-
-void flushImages(void* context) {
-    void** vtable = getVtable(context);
-    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextFlushImages]) return;
-    using Fn = void (*)(void*, const Color&, float, const HashedString&);
-    static const HashedString material("ui_flush");
-    static constexpr Color color{1.0f, 1.0f, 1.0f, 1.0f};
-    reinterpret_cast<Fn>(
-        vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextFlushImages])(context, color, 1.0f, material);
-}
-
-bool validRectangle(const RectangleArea& area) {
-    return std::isfinite(area.x0) && std::isfinite(area.x1) &&
-           std::isfinite(area.y0) && std::isfinite(area.y1) &&
-           area.x1 > area.x0 && area.y1 > area.y0;
-}
-
-void destroyBaseActorRenderContext(void* context) {
-    void** vtable = getVtable(context);
-    if (vtable && vtable[0]) reinterpret_cast<void (*)(void*)>(vtable[0])(context);
-}
-
 // The first nine slots of the player inventory are the hotbar.
-std::uintptr_t inventoryItems(void* player, std::size_t& count) {
-    count = 0;
-    if (!player) return 0;
-    auto* proxy = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(player) +
-        bedrocktools::sdk::offsets::Inventory::PlayerInventory);
-    if (!proxy) return 0;
-    auto* container = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(proxy) +
-        bedrocktools::sdk::offsets::Inventory::PlayerInventoryContainer);
-    if (!container) return 0;
-    auto* bytes = reinterpret_cast<std::byte*>(container);
-    const auto begin = *reinterpret_cast<std::uintptr_t*>(bytes + FillingContainerItemsOffset);
-    const auto end = *reinterpret_cast<std::uintptr_t*>(bytes + FillingContainerItemsOffset + sizeof(void*));
-    if (!begin || end < begin) return 0;
-    const auto span = end - begin;
-    if (span % ItemStackSize != 0) return 0;
-    const auto slots = span / ItemStackSize;
-    if (slots > MaxContainerSlots) return 0;
-    count = static_cast<std::size_t>(slots);
-    return begin;
-}
-
 std::array<void*, SlotCount> getHotbarStacks(void* player) {
     std::array<void*, SlotCount> stacks{};
-    std::size_t count = 0;
-    const std::uintptr_t begin = inventoryItems(player, count);
-    if (!begin) return stacks;
-    for (std::size_t i = 0; i < SlotCount && i < count; ++i) {
-        stacks[i] = reinterpret_cast<void*>(begin + i * ItemStackSize);
-    }
+    const huditems::ContainerSlots inventory = huditems::playerInventory(player);
+    for (std::size_t i = 0; i < SlotCount; ++i) stacks[i] = inventory.stack(i);
     return stacks;
 }
 
@@ -201,7 +40,7 @@ std::array<void*, SlotCount> getHotbarStacks(void* player) {
 // against the hotbar stacks. That avoids depending on an Inventory field
 // offset that changes between Minecraft versions.
 int selectedSlotFor(void* player, const std::array<void*, SlotCount>& stacks) {
-    void* carried = getCarriedItem(player);
+    void* carried = huditems::getCarriedItem(player);
     if (!carried) return -1;
     for (std::size_t i = 0; i < SlotCount; ++i) {
         if (stacks[i] && stacks[i] == carried) return static_cast<int>(i);
@@ -209,25 +48,9 @@ int selectedSlotFor(void* player, const std::array<void*, SlotCount>& stacks) {
     return -1;
 }
 
-std::uint32_t parseColor(const std::string& value, std::uint32_t fallback) {
-    if (value.empty()) return fallback;
-    const std::string hex = value[0] == '#' ? value.substr(1) : value;
-    try {
-        if (hex.size() == 6) return 0xFF000000u | static_cast<std::uint32_t>(std::stoul(hex, nullptr, 16));
-        if (hex.size() == 8) return static_cast<std::uint32_t>(std::stoul(hex, nullptr, 16));
-    } catch (...) {
-    }
-    return fallback;
-}
-
-std::uint32_t withOpacity(std::uint32_t color, float opacity) {
-    const auto alpha = static_cast<std::uint32_t>(std::clamp(opacity, 0.0f, 1.0f) * 255.0f);
-    return (alpha << 24) | (color & 0x00FFFFFFu);
-}
-
-void hudCameraRendererDetour(void* self, void* context, void* client, void* value, int pass) {
-    if (hudCameraRendererOriginal) hudCameraRendererOriginal(self, context, client, value, pass);
-    if (moduleInstance && moduleInstance->enabled) moduleInstance->renderNative(context, client);
+void renderListener(void* context, void* client, void* user) {
+    auto* module = static_cast<HotbarSlotsModule*>(user);
+    if (module && module->enabled) module->renderNative(context, client);
 }
 
 // Minecraft-style slot frame, matching the look of the launcher's hotbar
@@ -249,18 +72,12 @@ constexpr const char* slotButtonActiveSvg = R"svg(<svg viewBox="0 0 64 64" xmlns
 HotbarSlotsModule::HotbarSlotsModule()
     : Module("Hotbar Slots",
              "Adds separate 1-9 buttons for selecting hotbar slots, with optional item icons on the HUD.") {
-    moduleInstance = this;
     m_slotEnabled.fill(true);
 }
 
 HotbarSlotsModule::~HotbarSlotsModule() {
     unregisterOverlayButtons();
-    if (hudRendererHook) {
-        bedrocktools::hooks::remove(hudRendererHook);
-        hudRendererHook = nullptr;
-        hudCameraRendererOriginal = nullptr;
-    }
-    if (moduleInstance == this) moduleInstance = nullptr;
+    huditems::removeRenderListener(renderListener, this);
 }
 
 std::string HotbarSlotsModule::buttonId(std::size_t index) {
@@ -268,22 +85,8 @@ std::string HotbarSlotsModule::buttonId(std::size_t index) {
 }
 
 void HotbarSlotsModule::onInit() {
-    baseActorRenderContextCtor = reinterpret_cast<BaseActorRenderContextCtorFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::BaseActorRenderContextCtor));
-    itemRendererRenderGuiItemNew = reinterpret_cast<ItemRendererRenderGuiItemNewFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemRendererRenderGuiItemNew));
-
-    const std::uintptr_t hudRenderer = pl::memory::resolveVtableFunction(
-        "17HudCameraRenderer",
-        bedrocktools::sdk::offsets::VTable::HudCameraRendererRender,
-        MinecraftLibrary);
-    if (hudRenderer && !hudRendererHook) {
-        hudRendererHook = bedrocktools::hooks::install(
-            reinterpret_cast<void*>(hudRenderer),
-            reinterpret_cast<void*>(hudCameraRendererDetour),
-            reinterpret_cast<void**>(&hudCameraRendererOriginal));
-    }
-
+    huditems::initialize();
+    huditems::addRenderListener(renderListener, this);
     syncOverlayButtons();
 }
 
@@ -344,8 +147,8 @@ HotbarSlotsModule::ConfigSnapshot HotbarSlotsModule::snapshotConfig() const {
     config.layout.vertical = m_vertical;
     config.buttonScale = m_buttonScale;
     config.numberTextSize = m_numberTextSize;
-    config.numberColor = parseColor(m_numberColor, 0xFFFFFFFFu);
-    config.highlightColor = withOpacity(parseColor(m_highlightColor, 0xFFFFFFFFu), m_highlightOpacity);
+    config.numberColor = huditems::parseColor(m_numberColor, 0xFFFFFFFFu);
+    config.highlightColor = huditems::withOpacity(huditems::parseColor(m_highlightColor, 0xFFFFFFFFu), m_highlightOpacity);
     config.gridSize = m_gridSize;
     config.gridGap = m_gridGap;
     config.snapThreshold = m_snapThreshold;
@@ -362,78 +165,29 @@ void HotbarSlotsModule::clearRuntime() {
 }
 
 void HotbarSlotsModule::renderNative(void* context, void* client) {
-    if (!context || !client || !baseActorRenderContextCtor || !itemRendererRenderGuiItemNew) {
-        clearRuntime();
-        return;
-    }
+    const ConfigSnapshot config = snapshotConfig();
 
-    void* localPlayer = getLocalPlayer(client);
+    huditems::IconPainter painter(context, client, config.itemIcons);
+    void* localPlayer = painter.player();
     if (!localPlayer) {
         clearRuntime();
         return;
     }
 
-    const ConfigSnapshot config = snapshotConfig();
     const auto stacks = getHotbarStacks(localPlayer);
     m_selectedSlot.store(selectedSlotFor(localPlayer, stacks), std::memory_order_release);
 
-    const pl::modmenu::HudSurfaceSize surface = pl::modmenu::getHudSurfaceSize();
-    const RectangleArea full = getFullClippingRectangle(context);
-    const bool canRender = config.itemIcons && surface.width > 0.0f && surface.height > 0.0f && validRectangle(full);
-
-    alignas(16) std::byte baseActorRenderContext[
-        bedrocktools::sdk::offsets::ShulkerPreview::BaseActorRenderContextStorageSize]{};
-    void* itemRenderer = nullptr;
-    if (canRender) {
-        void* screenContext = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(context) +
-            bedrocktools::sdk::offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext);
-        void* game = getMinecraftGame(client);
-        if (screenContext && game) {
-            baseActorRenderContextCtor(baseActorRenderContext, screenContext, client, game);
-            itemRenderer = *reinterpret_cast<void**>(baseActorRenderContext +
-                bedrocktools::sdk::offsets::ShulkerPreview::BaseActorRenderContextItemRenderer);
-        }
-    }
-
-    const float uiWidth = full.x1 - full.x0;
-    const float uiHeight = full.y1 - full.y0;
-    bool renderedAny = false;
-
     for (std::size_t i = 0; i < SlotCount; ++i) {
         void* stack = stacks[i];
-        void* item = getStackItem(stack);
+        void* item = huditems::stackItem(stack);
         m_hasItem[i].store(item != nullptr, std::memory_order_release);
 
-        if (!config.slots[i] || !item || !itemRenderer || !canRender) continue;
+        if (!config.slots[i] || !item || !painter.ready()) continue;
 
         const SlotRect rect = bedrocktools::hotbar::slotRect(config.layout, i);
         if (rect.size <= 0.0f) continue;
-
-        const float x = full.x0 + rect.x * uiWidth / surface.width;
-        const float y = full.y0 + rect.y * uiHeight / surface.height;
-        const float width = rect.size * uiWidth / surface.width;
-        const float height = rect.size * uiHeight / surface.height;
-        const float iconSize = std::max(1.0f, std::min(width, height));
-        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(iconSize)) continue;
-
-        const unsigned int animationFrame = getItemAnimationFrame(item, localPlayer, stack);
-        itemRendererRenderGuiItemNew(
-            itemRenderer,
-            baseActorRenderContext,
-            stack,
-            animationFrame,
-            0,
-            0,
-            x,
-            y,
-            1.0f,
-            1.0f,
-            iconSize / VanillaItemSize);
-        renderedAny = true;
+        painter.draw(stack, item, rect.x, rect.y, rect.size);
     }
-
-    if (itemRenderer) destroyBaseActorRenderContext(baseActorRenderContext);
-    if (renderedAny) flushImages(context);
 }
 
 void HotbarSlotsModule::onFrame() {
