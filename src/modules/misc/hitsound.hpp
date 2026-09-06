@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Module.hpp"
+#include "hitsound_projectile.hpp"
 #include <bedrocktools/sdk/world/Actor.hpp>
 #include <chrono>
 #include <string>
@@ -8,14 +9,23 @@
 
 // Hit Sound
 //
-// Lets the player pick a custom sound that plays only when a melee attack
-// actually deals damage to a mob or another player — swings that whiff, hit
-// during the attack cooldown, get blocked or are rejected by the server stay
-// silent. The attack hook fires before the damage is applied (and a few ticks
-// before the server confirms it in multiplayer), so the module records each
-// swing as a pending hit and watches the victim's hurt-time field on the
-// player ticks afterwards: it plays only once the field rises, proving the
-// target took the hit.
+// Lets the player pick a custom sound that plays only when a mob or another
+// player actually takes damage from the local player's attack — swings that
+// whiff, hit during the attack cooldown, get blocked or are rejected by the
+// server stay silent, and so do hits that are not ours. The attack hook fires
+// before the damage is applied (and a few ticks before the server confirms it
+// in multiplayer), so the module records each swing as a pending hit and
+// watches the victim's hurt-time field on the player ticks afterwards: it
+// plays only once the field rises, proving the target took the hit.
+//
+// Bows (and crossbows, tridents, snowballs, eggs) never pass through the
+// attack hook — the damage is dealt by the projectile actor when it lands —
+// so a second lane recognises those hits from the world state: projectiles
+// that appear next to the player while a projectile weapon is held are tracked
+// as ours (see hitsound_projectile.hpp), nearby mobs/players are baselined,
+// and the sound plays when a victim's hurt-time jumps while our projectile is
+// at their position. Both lanes share the same sound, volume and playback
+// engine.
 //
 // The module owns a "hitsounds" directory next to config.json
 // (`<configDir>/hitsounds`, created on first launch together with a generated
@@ -61,6 +71,17 @@ public:
     // victims' current hurt-time.
     void onTickCheck();
 
+    // Called on every local-player tick after onTickCheck(): samples the
+    // actors around the player and feeds them to the projectile tracker, so
+    // bow/crossbow/trident hits (which never raise the attack event) play the
+    // sound too. `player` may be null between worlds, which resets tracking.
+    void onTickProjectiles(bedrocktools::sdk::Player* player);
+
+    // Plays the selected sound through the shared audio engine, collapsed by
+    // a short minimum interval so the melee and projectile lanes confirming
+    // on the same tick (or a multishot volley) cannot double-fire it.
+    void playHitSound();
+
     // Directory the module watches; exposed for the menu description.
     const std::string& soundsDirectory() const { return m_dir; }
 
@@ -85,6 +106,14 @@ private:
     std::string m_currentPath;        // absolute path of the selected file, empty when None
 
     float m_volume = 0.8f;            // 0..1, clamped
+
+    // Projectile lane state (see hitsound_projectile.hpp). Only touched on
+    // the game thread (LocalPlayerTickEvent), like m_pendingHits.
+    hitsound::ProjectileHitTracker m_projectileTracker;
+
+    // Time of the last confirmed hit sound of either lane; playHitSound()
+    // collapses duplicate confirmations inside the minimum interval.
+    std::chrono::steady_clock::time_point m_lastPlayedSound{};
 
     // Swings awaiting damage confirmation; only touched on the game thread
     // (attack hook + LocalPlayerTickEvent), so no extra synchronisation is
