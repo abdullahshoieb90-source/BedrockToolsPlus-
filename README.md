@@ -23,7 +23,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ, AutoSprint, Quick Loot, Custom Capes
 
-**Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, Hit Sound, ForceGlobalRP, CommentKey, Command Hotkey, Hive Utils, Mouse Tweaks
+**Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, Hit Sound, ForceGlobalRP, CommentKey, Command Hotkey, Hive Utils
 
 ## Inventory HUD
 
@@ -76,24 +76,6 @@ The **Hit Sound** module plays a custom sound of your choice every time you land
 3. Pick a file in the module's **Sound** selector — every audio file in the folder shows up there. Choose `None` to keep the vanilla behavior. The **Volume** slider sets how loud the sound plays.
 
 The sound is a purely client-side overlay: the victim's own hurt sound is not cancelled or replaced, and nothing is sent to the server. Files whose names contain a comma are ignored (the menu picker cannot represent them), and sounds that fail to decode on your device are simply skipped.
-
-## Mouse Tweaks
-
-Adds Java-style inventory handling to Bedrock container screens using the game's
-own container interaction functions — it never writes to the inventory memory.
-
-- **RMB Drag** spreads items onto slots of the same type as you drag across them.
-- **LMB Drag** picks up / places an item once per slot it passes over.
-- **Quick Move** (Shift by default) moves a stack between the inventory and the
-  container through the native auto-place function.
-- **Scroll** (Page Up / Page Down by default) moves a stack from the hovered slot;
-  because Bedrock's input layer exposes no raw wheel event, Scroll is bound to a
-  keybind rather than a physical wheel.
-- A slot is never acted on twice during the same drag, and the module stays
-  inert while disabled so other HUD and inventory modules are unaffected.
-
-Works on the player inventory, chests, shulker boxes, crafting and furnace
-screens — anything driven by the ContainerScreenController.
 
 ## System Requirements
 

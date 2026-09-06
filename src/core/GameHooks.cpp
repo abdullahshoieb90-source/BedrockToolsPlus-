@@ -350,30 +350,4 @@ void* clientInstance() {
     return currentClientInstance.load(std::memory_order_acquire);
 }
 
-std::uint32_t selectContainerSlot(void* controller, const std::string& collectionName, int slot) {
-    // The trampoline points at the original OnContainerSlotSelected, so calling
-    // it here performs the real Minecraft slot interaction exactly once without
-    // re-entering the detour that publishes ContainerSlotSelectedEvent.
-    return containerSlotSelectedOriginal ? containerSlotSelectedOriginal(controller, collectionName, slot) : 0;
-}
-
-std::uint32_t autoPlaceContainerSlot(void* controller, const std::string& collectionName, int slot) {
-    // HandleAutoPlace is not hooked, so resolving the symbol gives the genuine
-    // native quick-move entry point directly.
-    using Fn = std::uint32_t(*)(void*, const std::string&, int);
-    const auto target = bedrocktools::memory::resolve(SignatureId::ContainerScreenControllerHandleAutoPlace);
-    if (!target) return 0;
-    return reinterpret_cast<Fn>(target)(controller, collectionName, slot);
-}
-
-const void* getContainerSlotItemStack(void* controller, const std::string& collectionName, int slot) {
-    // getItemStack is not hooked, so resolving gives the genuine native function.
-    // The return is an ItemStack: both the ItemStack& and ItemStack* ABIs pass it
-    // as a pointer to the object, which is why it is surfaced as `const void*`.
-    using Fn = const void*(*)(void*, const std::string&, int);
-    const auto target = bedrocktools::memory::resolve(SignatureId::ContainerScreenControllerGetItemStack);
-    if (!target) return nullptr;
-    return reinterpret_cast<Fn>(target)(controller, collectionName, slot);
-}
-
 }

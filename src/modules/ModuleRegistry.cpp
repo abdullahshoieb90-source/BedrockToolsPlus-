@@ -5,7 +5,6 @@
 #include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
 #include "misc/commandhotkey.hpp"
-#include "misc/mousetweaks.hpp"
 #include "hud/crosshair.hpp"
 #include <bedrocktools/modules/visual/wings.hpp>
 #include "hud/hotbarslots.hpp"
@@ -72,7 +71,6 @@ void registerAllModules() {
     registry.emplace<CustomCapesModule>();
     registry.emplace<CommentKey>();
     registry.emplace<CommandHotkeyModule>();
-    registry.emplace<MouseTweaksModule>();
     registry.emplace<CrosshairModule>();
     registry.emplace<WingsModule>();
     registry.emplace<HotbarSlotsModule>();
