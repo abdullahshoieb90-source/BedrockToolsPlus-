@@ -11,7 +11,9 @@
 
 // Shows the player's main inventory (container slots 9-35, the 9x3 grid of
 // the inventory screen) as item icons on the HUD, so the contents are visible
-// without opening the inventory.
+// without opening the inventory. The optional armor + offhand column is a
+// second HUD editor element with its own position, so the grid and the
+// equipment can be moved independently.
 //
 // It shares its plumbing with ArmorHUD and Hotbar Slots (see huditems.hpp):
 // the stacks come straight from the player's FillingContainer and the icons
@@ -49,7 +51,11 @@ private:
     };
 
     struct ConfigSnapshot {
-        bedrocktools::inventoryhud::GridLayout layout{};
+        bedrocktools::inventoryhud::GridLayout grid{};
+        // Resolved anchor of the armor + offhand element: its own position when
+        // the user placed it, otherwise derived from the grid.
+        bedrocktools::inventoryhud::EquipmentLayout equipment{};
+        bool equipmentVisible = false;
         bool stackCount = true;
         bool durability = true;
         bool armorDurability = true;
@@ -63,6 +69,12 @@ private:
     };
 
     ConfigSnapshot snapshotConfig() const;
+    // Both helpers expect m_configMutex to be held.
+    bedrocktools::inventoryhud::GridLayout gridLayout() const;
+    // Size / gap / label style of the armor column, without its anchor.
+    bedrocktools::inventoryhud::EquipmentLayout equipmentStyle() const;
+    // Gives the armor column a position of its own the first time it is shown.
+    void placeEquipmentIfUnplaced();
     void clearRuntime();
     void storeRuntime(SlotRuntime& runtime, void* stack, void* item, bool wantDurability);
 
@@ -73,6 +85,11 @@ private:
 
     float hudPosX = 24.0f;
     float hudPosY = 200.0f;
+    // Anchor of the armor + offhand element. UnplacedPosition means nobody
+    // positioned it yet; loadConfig() then places the column beside the grid as
+    // soon as it is shown, so the two elements are independent from then on.
+    float hudEquipmentPosX = bedrocktools::inventoryhud::UnplacedPosition;
+    float hudEquipmentPosY = bedrocktools::inventoryhud::UnplacedPosition;
     int m_columns = static_cast<int>(bedrocktools::inventoryhud::DefaultColumns);
     float m_slotSize = 32.0f;
     float m_slotGap = 4.0f;

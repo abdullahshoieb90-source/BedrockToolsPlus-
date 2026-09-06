@@ -27,7 +27,11 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Inventory HUD
 
-Enable **Armor & Offhand** under **Details** to show equipped armor and the offhand item beside the inventory grid. **Armor Durability Numbers** is on by default and displays each armor piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of **Durability Bar** and **Stack Count**. Use **Number Text** to change the size and color of stack counts and armor numbers.
+Enable **Armor & Offhand** under **Details** to show equipped armor and the offhand item next to the inventory grid.
+
+The grid and the armor column are two separate elements in the HUD Editor (**Inventory Grid** and **Armor & Offhand**), so each one can be dragged on its own: moving the inventory does not move your armor and the other way around. The first time the column is enabled it is placed beside the grid, and from then on it stays wherever you put it. Configs saved before the split keep their old arrangement.
+
+**Armor Durability Numbers** is on by default and displays each armor piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of **Durability Bar** and **Stack Count**, and its labels are part of the armor element. Use **Number Text** to change the size and color of stack counts and armor numbers.
 
 ## Wings
 
