@@ -19,7 +19,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings
 
-**HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair, ArmorHUD, Hotbar Slots, Inventory HUD, World Time, Arrow Counter, Totem Counter
+**HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair, ArmorHUD, Armor, Hotbar Slots, Inventory HUD, World Time, Arrow Counter, Totem Counter
 
 **Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ, AutoSprint, Quick Loot, Custom Capes
 
@@ -27,11 +27,19 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Inventory HUD
 
-Enable **Armor & Offhand** under **Details** to show equipped armor and the offhand item next to the inventory grid.
+Shows the 27 slots of your inventory grid on the HUD without opening the inventory. Under **Details** you can toggle **Stack Count** and **Durability Bar**, and **Number Text** changes the size and color of the stack counts.
 
-The grid and the armor column are two separate elements in the HUD Editor (**Inventory Grid** and **Armor & Offhand**), so each one can be dragged on its own: moving the inventory does not move your armor and the other way around. The first time the column is enabled it is placed beside the grid, and from then on it stays wherever you put it. Configs saved before the split keep their old arrangement.
+The module owns a single HUD Editor element, **Inventory Grid**. Armor and the offhand are no longer part of it — they live in the separate **Armor** module below.
 
-**Armor Durability Numbers** is on by default and displays each armor piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of **Durability Bar** and **Stack Count**, and its labels are part of the armor element. Use **Number Text** to change the size and color of stack counts and armor numbers.
+## Armor
+
+**Armor** is its own module: it draws your helmet, chestplate, leggings, boots and the offhand item on the HUD, with or without Inventory HUD enabled. It has its own toggle, keybind, settings and HUD Editor element (**Armor & Offhand**), so it can be placed anywhere on screen independently of the inventory grid.
+
+- **Offhand Slot**, **Stack Count** and **Durability Bar** under **Details** control what is drawn on each slot.
+- **Armor Durability Numbers** is on by default and displays each piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of the durability bars, and its labels are part of the armor element.
+- **Horizontal Layout** lays the five slots out in a row instead of a column.
+
+Configs saved while armor was still an Inventory HUD option are migrated automatically: the new module inherits the position, size and style you had, and it starts enabled only if **Armor & Offhand** was on.
 
 ## Wings
 

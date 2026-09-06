@@ -1,4 +1,5 @@
-// Host integration tests for Inventory HUD and the real shared item plumbing.
+// Host integration tests for the Armor module and the real shared item
+// plumbing.
 // Minecraft functions are replaced by fake vtables / signature targets; the
 // real module still reads stacks, paints icons and submits overlay commands.
 // Requires preloader, nlohmann_json and entt headers (see scripts/run_tests.sh).
@@ -14,7 +15,7 @@
 // Include the implementations to let the fake engine use the exact render
 // signatures, and to simulate an unavailable / later-resolved offhand accessor.
 #include "modules/hud/huditems.cpp"
-#include "modules/hud/inventoryhud.cpp"
+#include "modules/hud/armorhud.cpp"
 
 class EntityRegistry {};
 
@@ -233,7 +234,7 @@ int main() {
     put(context.bytes, 0, contextVtable.data());
     put(context.bytes, offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext, &renderTag);
 
-    InventoryHudModule module;
+    ArmorModule module;
     module.onInit();
     module.setMasterEnabled(true);
     auto frame = [&] {
@@ -241,101 +242,178 @@ int main() {
         module.renderNative(context.bytes, &client);
         module.onFrame();
     };
-    frame();
-
-    // The module owns the inventory grid only: armor and offhand belong to the
-    // separate Armor module now.
-    check(!findIcon(heldStack.bytes) && !findText("220/363"),
-          "the inventory grid never draws equipment or armor labels");
-    check(!findIcon(armor.stack(0)), "armor icons are not painted by Inventory HUD");
-    check(findIcon(inventory.stack(9)) && findIcon(inventory.stack(10)),
-          "inventory items are painted");
-    check(findText("64"), "inventory stack counts remain visible");
-    check(!findText("1"), "single items do not get redundant stack counts");
-
-    const auto* firstIcon = findIcon(inventory.stack(9));
-    const auto* gridElement = findElement(GridElementId);
-    check(elements.size() == 1 && gridElement, "the module submits exactly one HUD editor element");
-    check(gridElement && gridElement->positionKeyX == "hudPosX" && gridElement->positionKeyY == "hudPosY",
-          "the grid element keeps the module position keys");
-    check(gridElement && firstIcon && near(gridElement->x, firstIcon->x) &&
-              near(gridElement->x + gridElement->width, firstIcon->x + 320.0f),
-          "the grid element covers exactly the inventory grid");
-
-    // Old configs may still carry the retired armor keys; they must be ignored
-    // without disturbing the grid.
     nlohmann::json config;
-    config["m_showEquipment"] = true;
-    config["hudEquipmentPosX"] = 500.0f;
-    config["hudEquipmentPosY"] = 12.0f;
-    config["hudPosX"] = 120.0f;
-    config["hudPosY"] = 300.0f;
-    module.loadConfig(config);
     frame();
-    firstIcon = findIcon(inventory.stack(9));
-    check(firstIcon && near(firstIcon->x, 120.0f) && near(firstIcon->y, 300.0f),
-          "the inventory grid renders at its own position");
-    check(!findIcon(heldStack.bytes) && !findIcon(armor.stack(0)),
-          "retired equipment keys no longer make the grid draw armor");
-    check(elements.size() == 1 && findElement(GridElementId),
-          "no equipment element is submitted any more");
-    nlohmann::json saved;
-    module.saveConfig(saved);
-    check(!saved.contains("m_showEquipment") && !saved.contains("hudEquipmentPosX") &&
-              !saved.contains("hudEquipmentPosY") && !saved.contains("m_showArmorDurability"),
-          "armor options are gone from the Inventory HUD config");
 
-    // A grid-only durability bar and a stack count for a damaged tool.
-    config["m_showStackCount"] = false;
+    // The module works on its own: no Inventory HUD involved, equipment shown
+    // by default once the module itself is enabled.
+    check(findIcon(heldStack.bytes) != nullptr, "offhand icon is painted");
+    check(findIcon(armor.stack(0)) && near(findIcon(armor.stack(0))->y, 200.0f), "helmet sits at the anchor");
+    check(findIcon(heldStack.bytes) && near(findIcon(heldStack.bytes)->y, 200.0f + 4.0f * 36.0f),
+          "offhand stays below boots");
+    check(!findIcon(inventory.stack(9)), "the inventory grid is not drawn by the Armor module");
+    check(findText("16"), "offhand stack count is shown");
+    check(!findText("1"), "single items do not get redundant stack counts");
+    check(findText("220/363") && findText("528/528") && findText("0/495") && findText("428/429"),
+          "all four armor slots show clamped remaining/maximum durability by default");
+    const auto* label = findText("220/363");
+    check(label && near(label->h, 32.0f) && near(label->size, 12.0f), "armor label is centered within its row");
+
+    // A single HUD editor element with the module's own position keys.
+    const auto* element = findElement(ArmorElementId);
+    check(elements.size() == 1 && element, "the armor column is one HUD editor element");
+    check(element && element->positionKeyX == "hudPosX" && element->positionKeyY == "hudPosY",
+          "the armor element owns the module position keys");
+    check(element && near(element->width, 32.0f + 4.0f + 84.0f) &&
+              near(element->height, 5 * 32.0f + 4 * 4.0f),
+          "the element covers its icons and their durability labels");
+    check(label && element && label->x >= element->x &&
+              label->x + label->w <= element->x + element->width + 0.001f,
+          "armor labels stay inside the element");
+    const float labeledWidth = element ? element->width : 0.0f;
+
+    setStack(heldStack.bytes, &counters[5], 1, 25); // a single damageable offhand item
+    frame();
+    check(findIcon(heldStack.bytes) && !findText("16") && !findText("75/100"),
+          "single offhand item updates its icon without a stale count or armor label");
+    const bool offhandBar = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+        return command.type == pl::modmenu::DrawCommandType::RectFilled && near(command.y, 370.0f);
+    });
+    check(offhandBar, "damageable offhand items keep their durability bar");
+    setStack(heldStack.bytes, &counters[4], 16);
+
+    // The element is placed wherever the user drags it.
+    config["hudPosX"] = 500.0f;
+    config["hudPosY"] = 12.0f;
     module.loadConfig(config);
     frame();
-    check(!findText("64"), "stack counts can be disabled");
-    const bool bar = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
-        return command.type == pl::modmenu::DrawCommandType::RectFilled;
-    });
-    check(bar, "damaged inventory items keep their durability bar");
+    check(findIcon(armor.stack(0)) && near(findIcon(armor.stack(0))->x, 500.0f) &&
+              near(findIcon(armor.stack(0))->y, 12.0f),
+          "the armor column renders at its own position");
+    check(findElement(ArmorElementId) && near(findElement(ArmorElementId)->x, 500.0f) &&
+              near(findElement(ArmorElementId)->y, 12.0f),
+          "the editor box follows the column");
+
+    // Horizontal layout lays the same five slots out in a row.
+    config["m_horizontal"] = true;
+    module.loadConfig(config);
+    frame();
+    check(findIcon(heldStack.bytes) && near(findIcon(heldStack.bytes)->y, 12.0f),
+          "a horizontal column keeps every slot on one row");
+    check(findIcon(heldStack.bytes) && findIcon(heldStack.bytes)->x > 500.0f,
+          "a horizontal column runs to the right");
+    config["m_horizontal"] = false;
+    module.loadConfig(config);
+
+    // The offhand slot can be hidden without touching the armor pieces.
+    config["m_showOffhand"] = false;
+    module.loadConfig(config);
+    frame();
+    check(!findIcon(heldStack.bytes) && findIcon(armor.stack(0)),
+          "the offhand slot can be hidden on its own");
+    config["m_showOffhand"] = true;
+    module.loadConfig(config);
+
+    config["m_showStackCount"] = false;
     config["m_showDurability"] = false;
     module.loadConfig(config);
     frame();
-    check(commands.empty(), "both decorations can be turned off");
-    config["m_showStackCount"] = true;
-    config["m_showDurability"] = true;
+    check(commands.size() == 4 && findText("528/528"), "armor numbers work with both bars and counts disabled");
+    items[0].maxDamage = 0; // e.g. a carved pumpkin
+    setStack(armor.stack(1), nullptr, 0);
+    frame();
+    check(commands.size() == 2 && !findText("220/363") && !findText("528/528"),
+          "non-damageable and removed armor leave no stale labels");
+    items[0].maxDamage = 363;
+    setStack(armor.stack(1), &counters[1], 1);
 
-    setStack(inventory.stack(13), &counters[4], 2);
-    config["m_columns"] = 4;
+    config["m_showArmorDurability"] = false;
     module.loadConfig(config);
     frame();
-    check(findIcon(inventory.stack(13)) &&
-              near(findIcon(inventory.stack(13))->y, 300.0f + 36.0f),
-          "fewer columns wrap the grid into more rows");
-    config["m_columns"] = 9;
-    module.loadConfig(config);
+    check(commands.empty() && findIcon(heldStack.bytes), "numbers can be disabled without hiding equipment icons");
+    check(findElement(ArmorElementId) && findElement(ArmorElementId)->width < labeledWidth,
+          "disabling numbers reclaims label space in the element");
+    nlohmann::json saved;
+    module.saveConfig(saved);
+    check(!saved["m_showArmorDurability"].get<bool>(), "armor-number toggle is saved");
+    ArmorModule restored;
+    restored.loadConfig(saved);
+    nlohmann::json roundTrip;
+    restored.saveConfig(roundTrip);
+    check(!roundTrip["m_showArmorDurability"].get<bool>() &&
+              near(roundTrip["hudPosX"].get<float>(), saved["hudPosX"].get<float>()) &&
+              near(roundTrip["hudPosY"].get<float>(), saved["hudPosY"].get<float>()),
+          "options and position round-trip");
 
+    config["m_showArmorDurability"] = true;
+    config["m_slotSize"] = 8.0f;
+    config["m_slotGap"] = 0.0f;
+    config["m_countTextSize"] = 40.0f;
+    config["m_countColor"] = "#12ABEF";
+    module.loadConfig(config);
+    frame();
+    label = findText("220/363");
+    check(label && near(label->size, 8.0f) && label->color == 0xFF12ABEFu, "number style is applied and fits tiny slots");
+    const auto* tinyElement = findElement(ArmorElementId);
+    check(label && tinyElement && label->x >= tinyElement->x &&
+              label->x + label->w <= tinyElement->x + tinyElement->width + 0.001f,
+          "large configured text and zero gap stay inside the element");
     module.onMenuRegistered();
-    check(schemaJson.find("m_showStackCount") != std::string::npos &&
+    check(schemaJson.find("m_showArmorDurability") != std::string::npos &&
               schemaJson.find("Number Text") != std::string::npos,
-          "menu exposes the grid options");
-    check(schemaJson.find("m_showEquipment") == std::string::npos,
-          "menu no longer offers the armor option");
+          "menu exposes armor numbers and text styling");
+    check(schemaJson.find("m_horizontal") != std::string::npos &&
+              schemaJson.find("m_showOffhand") != std::string::npos,
+          "menu exposes the module's own layout and offhand options");
+
+    // Old configs stored these settings inside Inventory HUD; the migration
+    // turns such a section into a config for this module.
+    nlohmann::json legacyInventory;
+    legacyInventory["masterEnabled"] = true;
+    legacyInventory["m_showEquipment"] = true;
+    legacyInventory["hudPosX"] = 24.0f;
+    legacyInventory["hudPosY"] = 200.0f;
+    legacyInventory["hudEquipmentPosX"] = 300.0f;
+    legacyInventory["hudEquipmentPosY"] = 120.0f;
+    legacyInventory["m_showArmorDurability"] = false;
+    legacyInventory["m_countColor"] = "#00FF00";
+    nlohmann::json migrated = ArmorModule::migratedFromInventoryHud(legacyInventory);
+    check(migrated["masterEnabled"].get<bool>(), "an enabled armor column becomes an enabled module");
+    check(near(migrated["hudPosX"].get<float>(), 300.0f) && near(migrated["hudPosY"].get<float>(), 120.0f),
+          "the migrated module keeps the column's own position");
+    check(!migrated["m_showArmorDurability"].get<bool>() && migrated["m_countColor"] == "#00FF00",
+          "migrated style options are preserved");
+    legacyInventory["m_showEquipment"] = false;
+    check(!ArmorModule::migratedFromInventoryHud(legacyInventory)["masterEnabled"].get<bool>(),
+          "a disabled armor column does not switch the new module on");
+    legacyInventory["m_showEquipment"] = true;
+    legacyInventory.erase("hudEquipmentPosX");
+    legacyInventory.erase("hudEquipmentPosY");
+    migrated = ArmorModule::migratedFromInventoryHud(legacyInventory);
+    check(near(migrated["hudPosX"].get<float>(), 24.0f) && near(migrated["hudPosY"].get<float>(), 200.0f),
+          "a column without its own anchor migrates to the shared legacy anchor");
 
     using namespace bedrocktools::events;
     ScreenStateEvent screen{ScreenKind::Container, ScreenPhase::Opened, nullptr};
     bus().publish(screen);
     frame();
-    check(commands.empty() && icons.empty(), "container screen hides the grid");
+    check(commands.empty() && icons.empty(), "container screen hides both equipment icons and armor numbers");
     screen.phase = ScreenPhase::Closed;
     bus().publish(screen);
     frame();
-    check(findIcon(inventory.stack(9)), "closing the container restores the grid");
+    check(findText("220/363") && findIcon(heldStack.bytes), "closing container restores icons and numbers");
 
+    offhand = nullptr;
+    frame();
+    check(!findIcon(heldStack.bytes) && findText("220/363"), "empty offhand does not hide armor or retain old icon");
     player = nullptr;
     frame();
-    check(commands.empty() && icons.empty(), "world exit clears grid data");
+    check(commands.empty() && icons.empty(), "world exit clears equipment data");
     module.setMasterEnabled(false);
     check(commands.empty() && elements.empty(), "disable clears overlay and editor elements");
     bus().clear();
     entityContext->~EntityContext();
 
-    std::printf("inventoryhud_test: %s (%d failures)\n", failures ? "FAILED" : "all checks passed", failures);
+    std::printf("armorhud_test: %s (%d failures)\n", failures ? "FAILED" : "all checks passed", failures);
     return failures ? 1 : 0;
 }

@@ -1,4 +1,4 @@
-#include "inventoryhud.hpp"
+#include "armorhud.hpp"
 
 #include "huditems.hpp"
 #include "modules/ModuleRegistry.hpp"
@@ -19,37 +19,50 @@
 namespace {
 
 namespace huditems = bedrocktools::huditems;
-namespace layout = bedrocktools::inventoryhud;
+namespace layout = bedrocktools::armorhud;
 namespace decor = bedrocktools::slotdecor;
-using layout::GridLayout;
+using layout::ArmorLayout;
 using decor::SlotRect;
 
-constexpr std::size_t GridSlotCount = InventoryHudModule::GridSlotCount;
-constexpr const char* GridElementId = "bedrocktools.inventoryhud.grid";
+constexpr std::size_t SlotCount = ArmorModule::SlotCount;
+constexpr const char* ArmorElementId = "bedrocktools.armorhud.column";
+
+struct EquipmentStacks {
+    std::array<void*, SlotCount> stacks{};
+};
+
+// Helmet, chestplate, leggings, boots, offhand.
+EquipmentStacks getEquipmentColumn(void* player) {
+    EquipmentStacks column;
+    const huditems::EquipmentStacks equipment = huditems::getEquipmentStacks(player);
+    for (std::size_t i = 0; i < layout::ArmorSlotCount; ++i) column.stacks[i] = equipment.armor[i];
+    column.stacks[layout::OffhandIndex] = equipment.offhand;
+    return column;
+}
 
 void renderListener(void* context, void* client, void* user) {
-    auto* module = static_cast<InventoryHudModule*>(user);
+    auto* module = static_cast<ArmorModule*>(user);
     if (module && module->enabled) module->renderNative(context, client);
 }
 
 } // namespace
 
-InventoryHudModule::InventoryHudModule()
-    : Module("Inventory HUD",
-             "Shows the items of your inventory grid on the HUD without opening the inventory.") {
+ArmorModule::ArmorModule()
+    : Module("Armor",
+             "Shows your armor pieces and offhand item on the HUD, with durability bars and numbers.") {
 }
 
-InventoryHudModule::~InventoryHudModule() {
+ArmorModule::~ArmorModule() {
     huditems::removeRenderListener(renderListener, this);
 }
 
-void InventoryHudModule::onInit() {
+void ArmorModule::onInit() {
     huditems::initialize();
     huditems::addRenderListener(renderListener, this);
 
-    // The real inventory (and any other container UI) draws the same items at
-    // full size, so the HUD copy is hidden while one is open. The counter
-    // tracks nested opens the same way the runtime's keybind blocker does.
+    // The inventory (and any other container UI) draws the same items at full
+    // size, so the HUD copy is hidden while one is open. The counter tracks
+    // nested opens the same way the runtime's keybind blocker does.
     bedrocktools::events::bus().subscribe<bedrocktools::events::ScreenStateEvent>([this](auto& event) {
         if (event.screen != bedrocktools::events::ScreenKind::Container) return;
         if (event.phase == bedrocktools::events::ScreenPhase::Opened) {
@@ -63,32 +76,35 @@ void InventoryHudModule::onInit() {
     });
 }
 
-void InventoryHudModule::onDisable() {
+void ArmorModule::onDisable() {
     clearRuntime();
     pl::modmenu::submitDrawCommands(moduleId, std::span<const pl::modmenu::DrawCommand>{});
     pl::modmenu::submitHudEditorElements(moduleId, std::span<const pl::modmenu::HudEditorElement>{});
 }
 
-bool InventoryHudModule::hiddenByScreen() const {
+bool ArmorModule::hiddenByScreen() const {
     return m_containerDepth.load(std::memory_order_acquire) > 0;
 }
 
-bedrocktools::inventoryhud::GridLayout InventoryHudModule::gridLayout() const {
-    layout::GridLayout grid;
-    grid.x = hudPosX;
-    grid.y = hudPosY;
-    grid.slotSize = m_slotSize;
-    grid.gap = m_slotGap;
-    grid.columns = layout::clampColumns(static_cast<std::size_t>(std::max(1, m_columns)));
-    return grid;
+bedrocktools::armorhud::ArmorLayout ArmorModule::armorLayout() const {
+    ArmorLayout value;
+    value.x = hudPosX;
+    value.y = hudPosY;
+    value.slotSize = m_slotSize;
+    value.gap = m_slotGap;
+    value.armorTextSize = m_showArmorDurability ? m_countTextSize : 0.0f;
+    value.horizontal = m_horizontal;
+    return value;
 }
 
-InventoryHudModule::ConfigSnapshot InventoryHudModule::snapshotConfig() const {
+ArmorModule::ConfigSnapshot ArmorModule::snapshotConfig() const {
     std::lock_guard lock(m_configMutex);
     ConfigSnapshot config;
-    config.grid = gridLayout();
+    config.layout = armorLayout();
+    config.showOffhand = m_showOffhand;
     config.stackCount = m_showStackCount;
     config.durability = m_showDurability;
+    config.armorDurability = m_showArmorDurability;
     config.hideInContainer = m_hideInContainer;
     config.countTextSize = m_countTextSize;
     config.countColor = huditems::parseColor(m_countColor, 0xFFFFFFFFu);
@@ -102,13 +118,13 @@ InventoryHudModule::ConfigSnapshot InventoryHudModule::snapshotConfig() const {
     return config;
 }
 
-void InventoryHudModule::clearRuntime() {
-    for (auto& slot : m_grid) storeRuntime(slot, nullptr, nullptr, false);
+void ArmorModule::clearRuntime() {
+    for (auto& slot : m_slots) storeRuntime(slot, nullptr, nullptr, false);
 }
 
 // Publishes what the render thread saw for one slot to onFrame(); a null
 // `item` clears the slot.
-void InventoryHudModule::storeRuntime(SlotRuntime& runtime, void* stack, void* item, bool wantDurability) {
+void ArmorModule::storeRuntime(SlotRuntime& runtime, void* stack, void* item, bool wantDurability) {
     const bool hasItem = item != nullptr;
     runtime.hasItem.store(hasItem, std::memory_order_release);
     runtime.count.store(hasItem ? huditems::stackCount(stack) : 0, std::memory_order_release);
@@ -122,7 +138,7 @@ void InventoryHudModule::storeRuntime(SlotRuntime& runtime, void* stack, void* i
     runtime.maxDamage.store(maxDamage, std::memory_order_release);
 }
 
-void InventoryHudModule::renderNative(void* context, void* client) {
+void ArmorModule::renderNative(void* context, void* client) {
     const ConfigSnapshot config = snapshotConfig();
     const bool hidden = config.hideInContainer && hiddenByScreen();
 
@@ -136,20 +152,15 @@ void InventoryHudModule::renderNative(void* context, void* client) {
         return;
     }
 
-    const huditems::ContainerSlots inventory = huditems::playerInventory(localPlayer);
-    if (inventory.count <= layout::LastGridSlot) {
-        // Not the 36-slot player inventory we expect (e.g. mid-teleport
-        // rebuild); do not read outside the container.
-        clearRuntime();
-        return;
-    }
+    EquipmentStacks equipment = getEquipmentColumn(localPlayer);
+    if (!config.showOffhand) equipment.stacks[layout::OffhandIndex] = nullptr;
 
-    std::array<void*, GridSlotCount> stacks{};
-    std::array<void*, GridSlotCount> items{};
-    for (std::size_t i = 0; i < GridSlotCount; ++i) {
-        stacks[i] = inventory.stack(layout::containerSlot(i));
-        items[i] = huditems::stackItem(stacks[i]);
-        storeRuntime(m_grid[i], stacks[i], items[i], config.durability);
+    std::array<void*, SlotCount> items{};
+    for (std::size_t i = 0; i < SlotCount; ++i) {
+        items[i] = huditems::stackItem(equipment.stacks[i]);
+        const bool wantDurability =
+            config.durability || (config.armorDurability && i < layout::OffhandIndex);
+        storeRuntime(m_slots[i], equipment.stacks[i], items[i], wantDurability);
     }
 
     if (!painter.ready()) return;
@@ -158,41 +169,41 @@ void InventoryHudModule::renderNative(void* context, void* client) {
     // fix pass first, otherwise their tinted pixels come out transparent.
     if (painter.supportsOpacityFix()) {
         painter.beginOpacityFixPass();
-        for (std::size_t i = 0; i < GridSlotCount; ++i) {
-            if (!items[i] || !huditems::needsTextureOpacityPass(stacks[i])) continue;
-            const SlotRect rect = layout::gridSlotRect(config.grid, i);
-            painter.drawOpacityFix(stacks[i], items[i], rect.x, rect.y, rect.size);
+        for (std::size_t i = 0; i < SlotCount; ++i) {
+            if (!items[i] || !huditems::needsTextureOpacityPass(equipment.stacks[i])) continue;
+            const SlotRect rect = layout::slotRect(config.layout, i);
+            painter.drawOpacityFix(equipment.stacks[i], items[i], rect.x, rect.y, rect.size);
         }
         painter.endOpacityFixPass();
     }
 
     // Only occupied slots are submitted to the ItemRenderer; empty ones cost
     // nothing.
-    for (std::size_t i = 0; i < GridSlotCount; ++i) {
+    for (std::size_t i = 0; i < SlotCount; ++i) {
         if (!items[i]) continue;
-        const SlotRect rect = layout::gridSlotRect(config.grid, i);
-        painter.draw(stacks[i], items[i], rect.x, rect.y, rect.size);
+        const SlotRect rect = layout::slotRect(config.layout, i);
+        painter.draw(equipment.stacks[i], items[i], rect.x, rect.y, rect.size);
     }
 }
 
-void InventoryHudModule::onFrame() {
+void ArmorModule::onFrame() {
     if (!enabled) return;
 
     const ConfigSnapshot config = snapshotConfig();
 
-    // The editor box always covers the full grid so the element can be placed
-    // even while every slot is empty.
+    // The editor box always covers the full column so the element can be
+    // placed even while every slot is empty.
     std::vector<pl::modmenu::HudEditorElement> elements;
     {
         pl::modmenu::HudEditorElement element;
-        element.elementId = GridElementId;
-        element.displayName = "Inventory Grid";
+        element.elementId = ArmorElementId;
+        element.displayName = "Armor & Offhand";
         element.positionKeyX = "hudPosX";
         element.positionKeyY = "hudPosY";
-        element.x = config.grid.x;
-        element.y = config.grid.y;
-        element.width = std::max(1.0f, layout::gridWidth(config.grid));
-        element.height = std::max(1.0f, layout::gridHeight(config.grid));
+        element.x = config.layout.x;
+        element.y = config.layout.y;
+        element.width = std::max(1.0f, layout::columnWidth(config.layout));
+        element.height = std::max(1.0f, layout::columnHeight(config.layout));
         element.gridSize = config.gridSize;
         element.snapThreshold = config.snapThreshold;
         element.gridGap = config.gridGap;
@@ -203,8 +214,8 @@ void InventoryHudModule::onFrame() {
 
     std::vector<pl::modmenu::DrawCommand> commands;
     const bool hidden = config.hideInContainer && hiddenByScreen();
-    if (!hidden && (config.stackCount || config.durability)) {
-        auto decorate = [&](const SlotRuntime& runtime, const SlotRect& rect) {
+    if (!hidden && (config.stackCount || config.durability || config.armorDurability)) {
+        auto decorate = [&](const SlotRuntime& runtime, const SlotRect& rect, bool armorSlot) {
             if (!runtime.hasItem.load(std::memory_order_acquire) || rect.size <= 0.0f) return;
 
             const int maxDamage = runtime.maxDamage.load(std::memory_order_acquire);
@@ -234,6 +245,21 @@ void InventoryHudModule::onFrame() {
                 }
             }
 
+            // Armor numbers are independent of stack counts and durability
+            // bars, and remain visible for undamaged armor as well.
+            if (armorSlot && config.armorDurability && maxDamage > 0) {
+                pl::modmenu::DrawCommand text;
+                text.type = pl::modmenu::DrawCommandType::Text;
+                text.x = rect.x + rect.size + layout::armorLabelGap(config.layout);
+                text.y = rect.y;
+                text.w = layout::armorLabelWidth(config.layout);
+                text.h = rect.size; // center the label beside this armor icon
+                text.color = config.countColor;
+                text.size = layout::armorLabelTextSize(config.layout);
+                text.text = decor::durabilityText(damage, maxDamage);
+                commands.push_back(std::move(text));
+            }
+
             const std::uint8_t count = runtime.count.load(std::memory_order_acquire);
             if (config.stackCount && count > 1) {
                 const decor::TextAnchor anchor = decor::countTextAnchor(rect);
@@ -249,20 +275,20 @@ void InventoryHudModule::onFrame() {
             }
         };
 
-        for (std::size_t i = 0; i < GridSlotCount; ++i) {
-            decorate(m_grid[i], layout::gridSlotRect(config.grid, i));
+        for (std::size_t i = 0; i < SlotCount; ++i) {
+            decorate(m_slots[i], layout::slotRect(config.layout, i), i < layout::OffhandIndex);
         }
     }
     pl::modmenu::submitDrawCommands(moduleId, commands);
 }
 
-void InventoryHudModule::onMenuRegistered() {
+void ArmorModule::onMenuRegistered() {
     using namespace pl::modmenu;
     ConfigSchemaBuilder schema;
-    schema.defaultCategory("grid")
-        .category("grid", "Grid", "Shape and size of the inventory grid")
+    schema.defaultCategory("column")
+        .category("column", "Column", "Shape and size of the armor element")
         .category("details", "Details", "Extra information drawn on each slot")
-        .category("visibility", "Visibility", "When the inventory grid is shown")
+        .category("visibility", "Visibility", "When the armor element is shown")
         .category("editor", "HUD Editor", "Placement and snapping while editing the HUD");
 
     auto node = [](std::string key, std::string title, std::string category, ConfigControlTypeV2 type) {
@@ -292,21 +318,18 @@ void InventoryHudModule::onMenuRegistered() {
         schema.node(std::move(value));
     };
 
-    section("grid_shape", "Layout", "grid");
+    section("column_shape", "Layout", "column");
     {
-        auto columns = node("m_columns", "Columns", "grid", ConfigControlTypeV2::SliderInt);
-        columns.section = "grid_shape";
-        columns.description = "9 columns match the inventory screen; fewer columns wrap the 27 slots into more rows.";
-        columns.minValue = std::to_string(layout::MinColumns);
-        columns.maxValue = std::to_string(layout::MaxColumns);
-        columns.step = "1";
-        schema.node(std::move(columns));
+        auto horizontal = node("m_horizontal", "Horizontal Layout", "column", ConfigControlTypeV2::Toggle);
+        horizontal.section = "column_shape";
+        horizontal.description = "Lays the armor and offhand out in a row instead of a column.";
+        schema.node(std::move(horizontal));
     }
-    slider("m_slotSize", "Slot Size", "grid", "grid_shape", "8", "100");
-    slider("m_slotGap", "Gap Between Slots", "grid", "grid_shape", "0", "50");
-    section("activation", "Shortcut", "grid");
+    slider("m_slotSize", "Slot Size", "column", "column_shape", "8", "100");
+    slider("m_slotGap", "Gap Between Slots", "column", "column_shape", "0", "50");
+    section("activation", "Shortcut", "column");
     {
-        auto toggleKey = node("keybind", "Toggle Keybind", "grid", ConfigControlTypeV2::Keybind);
+        auto toggleKey = node("keybind", "Toggle Keybind", "column", ConfigControlTypeV2::Keybind);
         toggleKey.section = "activation";
         schema.node(std::move(toggleKey));
     }
@@ -316,13 +339,20 @@ void InventoryHudModule::onMenuRegistered() {
         auto features = node("slot_features", "Show", "details", ConfigControlTypeV2::ToggleGroup);
         features.key.clear();
         features.section = "slot_details";
-        features.description = "Armor and offhand now live in the separate Armor module.";
+        features.description = "This module is independent of Inventory HUD: enable only what you want to see.";
         features.choiceStyle = ConfigChoiceStyleV2::Checklist;
         features.options = {
+            {"offhand", "Offhand Slot", {}, "m_showOffhand"},
             {"count", "Stack Count", {}, "m_showStackCount"},
             {"durability", "Durability Bar", {}, "m_showDurability"}
         };
         schema.node(std::move(features));
+    }
+    {
+        auto armorNumbers = node("m_showArmorDurability", "Armor Durability Numbers", "details", ConfigControlTypeV2::Toggle);
+        armorNumbers.section = "slot_details";
+        armorNumbers.description = "Shows remaining/maximum durability beside each armor piece, independently of durability bars.";
+        schema.node(std::move(armorNumbers));
     }
     section("count_text", "Number Text", "details");
     slider("m_countTextSize", "Text Size", "details", "count_text", "6", "40");
@@ -330,7 +360,7 @@ void InventoryHudModule::onMenuRegistered() {
         auto color = node("m_countColor", "Text Color", "details", ConfigControlTypeV2::Color);
         color.section = "count_text";
         color.defaultValue = "#FFFFFF";
-        color.description = "Used for stack counts.";
+        color.description = "Used for stack counts and armor durability numbers.";
         schema.node(std::move(color));
     }
 
@@ -338,13 +368,13 @@ void InventoryHudModule::onMenuRegistered() {
     {
         auto hide = node("m_hideInContainer", "Hide While Inventory Is Open", "visibility", ConfigControlTypeV2::Toggle);
         hide.section = "auto_hide";
-        hide.description = "Hides the grid while the inventory, a chest or any other container screen is open.";
+        hide.description = "Hides the armor element while the inventory, a chest or any other container screen is open.";
         schema.node(std::move(hide));
     }
 
-    auto help = node("editor_help", "Armor Moved To Its Own Module", "editor", ConfigControlTypeV2::Info);
+    auto help = node("editor_help", "An Element Of Its Own", "editor", ConfigControlTypeV2::Info);
     help.key.clear();
-    help.description = "This module owns a single HUD Editor element: Inventory Grid. Your armor and offhand are drawn by the separate Armor module, which has its own toggle, element and settings.";
+    help.description = "Armor & Offhand is its own module now: the HUD Editor shows one element for it, which you can place anywhere, with or without the Inventory HUD module enabled.";
     schema.node(std::move(help));
     section("snapping", "Snapping", "editor");
     {
@@ -366,20 +396,55 @@ void InventoryHudModule::onMenuRegistered() {
     pl::modmenu::setConfigSchemaJson(moduleId, schema.toJson());
 }
 
-void InventoryHudModule::loadConfig(const nlohmann::json& j) {
+nlohmann::json ArmorModule::migratedFromInventoryHud(const nlohmann::json& inventoryHud) {
+    nlohmann::json migrated;
+
+    auto readBool = [&](const char* key, bool fallback) {
+        return inventoryHud.contains(key) ? inventoryHud[key].get<bool>() : fallback;
+    };
+    auto readFloat = [&](const char* key, float fallback) {
+        return inventoryHud.contains(key) ? inventoryHud[key].get<float>() : fallback;
+    };
+
+    // The column was only drawn when the Inventory HUD option was on; keep the
+    // module off otherwise so nothing appears out of nowhere.
+    const bool showEquipment = readBool("m_showEquipment", false);
+    migrated["masterEnabled"] = showEquipment && readBool("masterEnabled", false);
+    migrated["keybindActive"] = readBool("keybindActive", true);
+
+    // Position: the column's own anchor when it had one, otherwise the shared
+    // legacy anchor of the grid.
+    float x = readFloat("hudEquipmentPosX", -1.0f);
+    float y = readFloat("hudEquipmentPosY", -1.0f);
+    if (x < 0.0f || y < 0.0f) {
+        x = readFloat("hudPosX", 24.0f);
+        y = readFloat("hudPosY", 200.0f);
+    }
+    migrated["hudPosX"] = x;
+    migrated["hudPosY"] = y;
+
+    for (const char* key : {"m_slotSize", "m_slotGap", "m_countTextSize", "m_gridSize", "m_gridGap",
+                            "m_snapThreshold", "m_countColor", "m_showStackCount", "m_showDurability",
+                            "m_showArmorDurability", "m_hideInContainer", "m_snapToGrid",
+                            "m_snapToElements", "m_snapToScreenCenter"}) {
+        if (inventoryHud.contains(key)) migrated[key] = inventoryHud[key];
+    }
+    return migrated;
+}
+
+void ArmorModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
     std::lock_guard lock(m_configMutex);
 
     if (j.contains("hudPosX")) hudPosX = std::clamp(j["hudPosX"].get<float>(), 0.0f, 4000.0f);
     if (j.contains("hudPosY")) hudPosY = std::clamp(j["hudPosY"].get<float>(), 0.0f, 4000.0f);
-    if (j.contains("m_columns")) {
-        m_columns = std::clamp(j["m_columns"].get<int>(),
-                               static_cast<int>(layout::MinColumns), static_cast<int>(layout::MaxColumns));
-    }
     if (j.contains("m_slotSize")) m_slotSize = std::clamp(j["m_slotSize"].get<float>(), 8.0f, 100.0f);
     if (j.contains("m_slotGap")) m_slotGap = std::clamp(j["m_slotGap"].get<float>(), 0.0f, 50.0f);
+    if (j.contains("m_horizontal")) m_horizontal = j["m_horizontal"].get<bool>();
+    if (j.contains("m_showOffhand")) m_showOffhand = j["m_showOffhand"].get<bool>();
     if (j.contains("m_showStackCount")) m_showStackCount = j["m_showStackCount"].get<bool>();
     if (j.contains("m_showDurability")) m_showDurability = j["m_showDurability"].get<bool>();
+    if (j.contains("m_showArmorDurability")) m_showArmorDurability = j["m_showArmorDurability"].get<bool>();
     if (j.contains("m_hideInContainer")) m_hideInContainer = j["m_hideInContainer"].get<bool>();
     if (j.contains("m_countTextSize")) m_countTextSize = std::clamp(j["m_countTextSize"].get<float>(), 6.0f, 40.0f);
     if (j.contains("m_countColor")) m_countColor = j["m_countColor"].get<std::string>();
@@ -391,17 +456,19 @@ void InventoryHudModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_snapToScreenCenter")) m_snapToScreenCenter = j["m_snapToScreenCenter"].get<bool>();
 }
 
-void InventoryHudModule::saveConfig(nlohmann::json& j) {
+void ArmorModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
     std::lock_guard lock(m_configMutex);
 
     j["hudPosX"] = hudPosX;
     j["hudPosY"] = hudPosY;
-    j["m_columns"] = m_columns;
     j["m_slotSize"] = m_slotSize;
     j["m_slotGap"] = m_slotGap;
+    j["m_horizontal"] = m_horizontal;
+    j["m_showOffhand"] = m_showOffhand;
     j["m_showStackCount"] = m_showStackCount;
     j["m_showDurability"] = m_showDurability;
+    j["m_showArmorDurability"] = m_showArmorDurability;
     j["m_hideInContainer"] = m_hideInContainer;
     j["m_countTextSize"] = m_countTextSize;
     j["m_countColor"] = m_countColor;
