@@ -16,8 +16,8 @@
 // It shares its plumbing with ArmorHUD and Hotbar Slots (see huditems.hpp):
 // the stacks come straight from the player's FillingContainer and the icons
 // are painted by the game's ItemRenderer from the HudCameraRenderer hook.
-// Stack counts and durability bars are launcher overlay draw commands, which
-// is what the other HUD modules use for text.
+// Stack counts, armor durability numbers and bars use launcher overlay draw
+// commands, like the other HUD modules' text.
 class InventoryHudModule final : public Module {
 public:
     static constexpr std::size_t GridSlotCount = bedrocktools::inventoryhud::GridSlotCount;
@@ -52,6 +52,7 @@ private:
         bedrocktools::inventoryhud::GridLayout layout{};
         bool stackCount = true;
         bool durability = true;
+        bool armorDurability = true;
         bool hideInContainer = true;
         float countTextSize = 12.0f;
         std::uint32_t countColor = 0xFFFFFFFFu;
@@ -78,6 +79,7 @@ private:
     bool m_showStackCount = true;
     bool m_showDurability = true;
     bool m_showEquipment = false;
+    bool m_showArmorDurability = true;
     bool m_hideInContainer = true;
     float m_countTextSize = 12.0f;
     std::string m_countColor = "#FFFFFF";

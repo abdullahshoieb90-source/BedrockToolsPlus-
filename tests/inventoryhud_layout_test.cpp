@@ -25,6 +25,13 @@ void expectEqual(const char* what, std::size_t actual, std::size_t expected) {
     }
 }
 
+void expectText(const char* what, const std::string& actual, const std::string& expected) {
+    if (actual != expected) {
+        std::printf("  FAIL %s: expected '%s', got '%s'\n", what, expected.c_str(), actual.c_str());
+        ++failures;
+    }
+}
+
 void expectHex(const char* what, std::uint32_t actual, std::uint32_t expected) {
     if (actual != expected) {
         std::printf("  FAIL %s: expected 0x%08X, got 0x%08X\n", what, expected, actual);
@@ -120,6 +127,45 @@ int main() {
     GridLayout tallGrid = equipped;
     tallGrid.columns = 3; // 9 rows of grid
     expectNear("layout height when grid is taller", layoutHeight(tallGrid), 9 * 32.0f + 8 * 4.0f);
+
+    // Armor labels reserve stable space between equipment and inventory, and
+    // that space is included in the editor box. No reflow as durability drops.
+    GridLayout labeled = equipped;
+    labeled.armorTextSize = 12.0f;
+    expectNear("armor text size", armorLabelTextSize(labeled), 12.0f);
+    expectNear("armor label width", armorLabelWidth(labeled), 84.0f);
+    expectNear("armor label gap", armorLabelGap(labeled), 4.0f);
+    expectNear("labeled equipment separator", equipmentSeparator(labeled), 92.0f);
+    expectNear("labeled grid origin", gridOriginX(labeled), 100.0f + 32.0f + 92.0f);
+    expectNear("labeled editor width", layoutWidth(labeled), 32.0f + 92.0f + gridWidth(grid));
+    expectNear("labels keep equipment height", layoutHeight(labeled), layoutHeight(equipped));
+    expectNear("labels keep offhand position", equipmentSlotRect(labeled, OffhandEquipmentIndex).y,
+               equipmentSlotRect(equipped, OffhandEquipmentIndex).y);
+    // Size extremes must not let text escape its row, even with zero slot gap.
+    labeled.slotSize = 8.0f;
+    labeled.gap = 0.0f;
+    labeled.armorTextSize = 40.0f;
+    expectNear("armor text clamped to tiny slot", armorLabelTextSize(labeled), 8.0f);
+    expectNear("zero gap still separates armor text", armorLabelGap(labeled), 1.0f);
+    expectNear("tiny labeled separator", equipmentSeparator(labeled), 58.0f);
+    labeled.armorTextSize = 0.0f;
+    expectNear("disabled labels reclaim space", equipmentSeparator(labeled), 4.0f);
+    labeled.armorTextSize = 12.0f;
+    labeled.equipment = false;
+    expectNear("hidden equipment has no labels", armorLabelWidth(labeled), 0.0f);
+    expectNear("hidden labels do not shift grid", gridOriginX(labeled), labeled.x);
+    expectNear("hidden labels do not enlarge editor", layoutWidth(labeled), gridWidth(labeled));
+
+    // Numeric armor durability includes fully repaired and fully broken armor,
+    // clamps invalid damage, and skips non-damageable items such as pumpkins.
+    expectText("damaged armor", durabilityText(143, 363), "220/363");
+    expectText("full armor", durabilityText(0, 528), "528/528");
+    expectText("broken armor", durabilityText(363, 363), "0/363");
+    expectText("excess damage", durabilityText(500, 363), "0/363");
+    expectText("negative damage", durabilityText(-5, 363), "363/363");
+    expectText("non-damageable armor", durabilityText(0, 0), "");
+    expectText("invalid max damage", durabilityText(4, -1), "");
+    expectText("largest supported max damage", durabilityText(0, 32767), "32767/32767");
 
     // Durability bar proportions scale with the slot (vanilla: 2/13/13/2 in 16px).
     SlotRect slot;

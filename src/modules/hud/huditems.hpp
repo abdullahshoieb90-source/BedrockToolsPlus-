@@ -9,7 +9,7 @@
 //   * the HudCameraRenderer::render hook that gives them a render pass,
 //   * walking Player -> Inventory::PlayerInventory -> proxy ->
 //     PlayerInventoryContainer -> FillingContainer::mItems in ItemStackSize
-//     steps, plus the armor / hand containers of ActorEquipmentComponent,
+//     steps, plus the armor container and Actor::getOffhandSlot accessor,
 //   * constructing a BaseActorRenderContext to reach the ItemRenderer,
 //   * mapping launcher HUD units onto the MinecraftUIRenderContext,
 //   * ItemRenderer::renderGuiItemNew for one icon and the final flushImages.
