@@ -300,11 +300,17 @@ EquipmentStacks getEquipmentStacks(void* player) {
         if (armor.count >= 4) {
             for (std::size_t i = 0; i < 4; ++i) stacks.armor[i] = armor.stack(i);
         }
+        // The hand container holds both hands: slot 0 is the main hand and
+        // slot 1 the offhand. This is how the upstream ArmorHUD reads the
+        // offhand, and it works without any signature resolution, so it is
+        // tried first. The Actor accessor below stays as a fallback for game
+        // versions whose hand container does not expose this layout.
+        const ContainerSlots hands = containerSlots(equipment->hand);
+        if (hands.count >= 2) stacks.offhand = hands.stack(1);
     }
-    // The hand container is not guaranteed to have FillingContainer's layout.
-    // Use Actor's accessor (also used by InventoryAccess) instead of walking
-    // hand.stack(1), and do not depend on finding the armor component first.
-    if (actorGetOffhandSlot) stacks.offhand = const_cast<void*>(actorGetOffhandSlot(player));
+    if (!stacks.offhand && actorGetOffhandSlot) {
+        stacks.offhand = const_cast<void*>(actorGetOffhandSlot(player));
+    }
     stacks.mainhand = getCarriedItem(player);
     return stacks;
 }

@@ -223,6 +223,32 @@ int main() {
     const int calls = offhandCalls;
     check(!hud::getEquipmentStacks(nullptr).offhand && offhandCalls == calls, "null player never calls engine accessor");
 
+    // Like the upstream ArmorHUD, the offhand is read straight from the hand
+    // container of the equipment component (slot 0 main hand, slot 1 offhand)
+    // whenever that container is usable; the accessor is then not consulted.
+    Container<2> hands;
+    setStack(hands.stack(0), &counters[4], 1);
+    setStack(hands.stack(1), &counters[5], 8);
+    registry.remove<ActorEquipmentComponent>(entity);
+    registry.emplace<ActorEquipmentComponent>(entity, hands.data.bytes, armor.data.bytes);
+    const int accessorCalls = offhandCalls;
+    equipment = hud::getEquipmentStacks(player);
+    check(equipment.offhand == hands.stack(1) && offhandCalls == accessorCalls,
+          "offhand comes from the hand container without calling the accessor");
+    check(equipment.armor[0] == armor.stack(0), "armor still comes from the armor container");
+    const hud::ActorGetOffhandSlotFn savedAccessor = hud::actorGetOffhandSlot;
+    hud::actorGetOffhandSlot = nullptr;
+    equipment = hud::getEquipmentStacks(player);
+    check(equipment.offhand == hands.stack(1), "the hand container keeps the offhand without any accessor");
+    hud::actorGetOffhandSlot = savedAccessor;
+    const auto bogusEnd = reinterpret_cast<std::uintptr_t>(hands.stack(0)) + 1;
+    put(hands.data.bytes, offsets::Inventory::FillingContainerItems + sizeof(void*), bogusEnd);
+    equipment = hud::getEquipmentStacks(player);
+    check(equipment.offhand == offhand && offhandPlayer == player,
+          "an unusable hand container falls back to the accessor");
+    registry.remove<ActorEquipmentComponent>(entity);
+    registry.emplace<ActorEquipmentComponent>(entity, nullptr, armor.data.bytes);
+
     std::array<void*, offsets::VTable::ClientInstanceGetMinecraftGame + 1> clientVtable{};
     clientVtable[offsets::VTable::ClientInstanceGetLocalPlayer] = reinterpret_cast<void*>(fakePlayer);
     clientVtable[offsets::VTable::ClientInstanceGetMinecraftGame] = reinterpret_cast<void*>(fakeGame);
