@@ -4,12 +4,8 @@
 #include "../../config/ConfigManager.hpp"
 #include "../../launcher/ExternalButtonRefresh.hpp"
 #include <bedrocktools/events/EventBus.hpp>
-#include <bedrocktools/memory/Signatures.hpp>
-#include <bedrocktools/sdk/offsets/Inventory.hpp>
-#include <bedrocktools/sdk/offsets/World.hpp>
 
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -51,107 +47,6 @@ constexpr std::size_t kMaxPendingHits = 8;
 // so never read or trust them.
 constexpr int kHurtTimeMin = 0;
 constexpr int kHurtTimeMax = 100;
-
-// ---------------------------------------------------------------------------
-// Projectile lane (bow / crossbow / trident / snowball / egg).
-//
-// Projectile hits never pass through the GameMode::attack hook, so they are
-// recognised from the world state: once per local-player tick the actors
-// around the player are enumerated with Actor::fetchNearbyActorsSorted (the
-// same signature the Hitbox module uses every frame) and fed to the pure
-// tracker in hitsound_projectile.hpp, which decides when the player's own
-// projectile connected with a mob or player.
-// ---------------------------------------------------------------------------
-
-struct DistanceSortedActor {
-    void* mActor;
-    float mDistance;
-    float _pad;
-};
-
-struct ActorVec {
-    DistanceSortedActor* begin;
-    DistanceSortedActor* end;
-    DistanceSortedActor* cap;
-};
-
-using ActorFetchNearbyActorsSortedFn = ActorVec (*)(void* actor, void* extent, int actorType);
-
-ActorFetchNearbyActorsSortedFn s_fetchNearbyActors = nullptr;
-
-// Tracking range for projectiles. Arrows fly ~3 blocks per tick and slow
-// down, so this covers roughly a second of full flight; beyond it an arrow
-// has dropped too far to hit anything anyway.
-constexpr float kProjectileFetchRadius = 64.0f;
-
-// Upper bound on the observations handed to the tracker per tick. The fetch
-// is distance-sorted from the player, so this keeps the nearest actors; even
-// a crowded mob farm rarely has more than a couple of dozen relevant actors.
-constexpr std::size_t kMaxObservations = 128;
-
-// Confirmed hits of the two lanes (melee + projectile, or a multishot volley)
-// inside this interval share one sound instead of stacking on the same tick.
-constexpr auto kMinPlayInterval = milliseconds(120);
-
-// Reads a small trivially-copyable field of a game object at a fixed offset.
-template <class T>
-T readField(const void* object, std::size_t offset) {
-    return *reinterpret_cast<const T*>(static_cast<const std::byte*>(object) + offset);
-}
-
-// True when the item stack's exact identifier is one of the projectile
-// weapons. The hotbar is the first nine slots of the player's inventory
-// container (same offsets InventoryAccess uses); an exact compare (rather
-// than InventoryAccess's substring match) keeps lookalike items such as
-// "minecraft:bowl" from arming the tracker.
-bool stackIsProjectileWeapon(const void* stack) {
-    using namespace bedrocktools::sdk::offsets::Inventory;
-    if (!stack) return false;
-    if (!readField<std::uint8_t>(stack, ItemStackValid)) return false;
-    if (readField<std::uint8_t>(stack, ItemStackCount) == 0) return false;
-    const void* counter = readField<const void*>(stack, ItemStackItemCounter);
-    const void* item = counter ? readField<const void*>(counter, 0) : nullptr;
-    if (!item) return false;
-    const auto* vtable = readField<const std::uintptr_t*>(item, 0);
-    if (!vtable || !vtable[ItemGetDescriptionIdVtableIndex]) return false;
-    using GetDescriptionIdFn = const std::string& (*)(const void*);
-    const auto& identifier =
-        reinterpret_cast<GetDescriptionIdFn>(vtable[ItemGetDescriptionIdVtableIndex])(item);
-    if (identifier.size() > 32) return false;
-    return identifier == "minecraft:bow" || identifier == "minecraft:crossbow" ||
-           identifier == "minecraft:trident" || identifier == "minecraft:snowball" ||
-           identifier == "minecraft:egg";
-}
-
-// True while the player has a projectile weapon somewhere in the hotbar. This
-// gates the tracker's "fresh projectile near us = we just fired it"
-// classification: without it, a skeleton (or enemy player) shooting from
-// point-blank range would have its projectiles tracked as ours. Reading the
-// hotbar costs nine stack inspections and only runs on ticks where a
-// projectile is actually in range.
-bool holdingProjectileWeapon(const bedrocktools::sdk::Actor* player) {
-    using namespace bedrocktools::sdk::offsets::Inventory;
-    if (!player) return false;
-    const void* proxy = readField<const void*>(player, PlayerInventory);
-    if (!proxy) return false;
-    const void* inventory = readField<const void*>(proxy, PlayerInventoryContainer);
-    if (!inventory) return false;
-    const std::uintptr_t begin = readField<std::uintptr_t>(inventory, FillingContainerItems);
-    const std::uintptr_t end =
-        readField<std::uintptr_t>(inventory, FillingContainerItems + sizeof(void*));
-    if (!begin || end <= begin) return false;
-    const auto bytes = end - begin;
-    if (bytes % ItemStackSize != 0) return false;
-    const std::size_t slots = bytes / ItemStackSize;
-    if (slots > 64) return false;
-    const std::size_t hotbar = slots < 9 ? slots : 9;
-    for (std::size_t slot = 0; slot < hotbar; ++slot) {
-        if (stackIsProjectileWeapon(reinterpret_cast<const void*>(begin + slot * ItemStackSize))) {
-            return true;
-        }
-    }
-    return false;
-}
 
 // ---------------------------------------------------------------------------
 // Android audio engine, built on android.media.SoundPool — the platform API
@@ -428,7 +323,7 @@ void audioReleaseAll() {}
 
 HitSoundModule::HitSoundModule()
     : Module("Hit Sound",
-             "Plays a sound from the hitsounds folder only when a mob or player actually takes damage from your melee hit or arrow.") {
+             "Plays a sound from the hitsounds folder only when a mob or player actually takes damage from your hit.") {
     g_hitSound = this;
 }
 
@@ -451,31 +346,20 @@ void HitSoundModule::onInit() {
 
     // Damage confirmation runs here: in singleplayer the victim's hurt-time is
     // already set on the tick after the swing, and in multiplayer it rises a
-    // few ticks later when the server confirms the hit. The same tick also
-    // feeds the projectile lane, which recognises bow/crossbow/trident hits
-    // that never raise the attack event.
-    uintptr_t fetch = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorFetchNearbyActorsSorted);
-    if (fetch) s_fetchNearbyActors = reinterpret_cast<ActorFetchNearbyActorsSortedFn>(fetch);
-
+    // few ticks later when the server confirms the hit.
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
-        [](auto& event) {
-            if (!g_hitSound || !g_hitSound->enabled) return;
-            g_hitSound->onTickCheck();
-            g_hitSound->onTickProjectiles(event.player);
+        [](auto&) {
+            if (g_hitSound && g_hitSound->enabled) g_hitSound->onTickCheck();
         });
 }
 
 void HitSoundModule::onEnable() {
     m_pendingHits.clear();
-    m_projectileTracker.reset();
-    m_lastPlayedSound = {};
     audioLoadFile(m_currentPath);
 }
 
 void HitSoundModule::onDisable() {
     m_pendingHits.clear();
-    m_projectileTracker.reset();
-    m_lastPlayedSound = {};
     audioUnload();
 }
 
@@ -547,85 +431,12 @@ void HitSoundModule::onTickCheck() {
     }
 
     if (played) {
-        // Safety net (audioLoadFile is a cheap no-op when the path is already
-        // loaded) and shared playback with the projectile lane, collapsed by
-        // the minimum interval so the two lanes never stack on one tick.
-        playHitSound();
-    }
-}
-
-void HitSoundModule::playHitSound() {
-    if (m_currentPath.empty()) return;
-    const auto now = steady_clock::now();
-    if (now - m_lastPlayedSound < kMinPlayInterval) return;
-    m_lastPlayedSound = now;
-    // If the sound is not in the pool yet (e.g. the module was enabled before
-    // the JVM handle was available) queue the load now. audioLoadFile() is a
-    // cheap no-op when the path is already loaded, and the decode itself runs
-    // off the game thread.
-    audioLoadFile(m_currentPath);
-    audioPlay(m_volume);
-}
-
-void HitSoundModule::onTickProjectiles(bedrocktools::sdk::Player* player) {
-    if (!s_fetchNearbyActors) return;
-    if (m_currentPath.empty()) return; // no sound selected: nothing can ever play
-    if (!player) {
-        // Left the world: nothing in flight can still be ours.
-        m_projectileTracker.reset();
-        return;
-    }
-
-    const auto* playerActor = reinterpret_cast<const bedrocktools::sdk::Actor*>(player);
-    const bedrocktools::sdk::Vec3 playerPos = playerActor->position();
-
-    // Sample the actors around the player once. The fetch is distance-sorted
-    // from the player, so capping keeps the nearest ones (the ones that
-    // matter: our in-flight projectiles and their potential victims).
-    hitsound::ProjectileObservation samples[kMaxObservations];
-    std::size_t count = 0;
-    bedrocktools::sdk::Vec3 extent = {kProjectileFetchRadius, kProjectileFetchRadius,
-                                      kProjectileFetchRadius};
-    const ActorVec actors = s_fetchNearbyActors(reinterpret_cast<void*>(player), &extent, 1);
-    for (const DistanceSortedActor* it = actors.begin; it && it < actors.end; ++it) {
-        if (count >= kMaxObservations) break;
-        const auto* actor = reinterpret_cast<const bedrocktools::sdk::Actor*>(it->mActor);
-        if (!actor) continue;
-
-        using namespace bedrocktools::sdk::offsets::ActorCategories;
-        hitsound::ProjectileObservation& o = samples[count];
-        o.actor = actor;
-        const std::uint32_t categories = actor->categories();
-        o.isProjectile = (categories & IsProjectile) != 0;
-        o.isVictimCandidate = (categories & (IsPlayer | IsMob)) != 0;
-        const bedrocktools::sdk::Vec3 pos = actor->position();
-        o.x = pos.x;
-        o.y = pos.y;
-        o.z = pos.z;
-        const bedrocktools::sdk::AABB bounds = actor->bounds();
-        o.minX = bounds.min.x;
-        o.minY = bounds.min.y;
-        o.minZ = bounds.min.z;
-        o.maxX = bounds.max.x;
-        o.maxY = bounds.max.y;
-        o.maxZ = bounds.max.z;
-        o.hurtTime = actor->hurtTime();
-        ++count;
-    }
-
-    // The hotbar read only runs on ticks where a projectile is actually in
-    // range: on every other tick the weapon state cannot change any decision.
-    bool holdingWeapon = false;
-    for (std::size_t i = 0; i < count; ++i) {
-        if (samples[i].isProjectile) {
-            holdingWeapon = holdingProjectileWeapon(playerActor);
-            break;
-        }
-    }
-
-    if (m_projectileTracker.update(samples, count, player, playerPos.x, playerPos.y, playerPos.z,
-                                   holdingWeapon)) {
-        playHitSound();
+        // Safety net: if the sound is not in the pool yet (e.g. the module was
+        // enabled before the JVM handle was available) queue the load now.
+        // audioLoadFile() is a cheap no-op when the path is already loaded,
+        // and the decode itself runs off the game thread.
+        audioLoadFile(m_currentPath);
+        audioPlay(m_volume);
     }
 }
 
