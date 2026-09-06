@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace bedrocktools::inventoryhud {
 
@@ -34,6 +35,7 @@ struct GridLayout {
     float gap = 4.0f;                 // space between two slots
     std::size_t columns = DefaultColumns;
     bool equipment = false;           // armor + offhand column on the left
+    float armorTextSize = 0.0f;        // 0 disables the durability labels beside armor
 };
 
 struct SlotRect {
@@ -58,8 +60,27 @@ inline std::size_t containerSlot(std::size_t gridIndex) {
     return FirstGridSlot + gridIndex;
 }
 
-// Horizontal space between the equipment column and the grid.
+// Keep labels inside their equipment row, even with tiny icons / large text.
+inline float armorLabelTextSize(const GridLayout& layout) {
+    if (!layout.equipment) return 0.0f;
+    return std::clamp(layout.armorTextSize, 0.0f, std::max(0.0f, layout.slotSize));
+}
+
+inline float armorLabelWidth(const GridLayout& layout) {
+    // Item::getMaxDamage returns a short. Reserve enough room for 32767/32767
+    // in the default font, without resizing the HUD as equipment wears down.
+    return 7.0f * armorLabelTextSize(layout);
+}
+
+inline float armorLabelGap(const GridLayout& layout) {
+    return std::max(layout.gap, layout.slotSize / 8.0f);
+}
+
+// Horizontal space between the equipment column and the grid. The native
+// icons and the HUD editor use this same reservation for the armor labels.
 inline float equipmentSeparator(const GridLayout& layout) {
+    const float labelWidth = armorLabelWidth(layout);
+    if (labelWidth > 0.0f) return labelWidth + 2.0f * armorLabelGap(layout);
     return layout.gap + layout.slotSize * 0.5f;
 }
 
@@ -135,10 +156,19 @@ struct DurabilityBar {
     float fillHeight = 0.0f;
 };
 
+inline int remainingDurability(int damage, int maxDamage) {
+    if (maxDamage <= 0) return 0;
+    return maxDamage - std::clamp(damage, 0, maxDamage);
+}
+
+inline std::string durabilityText(int damage, int maxDamage) {
+    if (maxDamage <= 0) return {}; // empty / non-damageable equipment has no label
+    return std::to_string(remainingDurability(damage, maxDamage)) + "/" + std::to_string(maxDamage);
+}
+
 inline float durabilityRatio(int damage, int maxDamage) {
     if (maxDamage <= 0) return 1.0f;
-    const int safeDamage = std::clamp(damage, 0, maxDamage);
-    return static_cast<float>(maxDamage - safeDamage) / static_cast<float>(maxDamage);
+    return static_cast<float>(remainingDurability(damage, maxDamage)) / static_cast<float>(maxDamage);
 }
 
 inline DurabilityBar durabilityBar(const SlotRect& slot, float remainingRatio) {

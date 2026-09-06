@@ -81,6 +81,7 @@ private:
     }
 };
 
+using ActorGetOffhandSlotFn = const void* (*)(const void*);
 using HudCameraRendererFn = void (*)(void*, void*, void*, void*, int);
 using BaseActorRenderContextCtorFn = void (*)(void*, void*, void*, void*);
 using ItemStackBaseGetDamageValueFn = int (*)(void*);
@@ -89,6 +90,7 @@ using ItemRendererRenderGuiItemNewFn = std::uint64_t (*)(
     void*, void*, void*, unsigned int, unsigned char, std::uint64_t,
     float, float, float, float, float);
 
+ActorGetOffhandSlotFn actorGetOffhandSlot = nullptr;
 BaseActorRenderContextCtorFn baseActorRenderContextCtor = nullptr;
 ItemStackBaseGetDamageValueFn itemStackBaseGetDamageValue = nullptr;
 ItemStackBaseGetRawNameIdFn itemStackBaseGetRawNameId = nullptr;
@@ -215,6 +217,10 @@ ActorEquipmentComponent* getEquipment(void* player) {
 } // namespace
 
 void initialize() {
+    if (!actorGetOffhandSlot) {
+        actorGetOffhandSlot = reinterpret_cast<ActorGetOffhandSlotFn>(
+            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorGetOffhandSlot));
+    }
     if (!functionsResolved) {
         baseActorRenderContextCtor = reinterpret_cast<BaseActorRenderContextCtorFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::BaseActorRenderContextCtor));
@@ -288,14 +294,17 @@ ContainerSlots playerInventory(void* player) {
 
 EquipmentStacks getEquipmentStacks(void* player) {
     EquipmentStacks stacks;
-    ActorEquipmentComponent* equipment = getEquipment(player);
-    if (!equipment) return stacks;
-    const ContainerSlots armor = containerSlots(equipment->armorContainer);
-    if (armor.count >= 4) {
-        for (std::size_t i = 0; i < 4; ++i) stacks.armor[i] = armor.stack(i);
+    if (!player) return stacks;
+    if (ActorEquipmentComponent* equipment = getEquipment(player)) {
+        const ContainerSlots armor = containerSlots(equipment->armorContainer);
+        if (armor.count >= 4) {
+            for (std::size_t i = 0; i < 4; ++i) stacks.armor[i] = armor.stack(i);
+        }
     }
-    const ContainerSlots hand = containerSlots(equipment->hand);
-    if (hand.count >= 2) stacks.offhand = hand.stack(1);
+    // The hand container is not guaranteed to have FillingContainer's layout.
+    // Use Actor's accessor (also used by InventoryAccess) instead of walking
+    // hand.stack(1), and do not depend on finding the armor component first.
+    if (actorGetOffhandSlot) stacks.offhand = const_cast<void*>(actorGetOffhandSlot(player));
     stacks.mainhand = getCarriedItem(player);
     return stacks;
 }

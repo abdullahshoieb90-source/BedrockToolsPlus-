@@ -96,8 +96,10 @@ InventoryHudModule::ConfigSnapshot InventoryHudModule::snapshotConfig() const {
     config.layout.equipment = m_showEquipment;
     config.stackCount = m_showStackCount;
     config.durability = m_showDurability;
+    config.armorDurability = m_showEquipment && m_showArmorDurability;
     config.hideInContainer = m_hideInContainer;
     config.countTextSize = m_countTextSize;
+    config.layout.armorTextSize = config.armorDurability ? m_countTextSize : 0.0f;
     config.countColor = huditems::parseColor(m_countColor, 0xFFFFFFFFu);
     config.gridSize = m_gridSize;
     config.gridGap = m_gridGap;
@@ -166,7 +168,9 @@ void InventoryHudModule::renderNative(void* context, void* client) {
         equipment = getEquipmentColumn(localPlayer);
         for (std::size_t i = 0; i < EquipmentSlotCount; ++i) {
             equipmentItems[i] = huditems::stackItem(equipment.stacks[i]);
-            storeRuntime(m_equipment[i], equipment.stacks[i], equipmentItems[i], config.durability);
+            const bool wantDurability = config.durability ||
+                (config.armorDurability && i < layout::OffhandEquipmentIndex);
+            storeRuntime(m_equipment[i], equipment.stacks[i], equipmentItems[i], wantDurability);
         }
     } else {
         for (auto& slot : m_equipment) storeRuntime(slot, nullptr, nullptr, false);
@@ -237,8 +241,8 @@ void InventoryHudModule::onFrame() {
 
     std::vector<pl::modmenu::DrawCommand> commands;
     const bool hidden = config.hideInContainer && hiddenByScreen();
-    if (!hidden && (config.stackCount || config.durability)) {
-        auto decorate = [&](const SlotRuntime& runtime, const SlotRect& rect) {
+    if (!hidden && (config.stackCount || config.durability || config.armorDurability)) {
+        auto decorate = [&](const SlotRuntime& runtime, const SlotRect& rect, bool armorSlot) {
             if (!runtime.hasItem.load(std::memory_order_acquire) || rect.size <= 0.0f) return;
 
             const int maxDamage = runtime.maxDamage.load(std::memory_order_acquire);
@@ -268,6 +272,21 @@ void InventoryHudModule::onFrame() {
                 }
             }
 
+            // Armor numbers are independent of stack counts and durability
+            // bars, and remain visible for undamaged armor as well.
+            if (armorSlot && config.armorDurability && maxDamage > 0) {
+                pl::modmenu::DrawCommand text;
+                text.type = pl::modmenu::DrawCommandType::Text;
+                text.x = rect.x + rect.size + layout::armorLabelGap(config.layout);
+                text.y = rect.y;
+                text.w = layout::armorLabelWidth(config.layout);
+                text.h = rect.size; // center the label beside this armor icon
+                text.color = config.countColor;
+                text.size = layout::armorLabelTextSize(config.layout);
+                text.text = layout::durabilityText(damage, maxDamage);
+                commands.push_back(std::move(text));
+            }
+
             const std::uint8_t count = runtime.count.load(std::memory_order_acquire);
             if (config.stackCount && count > 1) {
                 const layout::TextAnchor anchor = layout::countTextAnchor(rect);
@@ -284,11 +303,12 @@ void InventoryHudModule::onFrame() {
         };
 
         for (std::size_t i = 0; i < GridSlotCount; ++i) {
-            decorate(m_grid[i], layout::gridSlotRect(config.layout, i));
+            decorate(m_grid[i], layout::gridSlotRect(config.layout, i), false);
         }
         if (config.layout.equipment) {
             for (std::size_t i = 0; i < EquipmentSlotCount; ++i) {
-                decorate(m_equipment[i], layout::equipmentSlotRect(config.layout, i));
+                decorate(m_equipment[i], layout::equipmentSlotRect(config.layout, i),
+                         i < layout::OffhandEquipmentIndex);
             }
         }
     }
@@ -364,13 +384,20 @@ void InventoryHudModule::onMenuRegistered() {
         };
         schema.node(std::move(features));
     }
-    section("count_text", "Stack Count Text", "details");
-    slider("m_countTextSize", "Text Size", "details", "count_text", "6", "40", " px", "m_showStackCount");
+    {
+        auto armorNumbers = node("m_showArmorDurability", "Armor Durability Numbers", "details", ConfigControlTypeV2::Toggle);
+        armorNumbers.section = "slot_details";
+        armorNumbers.description = "Shows remaining/maximum durability beside each armor piece, independently of durability bars.";
+        armorNumbers.visibleWhen = {{"m_showEquipment", ConfigConditionOpV2::Truthy, {}}};
+        schema.node(std::move(armorNumbers));
+    }
+    section("count_text", "Number Text", "details");
+    slider("m_countTextSize", "Text Size", "details", "count_text", "6", "40");
     {
         auto color = node("m_countColor", "Text Color", "details", ConfigControlTypeV2::Color);
         color.section = "count_text";
         color.defaultValue = "#FFFFFF";
-        color.visibleWhen = {{"m_showStackCount", ConfigConditionOpV2::Truthy, {}}};
+        color.description = "Used for stack counts and armor durability numbers.";
         schema.node(std::move(color));
     }
 
@@ -421,6 +448,7 @@ void InventoryHudModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_showStackCount")) m_showStackCount = j["m_showStackCount"].get<bool>();
     if (j.contains("m_showDurability")) m_showDurability = j["m_showDurability"].get<bool>();
     if (j.contains("m_showEquipment")) m_showEquipment = j["m_showEquipment"].get<bool>();
+    if (j.contains("m_showArmorDurability")) m_showArmorDurability = j["m_showArmorDurability"].get<bool>();
     if (j.contains("m_hideInContainer")) m_hideInContainer = j["m_hideInContainer"].get<bool>();
     if (j.contains("m_countTextSize")) m_countTextSize = std::clamp(j["m_countTextSize"].get<float>(), 6.0f, 40.0f);
     if (j.contains("m_countColor")) m_countColor = j["m_countColor"].get<std::string>();
@@ -444,6 +472,7 @@ void InventoryHudModule::saveConfig(nlohmann::json& j) {
     j["m_showStackCount"] = m_showStackCount;
     j["m_showDurability"] = m_showDurability;
     j["m_showEquipment"] = m_showEquipment;
+    j["m_showArmorDurability"] = m_showArmorDurability;
     j["m_hideInContainer"] = m_hideInContainer;
     j["m_countTextSize"] = m_countTextSize;
     j["m_countColor"] = m_countColor;

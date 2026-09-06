@@ -25,6 +25,10 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, Hit Sound, ForceGlobalRP, CommentKey, Command Hotkey, Hive Utils
 
+## Inventory HUD
+
+Enable **Armor & Offhand** under **Details** to show equipped armor and the offhand item beside the inventory grid. **Armor Durability Numbers** is on by default and displays each armor piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of **Durability Bar** and **Stack Count**. Use **Number Text** to change the size and color of stack counts and armor numbers.
+
 ## Wings
 
 The **Wings** module renders animated 3D wings on your back that flap, idle and glide with your movement. Open the module's **Wing Style** selector to choose a shape:
