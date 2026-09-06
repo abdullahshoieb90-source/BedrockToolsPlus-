@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../Module.hpp"
-#include "inventoryhud_layout.hpp"
+#include "armorhud_layout.hpp"
 
 #include <array>
 #include <atomic>
@@ -9,24 +9,24 @@
 #include <mutex>
 #include <string>
 
-// Shows the player's main inventory (container slots 9-35, the 9x3 grid of
-// the inventory screen) as item icons on the HUD, so the contents are visible
-// without opening the inventory.
+// Shows the player's armor pieces and the offhand slot as item icons on the
+// HUD, with optional durability bars and remaining/maximum durability numbers.
 //
-// Armor and the offhand are handled by the separate Armor module: this module
-// owns nothing but the inventory grid.
+// This used to be the "Armor & Offhand" option of the Inventory HUD module; it
+// is now a module of its own, with its own toggle, keybind, HUD element and
+// settings, so it can be used completely without the inventory grid.
 //
-// It shares its plumbing with the Armor module and Hotbar Slots (see
-// huditems.hpp): the stacks come straight from the player's FillingContainer
-// and the icons are painted by the game's ItemRenderer from the
-// HudCameraRenderer hook. Stack counts and durability bars use launcher
+// It shares its plumbing with Inventory HUD and Hotbar Slots (see
+// huditems.hpp): the stacks come straight from the player's equipment
+// containers and the icons are painted by the game's ItemRenderer from the
+// HudCameraRenderer hook. Counts, durability numbers and bars use launcher
 // overlay draw commands, like the other HUD modules' text.
-class InventoryHudModule final : public Module {
+class ArmorModule final : public Module {
 public:
-    static constexpr std::size_t GridSlotCount = bedrocktools::inventoryhud::GridSlotCount;
+    static constexpr std::size_t SlotCount = bedrocktools::armorhud::SlotCount;
 
-    InventoryHudModule();
-    ~InventoryHudModule() override;
+    ArmorModule();
+    ~ArmorModule() override;
 
     void onInit() override;
     void onDisable() override;
@@ -37,6 +37,12 @@ public:
 
     // Called from the shared HudCameraRenderer detour.
     void renderNative(void* context, void* client);
+
+    // Old configs stored the armor column as options of the Inventory HUD
+    // module ("m_showEquipment", "hudEquipmentPosX/Y", ...). This turns such a
+    // section into a config for this module, so an existing setup keeps its
+    // position and style after the split.
+    static nlohmann::json migratedFromInventoryHud(const nlohmann::json& inventoryHud);
 
     // Icons are hidden while the real inventory / container screen is open;
     // the counter mirrors the ScreenStateEvent container depth.
@@ -51,9 +57,11 @@ private:
     };
 
     struct ConfigSnapshot {
-        bedrocktools::inventoryhud::GridLayout grid{};
+        bedrocktools::armorhud::ArmorLayout layout{};
+        bool showOffhand = true;
         bool stackCount = true;
         bool durability = true;
+        bool armorDurability = true;
         bool hideInContainer = true;
         float countTextSize = 12.0f;
         std::uint32_t countColor = 0xFFFFFFFFu;
@@ -65,21 +73,23 @@ private:
 
     ConfigSnapshot snapshotConfig() const;
     // Expects m_configMutex to be held.
-    bedrocktools::inventoryhud::GridLayout gridLayout() const;
+    bedrocktools::armorhud::ArmorLayout armorLayout() const;
     void clearRuntime();
     void storeRuntime(SlotRuntime& runtime, void* stack, void* item, bool wantDurability);
 
     mutable std::mutex m_configMutex;
-    std::array<SlotRuntime, GridSlotCount> m_grid;
+    std::array<SlotRuntime, SlotCount> m_slots;
     std::atomic_int m_containerDepth{0};
 
     float hudPosX = 24.0f;
     float hudPosY = 200.0f;
-    int m_columns = static_cast<int>(bedrocktools::inventoryhud::DefaultColumns);
     float m_slotSize = 32.0f;
     float m_slotGap = 4.0f;
+    bool m_horizontal = false;
+    bool m_showOffhand = true;
     bool m_showStackCount = true;
     bool m_showDurability = true;
+    bool m_showArmorDurability = true;
     bool m_hideInContainer = true;
     float m_countTextSize = 12.0f;
     std::string m_countColor = "#FFFFFF";

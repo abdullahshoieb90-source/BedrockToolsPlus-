@@ -9,6 +9,7 @@
 #include <bedrocktools/modules/visual/wings.hpp>
 #include "hud/hotbarslots.hpp"
 #include "hud/inventoryhud.hpp"
+#include "hud/armorhud.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -74,4 +75,5 @@ void registerAllModules() {
     registry.emplace<WingsModule>();
     registry.emplace<HotbarSlotsModule>();
     registry.emplace<InventoryHudModule>();
+    registry.emplace<ArmorModule>();
 }
