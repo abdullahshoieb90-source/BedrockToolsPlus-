@@ -65,11 +65,6 @@ for source in "${root}"/tests/*_test.cpp; do
                 skip="preloader/nlohmann_json/entt headers (set PRE_LOADER_INCLUDE, JSON_INCLUDE and ENTT_INCLUDE)"
             fi
             ;;
-        mousetweaks_test)
-            # The Mouse Tweaks module only needs nlohmann_json (via Module.hpp)
-            # plus the host fakes; it delegates all game interaction to stubs.
-            extra+=(-I "${root}/tests/fakejson")
-            ;;
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
