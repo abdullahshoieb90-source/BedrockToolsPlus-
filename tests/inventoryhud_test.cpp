@@ -117,6 +117,10 @@ const PaintedIcon* findIcon(void* stack) {
     for (const auto& icon : icons) if (icon.stack == stack) return &icon;
     return nullptr;
 }
+const pl::modmenu::HudEditorElement* findElement(const char* elementId) {
+    for (const auto& element : elements) if (element.elementId == elementId) return &element;
+    return nullptr;
+}
 const pl::modmenu::DrawCommand* findText(const std::string& text) {
     for (const auto& command : commands) {
         if (command.type == pl::modmenu::DrawCommandType::Text && command.text == text) return &command;
@@ -251,11 +255,32 @@ int main() {
     check(!findText("90/100"), "inventory items do not get armor labels");
     const auto* label = findText("220/363");
     const auto* firstIcon = findIcon(inventory.stack(9));
-    check(label && firstIcon && label->x + label->w < firstIcon->x, "armor label does not overlap the inventory grid");
     check(label && near(label->h, 32.0f) && near(label->size, 12.0f), "armor label is centered within its row");
-    check(elements.size() == 1 && firstIcon && near(elements[0].x + elements[0].width, firstIcon->x + 320.0f),
-          "HUD editor bounds include armor labels and the full grid");
-    const float labeledWidth = elements.empty() ? 0.0f : elements[0].width;
+
+    // The grid and the armor + offhand column are two HUD editor elements with
+    // separate position keys, which is what makes them draggable on their own.
+    const auto* gridElement = findElement(GridElementId);
+    const auto* armorElement = findElement(EquipmentElementId);
+    check(elements.size() == 2 && gridElement && armorElement,
+          "inventory grid and armor are separate HUD editor elements");
+    check(gridElement && gridElement->positionKeyX == "hudPosX" && gridElement->positionKeyY == "hudPosY",
+          "the grid element keeps the module position keys");
+    check(armorElement && armorElement->positionKeyX == "hudEquipmentPosX" &&
+              armorElement->positionKeyY == "hudEquipmentPosY",
+          "the armor element owns its own position keys");
+    check(gridElement && firstIcon && near(gridElement->x, firstIcon->x) &&
+              near(gridElement->x + gridElement->width, firstIcon->x + 320.0f),
+          "the grid element covers exactly the inventory grid");
+    check(armorElement && near(armorElement->width, 32.0f + 4.0f + 84.0f) &&
+              near(armorElement->height, 5 * 32.0f + 4 * 4.0f),
+          "the armor element covers its icons and their durability labels");
+    check(label && armorElement && label->x >= armorElement->x &&
+              label->x + label->w <= armorElement->x + armorElement->width + 0.001f,
+          "armor labels stay inside the armor element");
+    // A column nobody positioned yet is placed beside the grid, not on top of it.
+    check(armorElement && firstIcon && armorElement->x >= firstIcon->x + 320.0f,
+          "an unplaced armor column does not overlap the inventory grid");
+    const float labeledWidth = armorElement ? armorElement->width : 0.0f;
 
     setStack(heldStack.bytes, &counters[5], 1, 25); // a single damageable offhand item
     frame();
@@ -266,6 +291,100 @@ int main() {
     });
     check(offhandBar, "damageable offhand items keep their durability bar");
     setStack(heldStack.bytes, &counters[4], 16);
+
+    // Each element keeps the position the user gave it: moving one never moves
+    // the other, in the overlay and in the HUD editor alike.
+    nlohmann::json placed = config;
+    placed["hudPosX"] = 120.0f;
+    placed["hudPosY"] = 300.0f;
+    placed["hudEquipmentPosX"] = 24.0f;
+    placed["hudEquipmentPosY"] = 60.0f;
+    module.loadConfig(placed);
+    frame();
+    firstIcon = findIcon(inventory.stack(9));
+    check(firstIcon && near(firstIcon->x, 120.0f) && near(firstIcon->y, 300.0f),
+          "the inventory grid renders at its own position");
+    check(findIcon(heldStack.bytes) && near(findIcon(heldStack.bytes)->x, 24.0f) &&
+              near(findIcon(heldStack.bytes)->y, 60.0f + 4.0f * 36.0f),
+          "the armor column renders at its own position");
+    check(findElement(GridElementId) && near(findElement(GridElementId)->x, 120.0f) &&
+              near(findElement(GridElementId)->y, 300.0f),
+          "the grid editor box sits on the grid");
+    check(findElement(EquipmentElementId) && near(findElement(EquipmentElementId)->x, 24.0f) &&
+              near(findElement(EquipmentElementId)->y, 60.0f),
+          "the armor editor box sits on the armor column");
+
+    placed["hudEquipmentPosX"] = 500.0f;
+    placed["hudEquipmentPosY"] = 12.0f;
+    module.loadConfig(placed);
+    frame();
+    check(findIcon(heldStack.bytes) && near(findIcon(heldStack.bytes)->x, 500.0f) &&
+              near(findIcon(heldStack.bytes)->y, 12.0f + 4.0f * 36.0f),
+          "the armor column can be moved on its own");
+    firstIcon = findIcon(inventory.stack(9));
+    check(firstIcon && near(firstIcon->x, 120.0f) && near(firstIcon->y, 300.0f),
+          "moving the armor leaves the inventory grid where it was");
+
+    placed["hudPosX"] = 60.0f;
+    placed["hudPosY"] = 240.0f;
+    module.loadConfig(placed);
+    frame();
+    firstIcon = findIcon(inventory.stack(9));
+    check(firstIcon && near(firstIcon->x, 60.0f) && near(firstIcon->y, 240.0f),
+          "the inventory grid can be moved on its own");
+    check(findIcon(heldStack.bytes) && near(findIcon(heldStack.bytes)->x, 500.0f) &&
+              near(findIcon(heldStack.bytes)->y, 12.0f + 4.0f * 36.0f),
+          "moving the grid leaves the armor column where it was");
+
+    // A column without a saved position is put beside the grid (here to its
+    // right, the grid is too close to the left edge) and that resolved anchor is
+    // stored, so it does not keep following the grid afterwards.
+    nlohmann::json unplaced = placed;
+    unplaced["hudEquipmentPosX"] = -1.0f;
+    unplaced["hudEquipmentPosY"] = -1.0f;
+    module.loadConfig(unplaced);
+    frame();
+    check(findIcon(heldStack.bytes) && near(findIcon(heldStack.bytes)->x, 60.0f + 320.0f + 4.0f) &&
+              near(findIcon(heldStack.bytes)->y, 240.0f + 4.0f * 36.0f),
+          "an armor column without a position is placed beside the grid");
+    nlohmann::json resolved;
+    module.saveConfig(resolved);
+    check(near(resolved["hudEquipmentPosX"].get<float>(), 384.0f) &&
+              near(resolved["hudEquipmentPosY"].get<float>(), 240.0f),
+          "the resolved armor position is saved");
+    resolved["hudPosX"] = 20.0f;
+    module.loadConfig(resolved);
+    frame();
+    check(findIcon(heldStack.bytes) && near(findIcon(heldStack.bytes)->x, 384.0f),
+          "the armor column keeps its own position once it has one");
+
+    // Configs saved before the split carried a single anchor: the armor column at
+    // it and the grid one slot plus separator to its right. Such a config is
+    // split without moving anything the user had arranged.
+    nlohmann::json legacy;
+    legacy["hudPosX"] = 24.0f;
+    legacy["hudPosY"] = 200.0f;
+    legacy["m_showEquipment"] = true;
+    module.loadConfig(legacy);
+    frame();
+    check(findIcon(heldStack.bytes) && near(findIcon(heldStack.bytes)->x, 24.0f) &&
+              near(findIcon(heldStack.bytes)->y, 200.0f + 4.0f * 36.0f),
+          "a legacy config keeps the armor column at the shared anchor");
+    firstIcon = findIcon(inventory.stack(9));
+    label = findText("220/363");
+    check(firstIcon && near(firstIcon->x, 148.0f), "a legacy config keeps the grid where it was drawn");
+    check(label && firstIcon && label->x + label->w < firstIcon->x,
+          "a migrated legacy layout still keeps labels clear of the grid");
+    module.loadConfig(legacy);
+    frame();
+    firstIcon = findIcon(inventory.stack(9));
+    check(firstIcon && near(firstIcon->x, 148.0f), "loading a legacy config twice does not shift the grid");
+    nlohmann::json migrated;
+    module.saveConfig(migrated);
+    check(near(migrated["hudPosX"].get<float>(), 148.0f) &&
+              near(migrated["hudEquipmentPosX"].get<float>(), 24.0f) &&
+              near(migrated["hudEquipmentPosY"].get<float>(), 200.0f),
+          "a migrated legacy config saves both element positions");
 
     config["m_showStackCount"] = false;
     config["m_showDurability"] = false;
@@ -284,7 +403,8 @@ int main() {
     module.loadConfig(config);
     frame();
     check(commands.empty() && findIcon(heldStack.bytes), "numbers can be disabled without hiding equipment icons");
-    check(elements.size() == 1 && elements[0].width < labeledWidth, "disabling numbers reclaims label space");
+    check(findElement(EquipmentElementId) && findElement(EquipmentElementId)->width < labeledWidth,
+          "disabling numbers reclaims label space in the armor element");
     nlohmann::json saved;
     module.saveConfig(saved);
     check(!saved["m_showArmorDurability"].get<bool>(), "armor-number toggle is saved");
@@ -294,6 +414,11 @@ int main() {
     restored.saveConfig(roundTrip);
     check(!roundTrip["m_showArmorDurability"].get<bool>() && roundTrip["m_showEquipment"].get<bool>(),
           "equipment and numeric-durability options round-trip independently");
+    check(near(roundTrip["hudPosX"].get<float>(), saved["hudPosX"].get<float>()) &&
+              near(roundTrip["hudPosY"].get<float>(), saved["hudPosY"].get<float>()) &&
+              near(roundTrip["hudEquipmentPosX"].get<float>(), saved["hudEquipmentPosX"].get<float>()) &&
+              near(roundTrip["hudEquipmentPosY"].get<float>(), saved["hudEquipmentPosY"].get<float>()),
+          "both element positions round-trip");
 
     config["m_showArmorDurability"] = true;
     config["m_slotSize"] = 8.0f;
@@ -305,7 +430,10 @@ int main() {
     label = findText("220/363");
     firstIcon = findIcon(inventory.stack(9));
     check(label && near(label->size, 8.0f) && label->color == 0xFF12ABEFu, "number style is applied and fits tiny slots");
-    check(label && firstIcon && label->x + label->w < firstIcon->x, "large configured text and zero gap cannot overlap grid");
+    const auto* tinyArmorElement = findElement(EquipmentElementId);
+    check(label && tinyArmorElement && label->x >= tinyArmorElement->x &&
+              label->x + label->w <= tinyArmorElement->x + tinyArmorElement->width + 0.001f,
+          "large configured text and zero gap stay inside the armor element");
     module.onMenuRegistered();
     check(schemaJson.find("m_showArmorDurability") != std::string::npos && schemaJson.find("Number Text") != std::string::npos,
           "menu exposes armor numbers and shared text styling");
@@ -325,6 +453,8 @@ int main() {
     frame();
     check(!findIcon(heldStack.bytes) && !findIcon(armor.stack(0)) && commands.empty(),
           "disabling equipment clears icons and numbers even while their own toggle is on");
+    check(elements.size() == 1 && findElement(GridElementId) && !findElement(EquipmentElementId),
+          "disabling equipment removes its HUD editor element and keeps the grid");
     config["m_showEquipment"] = true;
     module.loadConfig(config);
     offhand = nullptr;

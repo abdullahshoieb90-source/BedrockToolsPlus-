@@ -24,7 +24,8 @@ using layout::SlotRect;
 
 constexpr std::size_t GridSlotCount = InventoryHudModule::GridSlotCount;
 constexpr std::size_t EquipmentSlotCount = InventoryHudModule::EquipmentSlotCount;
-constexpr const char* HudElementId = "bedrocktools.inventoryhud.grid";
+constexpr const char* GridElementId = "bedrocktools.inventoryhud.grid";
+constexpr const char* EquipmentElementId = "bedrocktools.inventoryhud.equipment";
 
 struct EquipmentStacks {
     std::array<void*, EquipmentSlotCount> stacks{};
@@ -85,21 +86,54 @@ bool InventoryHudModule::hiddenByScreen() const {
     return m_containerDepth.load(std::memory_order_acquire) > 0;
 }
 
+bedrocktools::inventoryhud::GridLayout InventoryHudModule::gridLayout() const {
+    layout::GridLayout grid;
+    grid.x = hudPosX;
+    grid.y = hudPosY;
+    grid.slotSize = m_slotSize;
+    grid.gap = m_slotGap;
+    grid.columns = layout::clampColumns(static_cast<std::size_t>(std::max(1, m_columns)));
+    return grid;
+}
+
+bedrocktools::inventoryhud::EquipmentLayout InventoryHudModule::equipmentStyle() const {
+    layout::EquipmentLayout equipment;
+    equipment.slotSize = m_slotSize;
+    equipment.gap = m_slotGap;
+    equipment.armorTextSize = m_showEquipment && m_showArmorDurability ? m_countTextSize : 0.0f;
+    return equipment;
+}
+
+// The armor + offhand column is a HUD editor element of its own, so it needs an
+// anchor the moment it becomes visible. Placing it beside the grid (instead of
+// on top of it) is what makes the two elements independent from the start:
+// dragging one never moves the other again.
+void InventoryHudModule::placeEquipmentIfUnplaced() {
+    if (!m_showEquipment) return;
+    if (layout::isPlaced(hudEquipmentPosX) && layout::isPlaced(hudEquipmentPosY)) return;
+    const layout::EquipmentLayout placed = layout::equipmentAnchorBesideGrid(gridLayout(), equipmentStyle());
+    hudEquipmentPosX = std::clamp(placed.x, 0.0f, 4000.0f);
+    hudEquipmentPosY = std::clamp(placed.y, 0.0f, 4000.0f);
+}
+
 InventoryHudModule::ConfigSnapshot InventoryHudModule::snapshotConfig() const {
     std::lock_guard lock(m_configMutex);
     ConfigSnapshot config;
-    config.layout.x = hudPosX;
-    config.layout.y = hudPosY;
-    config.layout.slotSize = m_slotSize;
-    config.layout.gap = m_slotGap;
-    config.layout.columns = layout::clampColumns(static_cast<std::size_t>(std::max(1, m_columns)));
-    config.layout.equipment = m_showEquipment;
+    config.grid = gridLayout();
+    config.equipment = equipmentStyle();
+    config.equipmentVisible = m_showEquipment;
     config.stackCount = m_showStackCount;
     config.durability = m_showDurability;
     config.armorDurability = m_showEquipment && m_showArmorDurability;
     config.hideInContainer = m_hideInContainer;
     config.countTextSize = m_countTextSize;
-    config.layout.armorTextSize = config.armorDurability ? m_countTextSize : 0.0f;
+    if (layout::isPlaced(hudEquipmentPosX) && layout::isPlaced(hudEquipmentPosY)) {
+        config.equipment.x = hudEquipmentPosX;
+        config.equipment.y = hudEquipmentPosY;
+    } else {
+        // Safety net for a column that is shown before it was ever placed.
+        config.equipment = layout::equipmentAnchorBesideGrid(config.grid, config.equipment);
+    }
     config.countColor = huditems::parseColor(m_countColor, 0xFFFFFFFFu);
     config.gridSize = m_gridSize;
     config.gridGap = m_gridGap;
@@ -164,7 +198,7 @@ void InventoryHudModule::renderNative(void* context, void* client) {
 
     EquipmentStacks equipment;
     std::array<void*, EquipmentSlotCount> equipmentItems{};
-    if (config.layout.equipment) {
+    if (config.equipmentVisible) {
         equipment = getEquipmentColumn(localPlayer);
         for (std::size_t i = 0; i < EquipmentSlotCount; ++i) {
             equipmentItems[i] = huditems::stackItem(equipment.stacks[i]);
@@ -184,13 +218,13 @@ void InventoryHudModule::renderNative(void* context, void* client) {
         painter.beginOpacityFixPass();
         for (std::size_t i = 0; i < GridSlotCount; ++i) {
             if (!items[i] || !huditems::needsTextureOpacityPass(stacks[i])) continue;
-            const SlotRect rect = layout::gridSlotRect(config.layout, i);
+            const SlotRect rect = layout::gridSlotRect(config.grid, i);
             painter.drawOpacityFix(stacks[i], items[i], rect.x, rect.y, rect.size);
         }
-        if (config.layout.equipment) {
+        if (config.equipmentVisible) {
             for (std::size_t i = 0; i < EquipmentSlotCount; ++i) {
                 if (!equipmentItems[i] || !huditems::needsTextureOpacityPass(equipment.stacks[i])) continue;
-                const SlotRect rect = layout::equipmentSlotRect(config.layout, i);
+                const SlotRect rect = layout::equipmentSlotRect(config.equipment, i);
                 painter.drawOpacityFix(equipment.stacks[i], equipmentItems[i], rect.x, rect.y, rect.size);
             }
         }
@@ -201,13 +235,13 @@ void InventoryHudModule::renderNative(void* context, void* client) {
     // nothing.
     for (std::size_t i = 0; i < GridSlotCount; ++i) {
         if (!items[i]) continue;
-        const SlotRect rect = layout::gridSlotRect(config.layout, i);
+        const SlotRect rect = layout::gridSlotRect(config.grid, i);
         painter.draw(stacks[i], items[i], rect.x, rect.y, rect.size);
     }
-    if (config.layout.equipment) {
+    if (config.equipmentVisible) {
         for (std::size_t i = 0; i < EquipmentSlotCount; ++i) {
             if (!equipmentItems[i]) continue;
-            const SlotRect rect = layout::equipmentSlotRect(config.layout, i);
+            const SlotRect rect = layout::equipmentSlotRect(config.equipment, i);
             painter.draw(equipment.stacks[i], equipmentItems[i], rect.x, rect.y, rect.size);
         }
     }
@@ -218,19 +252,39 @@ void InventoryHudModule::onFrame() {
 
     const ConfigSnapshot config = snapshotConfig();
 
-    // The editor box always covers the full grid so the element can be placed
-    // even while the inventory is empty.
+    // The editor boxes always cover the full grid / column so both elements can
+    // be placed even while every slot is empty. They are submitted separately,
+    // which is what lets the HUD editor move the inventory and the armor +
+    // offhand column independently.
     std::vector<pl::modmenu::HudEditorElement> elements;
     {
         pl::modmenu::HudEditorElement element;
-        element.elementId = HudElementId;
-        element.displayName = "Inventory HUD";
+        element.elementId = GridElementId;
+        element.displayName = "Inventory Grid";
         element.positionKeyX = "hudPosX";
         element.positionKeyY = "hudPosY";
-        element.x = config.layout.x;
-        element.y = config.layout.y;
-        element.width = std::max(1.0f, layout::layoutWidth(config.layout));
-        element.height = std::max(1.0f, layout::layoutHeight(config.layout));
+        element.x = config.grid.x;
+        element.y = config.grid.y;
+        element.width = std::max(1.0f, layout::gridWidth(config.grid));
+        element.height = std::max(1.0f, layout::gridHeight(config.grid));
+        element.gridSize = config.gridSize;
+        element.snapThreshold = config.snapThreshold;
+        element.gridGap = config.gridGap;
+        element.snapFlags = config.snapFlags;
+        elements.push_back(std::move(element));
+    }
+    if (config.equipmentVisible) {
+        pl::modmenu::HudEditorElement element;
+        element.elementId = EquipmentElementId;
+        element.displayName = "Armor & Offhand";
+        element.positionKeyX = "hudEquipmentPosX";
+        element.positionKeyY = "hudEquipmentPosY";
+        // The resolved anchor, so an element the user has not placed yet is
+        // dragged from where it is actually drawn.
+        element.x = config.equipment.x;
+        element.y = config.equipment.y;
+        element.width = std::max(1.0f, layout::equipmentColumnWidth(config.equipment));
+        element.height = std::max(1.0f, layout::equipmentColumnHeight(config.equipment));
         element.gridSize = config.gridSize;
         element.snapThreshold = config.snapThreshold;
         element.gridGap = config.gridGap;
@@ -277,12 +331,12 @@ void InventoryHudModule::onFrame() {
             if (armorSlot && config.armorDurability && maxDamage > 0) {
                 pl::modmenu::DrawCommand text;
                 text.type = pl::modmenu::DrawCommandType::Text;
-                text.x = rect.x + rect.size + layout::armorLabelGap(config.layout);
+                text.x = rect.x + rect.size + layout::armorLabelGap(config.equipment);
                 text.y = rect.y;
-                text.w = layout::armorLabelWidth(config.layout);
+                text.w = layout::armorLabelWidth(config.equipment);
                 text.h = rect.size; // center the label beside this armor icon
                 text.color = config.countColor;
-                text.size = layout::armorLabelTextSize(config.layout);
+                text.size = layout::armorLabelTextSize(config.equipment);
                 text.text = layout::durabilityText(damage, maxDamage);
                 commands.push_back(std::move(text));
             }
@@ -303,11 +357,11 @@ void InventoryHudModule::onFrame() {
         };
 
         for (std::size_t i = 0; i < GridSlotCount; ++i) {
-            decorate(m_grid[i], layout::gridSlotRect(config.layout, i), false);
+            decorate(m_grid[i], layout::gridSlotRect(config.grid, i), false);
         }
-        if (config.layout.equipment) {
+        if (config.equipmentVisible) {
             for (std::size_t i = 0; i < EquipmentSlotCount; ++i) {
-                decorate(m_equipment[i], layout::equipmentSlotRect(config.layout, i),
+                decorate(m_equipment[i], layout::equipmentSlotRect(config.equipment, i),
                          i < layout::OffhandEquipmentIndex);
             }
         }
@@ -375,7 +429,7 @@ void InventoryHudModule::onMenuRegistered() {
         auto features = node("slot_features", "Show", "details", ConfigControlTypeV2::ToggleGroup);
         features.key.clear();
         features.section = "slot_details";
-        features.description = "Armor & Offhand adds a column with your equipment next to the grid.";
+        features.description = "Armor & Offhand adds your equipment as its own element, which the HUD Editor lets you move separately from the grid.";
         features.choiceStyle = ConfigChoiceStyleV2::Checklist;
         features.options = {
             {"count", "Stack Count", {}, "m_showStackCount"},
@@ -409,9 +463,9 @@ void InventoryHudModule::onMenuRegistered() {
         schema.node(std::move(hide));
     }
 
-    auto help = node("editor_help", "Move The Grid In The HUD Editor", "editor", ConfigControlTypeV2::Info);
+    auto help = node("editor_help", "Move The Grid And The Armor Separately", "editor", ConfigControlTypeV2::Info);
     help.key.clear();
-    help.description = "Open the HUD Editor to drag the inventory grid. The box always covers the full grid, even when slots are empty.";
+    help.description = "The HUD Editor shows two elements for this module: Inventory Grid and Armor & Offhand. Drag each one on its own - moving the inventory never moves your armor, and the other way around. The boxes always cover the full grid and column, even when slots are empty. Enabling Armor & Offhand puts the column beside the grid; after that it keeps the position you give it.";
     schema.node(std::move(help));
     section("snapping", "Snapping", "editor");
     {
@@ -437,8 +491,28 @@ void InventoryHudModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
     std::lock_guard lock(m_configMutex);
 
+    // Configs saved before the armor column became its own HUD editor element
+    // only stored one anchor: the column sat at it and the grid was drawn one
+    // slot plus a separator to its right. Such a config is split below so the
+    // layout stays exactly where the user left it.
+    const bool singleAnchorConfig = !j.contains("hudEquipmentPosX") && !j.contains("hudEquipmentPosY") &&
+                                    j.contains("hudPosX") && j.contains("hudPosY");
+
     if (j.contains("hudPosX")) hudPosX = std::clamp(j["hudPosX"].get<float>(), 0.0f, 4000.0f);
     if (j.contains("hudPosY")) hudPosY = std::clamp(j["hudPosY"].get<float>(), 0.0f, 4000.0f);
+    const float sharedX = hudPosX;
+    const float sharedY = hudPosY;
+    if (singleAnchorConfig) {
+        hudEquipmentPosX = layout::UnplacedPosition;
+        hudEquipmentPosY = layout::UnplacedPosition;
+    } else {
+        // A negative value is the "never placed by the user" sentinel, so the
+        // clamp keeps it instead of pulling the column back onto the screen.
+        if (j.contains("hudEquipmentPosX"))
+            hudEquipmentPosX = std::clamp(j["hudEquipmentPosX"].get<float>(), layout::UnplacedPosition, 4000.0f);
+        if (j.contains("hudEquipmentPosY"))
+            hudEquipmentPosY = std::clamp(j["hudEquipmentPosY"].get<float>(), layout::UnplacedPosition, 4000.0f);
+    }
     if (j.contains("m_columns")) {
         m_columns = std::clamp(j["m_columns"].get<int>(),
                                static_cast<int>(layout::MinColumns), static_cast<int>(layout::MaxColumns));
@@ -458,6 +532,14 @@ void InventoryHudModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_snapToGrid")) m_snapToGrid = j["m_snapToGrid"].get<bool>();
     if (j.contains("m_snapToElements")) m_snapToElements = j["m_snapToElements"].get<bool>();
     if (j.contains("m_snapToScreenCenter")) m_snapToScreenCenter = j["m_snapToScreenCenter"].get<bool>();
+
+    if (singleAnchorConfig && m_showEquipment) {
+        layout::EquipmentLayout legacy = equipmentStyle();
+        hudEquipmentPosX = sharedX;
+        hudEquipmentPosY = sharedY;
+        hudPosX = std::clamp(sharedX + layout::equipmentClearance(legacy), 0.0f, 4000.0f);
+    }
+    placeEquipmentIfUnplaced();
 }
 
 void InventoryHudModule::saveConfig(nlohmann::json& j) {
@@ -466,6 +548,8 @@ void InventoryHudModule::saveConfig(nlohmann::json& j) {
 
     j["hudPosX"] = hudPosX;
     j["hudPosY"] = hudPosY;
+    j["hudEquipmentPosX"] = hudEquipmentPosX;
+    j["hudEquipmentPosY"] = hudEquipmentPosY;
     j["m_columns"] = m_columns;
     j["m_slotSize"] = m_slotSize;
     j["m_slotGap"] = m_slotGap;
