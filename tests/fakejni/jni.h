@@ -3,11 +3,10 @@
 // Minimal host-side stand-in for the Android NDK's <jni.h>.
 //
 // The unit tests in this directory exercise Android-only code paths
-// (ExternalButtonRefresh, the Hit Sound module's android.media.SoundPool
-// playback, and pl/Mod.hpp which includes <jni.h>) on a desktop compiler.
-// This header mirrors the small JNI API surface they use, with the same call
-// syntax as the real header (variadic Call*Method members that forward to a
-// *V hook, like jni.h's inline wrappers do).
+// (ExternalButtonRefresh, and pl/Mod.hpp which includes <jni.h>) on a desktop
+// compiler. This header mirrors the small JNI API surface they use, with the
+// same call syntax as the real header (variadic Call*Method members that
+// forward to a *V hook, like jni.h's inline wrappers do).
 //
 // It is NOT a JVM: every entry point is a hook assigned by the test.
 // Host tests only - never include this from product code.
@@ -19,7 +18,6 @@ using jsize = std::int32_t;
 using jint = std::int32_t;
 using jlong = std::int64_t;
 using jboolean = std::uint8_t;
-using jchar = std::uint16_t;
 
 constexpr jint JNI_OK = 0;
 constexpr jint JNI_ERR = -1;
@@ -52,19 +50,13 @@ struct JNIEnv {
     jfieldID (*GetFieldIDFn)(JNIEnv *, jclass, const char *, const char *) = nullptr;
     jclass (*GetSuperclassFn)(JNIEnv *, jclass) = nullptr;
     jobject (*NewLocalRefFn)(JNIEnv *, jobject) = nullptr;
-    jobject (*NewGlobalRefFn)(JNIEnv *, jobject) = nullptr;
-    void (*DeleteGlobalRefFn)(JNIEnv *, jobject) = nullptr;
     jobject (*CallStaticObjectMethodVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jint (*CallStaticIntMethodVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jobject (*CallObjectMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
     void (*CallVoidMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
-    jobject (*NewObjectVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
-    jint (*CallIntMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
-    jboolean (*CallBooleanMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
     jobject (*GetObjectFieldFn)(JNIEnv *, jobject, jfieldID) = nullptr;
     void (*SetObjectFieldFn)(JNIEnv *, jobject, jfieldID, jobject) = nullptr;
     jstring (*NewStringUTFFn)(JNIEnv *, const char *) = nullptr;
-    jstring (*NewStringFn)(JNIEnv *, const jchar *, jsize) = nullptr;
     jsize (*GetStringUTFLengthFn)(JNIEnv *, jstring) = nullptr;
     const char *(*GetStringUTFCharsFn)(JNIEnv *, jstring, jboolean *) = nullptr;
     void (*ReleaseStringUTFCharsFn)(JNIEnv *, jstring, const char *) = nullptr;
@@ -86,8 +78,6 @@ struct JNIEnv {
     }
     jclass GetSuperclass(jclass c) { return GetSuperclassFn(this, c); }
     jobject NewLocalRef(jobject o) { return NewLocalRefFn(this, o); }
-    jobject NewGlobalRef(jobject o) { return NewGlobalRefFn(this, o); }
-    void DeleteGlobalRef(jobject o) { DeleteGlobalRefFn(this, o); }
     jboolean ExceptionCheck() { return ExceptionCheckFn(this); }
     void ExceptionClear() { ExceptionClearFn(this); }
     void DeleteLocalRef(jobject o) { DeleteLocalRefFn(this, o); }
@@ -95,7 +85,6 @@ struct JNIEnv {
     jobject GetObjectField(jobject o, jfieldID f) { return GetObjectFieldFn(this, o, f); }
     void SetObjectField(jobject o, jfieldID f, jobject v) { return SetObjectFieldFn(this, o, f, v); }
     jstring NewStringUTF(const char *s) { return NewStringUTFFn(this, s); }
-    jstring NewString(const jchar *chars, jsize len) { return NewStringFn(this, chars, len); }
     jsize GetStringUTFLength(jstring s) { return GetStringUTFLengthFn(this, s); }
     const char *GetStringUTFChars(jstring s, jboolean *isCopy) {
         return GetStringUTFCharsFn(this, s, isCopy);
@@ -130,27 +119,6 @@ struct JNIEnv {
         va_start(ap, m);
         CallVoidMethodVFn(this, o, m, ap);
         va_end(ap);
-    }
-    jobject NewObject(jclass c, jmethodID m, ...) {
-        va_list ap;
-        va_start(ap, m);
-        jobject r = NewObjectVFn(this, c, m, ap);
-        va_end(ap);
-        return r;
-    }
-    jint CallIntMethod(jobject o, jmethodID m, ...) {
-        va_list ap;
-        va_start(ap, m);
-        jint r = CallIntMethodVFn(this, o, m, ap);
-        va_end(ap);
-        return r;
-    }
-    jboolean CallBooleanMethod(jobject o, jmethodID m, ...) {
-        va_list ap;
-        va_start(ap, m);
-        jboolean r = CallBooleanMethodVFn(this, o, m, ap);
-        va_end(ap);
-        return r;
     }
 };
 

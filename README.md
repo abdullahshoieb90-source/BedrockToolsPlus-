@@ -69,15 +69,11 @@ The change is fully client-side and visual only; it does not affect servers, acc
 
 ## Hit Sound
 
-The **Hit Sound** module plays a custom sound of your choice every time you land a hit on a mob or another player — with a melee attack or with an arrow.
+The **Hit Sound** module plays a custom sound of your choice every time you land a melee hit on a mob or another player.
 
 1. Put sound files (`.wav`, `.ogg`, `.mp3`, `.m4a` or `.flac` — ideally short one-shot effects; a `Sample Hit.wav` is generated for you on first launch) into the `hitsounds` folder next to your `config.json` (`<mod config dir>/hitsounds`, created automatically on first launch).
 2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Hit Sound**.
 3. Pick a file in the module's **Sound** selector — every audio file in the folder shows up there. Choose `None` to keep the vanilla behavior. The **Volume** slider sets how loud the sound plays.
-
-Only damage that actually lands plays the sound: swings that whiff, hits blocked by a shield or rejected by the server, and arrows that hit a block stay silent.
-
-**Arrow Hits** (on by default) covers bows, crossbows and tridents. The game never tells a client mod that one of your arrows landed, so the module watches the actors around you while it is enabled: a projectile that spawns at you and flies away counts as your shot, and a victim's hurt flash while that shot is in flight is the arrow landing. That is why an arrow you did not shoot — a skeleton's, for example — plays nothing, and why turning the toggle off restores the old melee-only behaviour at no per-tick cost.
 
 The sound is a purely client-side overlay: the victim's own hurt sound is not cancelled or replaced, and nothing is sent to the server. Files whose names contain a comma are ignored (the menu picker cannot represent them), and sounds that fail to decode on your device are simply skipped.
 
