@@ -68,6 +68,19 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
+        hitsound_module_test)
+            # Compiles the real Hit Sound module for the Android path: the
+            # SoundPool engine goes through the host JNI fake and the
+            # nearby-actor fetch / actor memory / config JSON are faked by the
+            # test itself. Only the event bus is linked in for real.
+            extra+=(-I "${root}/tests/fakejni")
+            if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
+                extra+=(-I "${json_inc}")
+            else
+                extra+=(-I "${root}/tests/fakejson")
+            fi
+            extra_srcs+=("${root}/src/core/events/Events.cpp")
+            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the

@@ -4,6 +4,9 @@
 #include "../../config/ConfigManager.hpp"
 #include "../../launcher/ExternalButtonRefresh.hpp"
 #include <bedrocktools/events/EventBus.hpp>
+#include <bedrocktools/memory/Signatures.hpp>
+#include <bedrocktools/sdk/Memory.hpp>
+#include <bedrocktools/sdk/Offsets.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -42,11 +45,57 @@ constexpr auto kHitConfirmWindow = milliseconds(1000);
 // of unconfirmed swings at any moment is tiny; cap the list regardless.
 constexpr std::size_t kMaxPendingHits = 8;
 
-// hurtTime counts down from the maximum hurt flash (a handful of ticks) after
-// each hit; values outside this range mean the pointer is not a live actor,
-// so never read or trust them.
-constexpr int kHurtTimeMin = 0;
-constexpr int kHurtTimeMax = 100;
+// Radius of the nearby-actor fetch the arrow path uses. Big enough for any
+// shot worth hearing about and in line with what the Hitbox module fetches.
+constexpr float kActorFetchRadius = 32.0f;
+
+// hurtTime bookkeeping (plausible range, jump detection) lives in
+// hitsound_projectile.hpp so the melee and projectile paths share one rule.
+using hitsound::hurtTimeIsPlausible;
+
+// Actor::fetchNearbyActorsSorted(Vec3 const&, ActorType). The game builds the
+// list and returns it by value, so the caller owns the buffer; the type
+// argument is the same "everything" filter the Hitbox module passes.
+struct DistanceSortedActor {
+    void* mActor;
+    float mDistance;
+    float mPadding;
+};
+
+struct ActorVec {
+    DistanceSortedActor* begin;
+    DistanceSortedActor* end;
+    DistanceSortedActor* cap;
+};
+
+using FetchNearbyActorsFn = ActorVec (*)(void*, void*, int);
+
+// Resolved once. All signatures are resolved before the modules initialise,
+// and a miss simply leaves the arrow path off rather than breaking melee.
+FetchNearbyActorsFn fetchNearbyActorsFn() {
+    static const FetchNearbyActorsFn resolved = [] {
+        const auto address = bedrocktools::memory::resolve(
+            bedrocktools::memory::SignatureId::ActorFetchNearbyActorsSorted);
+        return address ? reinterpret_cast<FetchNearbyActorsFn>(address) : nullptr;
+    }();
+    return resolved;
+}
+
+// The tick's motion of an actor: the SDK exposes the current position, and the
+// previous-tick position sits right next to it in the same component (the pair
+// is what drives the game's partial-tick interpolation).
+bedrocktools::sdk::Vec3 previousPosition(const bedrocktools::sdk::Actor* actor) {
+    const auto* component = actor->stateVectorComponent();
+    if (!component) return {};
+    return bedrocktools::sdk::field<bedrocktools::sdk::Vec3>(
+        component, bedrocktools::sdk::offsets::StateVectorComponent::mPreviousPosition);
+}
+
+hitsound::Point3 toPoint(bedrocktools::sdk::Vec3 value) { return {value.x, value.y, value.z}; }
+
+long long monotonicMillis() {
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 // ---------------------------------------------------------------------------
 // Android audio engine, built on android.media.SoundPool — the platform API
@@ -323,7 +372,7 @@ void audioReleaseAll() {}
 
 HitSoundModule::HitSoundModule()
     : Module("Hit Sound",
-             "Plays a sound from the hitsounds folder only when a mob or player actually takes damage from your hit.") {
+             "Plays a sound from the hitsounds folder only when a mob or player actually takes damage from your melee hit or your arrow.") {
     g_hitSound = this;
 }
 
@@ -346,20 +395,23 @@ void HitSoundModule::onInit() {
 
     // Damage confirmation runs here: in singleplayer the victim's hurt-time is
     // already set on the tick after the swing, and in multiplayer it rises a
-    // few ticks later when the server confirms the hit.
+    // few ticks later when the server confirms the hit. The arrow path uses
+    // the same tick to look at the actors around the player.
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
-        [](auto&) {
-            if (g_hitSound && g_hitSound->enabled) g_hitSound->onTickCheck();
+        [](auto& event) {
+            if (g_hitSound && g_hitSound->enabled) g_hitSound->onTickCheck(event.player);
         });
 }
 
 void HitSoundModule::onEnable() {
     m_pendingHits.clear();
+    m_projectileTracker.reset();
     audioLoadFile(m_currentPath);
 }
 
 void HitSoundModule::onDisable() {
     m_pendingHits.clear();
+    m_projectileTracker.reset();
     audioUnload();
 }
 
@@ -371,9 +423,10 @@ void HitSoundModule::onAttack(bedrocktools::sdk::Actor* target) {
 
     // The attack hook fires BEFORE the original attack runs, so this is the
     // victim's pre-swing state: if the hit actually lands its hurt-time gets
-    // bumped to the top of its countdown, which onTickCheck() watches for.
+    // bumped to the top of its countdown, which confirmPendingMeleeHits()
+    // watches for.
     const int baseline = target->hurtTime();
-    if (baseline < kHurtTimeMin || baseline > kHurtTimeMax) return;
+    if (!hurtTimeIsPlausible(baseline)) return;
 
     // Rapid repeated swings at the same target are normal (auto-swing): fold
     // them into the same entry instead of stacking duplicates that would play
@@ -390,8 +443,8 @@ void HitSoundModule::onAttack(bedrocktools::sdk::Actor* target) {
     m_pendingHits.push_back(PendingHit{target, baseline, now});
 }
 
-void HitSoundModule::onTickCheck() {
-    if (m_pendingHits.empty()) return;
+bool HitSoundModule::confirmPendingMeleeHits() {
+    if (m_pendingHits.empty()) return false;
 
     const auto now = steady_clock::now();
     bool played = false;
@@ -406,7 +459,7 @@ void HitSoundModule::onTickCheck() {
 
         // Implausible value: the actor object is gone and its memory has been
         // recycled. Drop the entry instead of trusting the read.
-        if (hurtTime < kHurtTimeMin || hurtTime > kHurtTimeMax) {
+        if (!hurtTimeIsPlausible(hurtTime)) {
             it = m_pendingHits.erase(it);
             continue;
         }
@@ -430,14 +483,69 @@ void HitSoundModule::onTickCheck() {
         }
     }
 
-    if (played) {
-        // Safety net: if the sound is not in the pool yet (e.g. the module was
-        // enabled before the JVM handle was available) queue the load now.
-        // audioLoadFile() is a cheap no-op when the path is already loaded,
-        // and the decode itself runs off the game thread.
-        audioLoadFile(m_currentPath);
-        audioPlay(m_volume);
+    return played;
+}
+
+bool HitSoundModule::scanProjectileHits(bedrocktools::sdk::Player* player, bool suppressHit) {
+    const auto fetch = fetchNearbyActorsFn();
+    if (!fetch || !player) return false;
+
+    // The player's own position is the reference for "did this projectile
+    // spawn at me", so bail out when it cannot be read.
+    const auto* playerComponent = player->stateVectorComponent();
+    if (!playerComponent) return false;
+    const hitsound::Point3 playerPosition = toPoint(player->position());
+
+    bedrocktools::sdk::Vec3 extent{kActorFetchRadius, kActorFetchRadius, kActorFetchRadius};
+    const ActorVec actors = fetch(player, &extent, 1);
+
+    m_snapshots.clear();
+    if (actors.begin && actors.end > actors.begin) {
+        m_snapshots.reserve(static_cast<std::size_t>(actors.end - actors.begin));
+        for (const DistanceSortedActor* it = actors.begin; it != actors.end; ++it) {
+            auto* actor = static_cast<bedrocktools::sdk::Actor*>(it->mActor);
+            if (!actor) continue;
+
+            hitsound::ActorSnapshot snapshot;
+            snapshot.id = it->mActor;
+            snapshot.categories = actor->categories();
+            snapshot.hurtTime = actor->hurtTime();
+            const bedrocktools::sdk::Vec3 position = actor->position();
+            const bedrocktools::sdk::Vec3 previous = previousPosition(actor);
+            snapshot.position = toPoint(position);
+            snapshot.delta = toPoint(bedrocktools::sdk::Vec3{position.x - previous.x,
+                                                             position.y - previous.y,
+                                                             position.z - previous.z});
+            m_snapshots.push_back(snapshot);
+        }
     }
+
+    // The list came back by value, so its buffer is ours to release — exactly
+    // what the vector's destructor would do. The mod and the game share the
+    // same global operator new/delete (the version hook hands std::strings
+    // built here to the game to destroy), so this matches how it was allocated.
+    ::operator delete(actors.begin);
+
+    return m_projectileTracker.update(player, playerPosition, m_snapshots.data(), m_snapshots.size(),
+                                      monotonicMillis(), suppressHit) != nullptr;
+}
+
+void HitSoundModule::onTickCheck(bedrocktools::sdk::Player* player) {
+    // Melee first: it knows its victim exactly. When it plays, the arrow path
+    // still runs but is told to stay quiet, so the same damage — seen by both
+    // paths on the same tick — plays the sound exactly once.
+    bool played = confirmPendingMeleeHits();
+
+    if (m_arrowHits && !m_currentPath.empty() && scanProjectileHits(player, played)) played = true;
+
+    if (!played) return;
+
+    // Safety net: if the sound is not in the pool yet (e.g. the module was
+    // enabled before the JVM handle was available) queue the load now.
+    // audioLoadFile() is a cheap no-op when the path is already loaded,
+    // and the decode itself runs off the game thread.
+    audioLoadFile(m_currentPath);
+    audioPlay(m_volume);
 }
 
 void HitSoundModule::loadConfig(const nlohmann::json& j) {
@@ -464,6 +572,11 @@ void HitSoundModule::loadConfig(const nlohmann::json& j) {
         if (m_volume > 1.0f) m_volume = 1.0f;
     }
 
+    if (j.contains("m_arrowHits") && j["m_arrowHits"].is_boolean()) {
+        m_arrowHits = j["m_arrowHits"].get<bool>();
+    }
+    if (!m_arrowHits) m_projectileTracker.reset();
+
     if (m_selectedIndex != previousIndex) refreshSelectionPath();
 }
 
@@ -475,6 +588,8 @@ void HitSoundModule::saveConfig(nlohmann::json& j) {
     refreshSelectionPath();
     j["m_sound"] = hitsound::makeRadioValue(m_selectedIndex, m_files);
     j["m_volume"] = m_volume;
+    // Surfaced by the launcher menu as the "Arrow Hits" toggle.
+    j["m_arrowHits"] = m_arrowHits;
 }
 
 void HitSoundModule::ensureSoundsDirectory() {
