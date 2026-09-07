@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../Module.hpp"
-#include "hitsound_projectile.hpp"
 #include <bedrocktools/sdk/world/Actor.hpp>
 #include <chrono>
 #include <string>
@@ -9,7 +8,7 @@
 
 // Hit Sound
 //
-// Lets the player pick a custom sound that plays only when one of their hits
+// Lets the player pick a custom sound that plays only when a melee attack
 // actually deals damage to a mob or another player — swings that whiff, hit
 // during the attack cooldown, get blocked or are rejected by the server stay
 // silent. The attack hook fires before the damage is applied (and a few ticks
@@ -17,13 +16,6 @@
 // swing as a pending hit and watches the victim's hurt-time field on the
 // player ticks afterwards: it plays only once the field rises, proving the
 // target took the hit.
-//
-// Arrows work the same way but need to find their victim first: no hook in the
-// game reports that a bow shot landed, so the module watches the nearby actors
-// while the module is on (toggle "Arrow Hits", on by default) and treats a
-// projectile that spawns at the player and flies away as a shot — see
-// hitsound_projectile.hpp for the detection rule. A hurt-time jump while such
-// a shot is in flight is the arrow landing and plays the same sound.
 //
 // The module owns a "hitsounds" directory next to config.json
 // (`<configDir>/hitsounds`, created on first launch together with a generated
@@ -66,8 +58,8 @@ public:
     void onAttack(bedrocktools::sdk::Actor* target);
 
     // Called on every local-player tick to verify pending hits against the
-    // victims' current hurt-time and to check the projectiles in flight.
-    void onTickCheck(bedrocktools::sdk::Player* player);
+    // victims' current hurt-time.
+    void onTickCheck();
 
     // Directory the module watches; exposed for the menu description.
     const std::string& soundsDirectory() const { return m_dir; }
@@ -83,13 +75,6 @@ private:
     };
     void ensureSoundsDirectory();
     void writeSampleWav(const std::string& path) const;
-    // Melee: confirms the pending swings and reports whether the sound should
-    // play for this tick.
-    bool confirmPendingMeleeHits();
-    // Projectiles: feeds one tick's nearby actors to m_projectileTracker and
-    // reports whether one of the player's arrows was confirmed to land.
-    // `suppressHit` is set when the melee path already plays this tick.
-    bool scanProjectileHits(bedrocktools::sdk::Player* player, bool suppressHit);
     // Derives m_currentPath from m_selectedIndex + m_files ("" when None) and,
     // while the module is enabled, preloads the selection into the SoundPool.
     void refreshSelectionPath();
@@ -100,17 +85,11 @@ private:
     std::string m_currentPath;        // absolute path of the selected file, empty when None
 
     float m_volume = 0.8f;            // 0..1, clamped
-    bool m_arrowHits = true;          // also play for arrows that land
 
     // Swings awaiting damage confirmation; only touched on the game thread
     // (attack hook + LocalPlayerTickEvent), so no extra synchronisation is
     // needed. Bounded to kMaxPendingHits entries.
     std::vector<PendingHit> m_pendingHits;
-
-    // Projectile state, game thread only as well. m_snapshots is a scratch
-    // buffer reused every tick so the arrow path allocates nothing once warm.
-    hitsound::ProjectileTracker m_projectileTracker;
-    std::vector<hitsound::ActorSnapshot> m_snapshots;
 };
 
 extern HitSoundModule* g_hitSound;
