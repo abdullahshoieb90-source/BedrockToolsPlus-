@@ -422,6 +422,10 @@ void EspModule::onFrame() {
     const float thickness = std::clamp(boxThickness, 0.5f, 20.0f);
     const float nametagSize = std::clamp(nametagScale, 0.5f, 2.0f) * 14.0f;
     const float subSize = nametagSize * 0.8f;
+    // Off-screen clamp for projections: an entity straddling the camera plane
+    // projects far outside the surface, and keeping the coordinates to a few
+    // screen sizes keeps the launcher's draw commands finite.
+    const float boxLimit = std::max(proj.width, proj.height) * 4.0f;
 
     // First-person camera check for the local-player ESP. Until the game has
     // reported a perspective value, stay conservative and hide the self ESP
@@ -446,31 +450,24 @@ void EspModule::onFrame() {
             return;
         }
 
-        // Project the eight AABB corners and take the tight 2D bounding box.
-        const Vec3 corners[8] = {
-            {aabb.min.x, aabb.min.y, aabb.min.z}, {aabb.min.x, aabb.min.y, aabb.max.z},
-            {aabb.min.x, aabb.max.y, aabb.min.z}, {aabb.min.x, aabb.max.y, aabb.max.z},
-            {aabb.max.x, aabb.min.y, aabb.min.z}, {aabb.max.x, aabb.min.y, aabb.max.z},
-            {aabb.max.x, aabb.max.y, aabb.min.z}, {aabb.max.x, aabb.max.y, aabb.max.z},
-        };
+        // Project the AABB to its tight 2D box. The corners that fall behind
+        // the near plane are clipped away by projectBox, so an entity pressed
+        // right up against the camera still spans the whole screen instead of
+        // collapsing to the few corners that survived.
+        const esp::ScreenBox screen =
+            esp::projectBox(camera, proj, aabb.min, aabb.max, boxLimit);
+        if (!screen.visible) return;
 
-        float minX = 1e30f, minY = 1e30f, maxX = -1e30f, maxY = -1e30f;
-        bool any = false;
-        for (const Vec3& corner : corners) {
-            float sx, sy;
-            if (!esp::project(camera, proj, corner, sx, sy)) continue;
-            any = true;
-            minX = std::min(minX, sx);
-            minY = std::min(minY, sy);
-            maxX = std::max(maxX, sx);
-            maxY = std::max(maxY, sy);
+        // Nothing to draw once the box has slid completely off the surface.
+        if (screen.maxX < 0.0f || screen.minX > proj.width ||
+            screen.maxY < 0.0f || screen.minY > proj.height) {
+            return;
         }
-        if (!any || maxX < minX || maxY < minY) return;
 
-        const float boxLeft = minX;
-        const float boxTop = minY;
-        const float boxRight = maxX;
-        const float boxBottom = maxY;
+        const float boxLeft = screen.minX;
+        const float boxTop = screen.minY;
+        const float boxRight = screen.maxX;
+        const float boxBottom = screen.maxY;
         const float boxW = boxRight - boxLeft;
         const float boxH = boxBottom - boxTop;
         const float centerX = (boxLeft + boxRight) * 0.5f;

@@ -1,8 +1,8 @@
 // Host-side fake of <nlohmann/json.hpp> for tests that only need the tiny
-// slice of the API the modules use (contains / operator[] / get<T> /
-// scalar assignment). Prefer the real nlohmann_json headers from the xmake
-// package cache when they are available (see scripts/run_tests.sh); this
-// fake exists so those tests can still run standalone.
+// slice of the API the modules use (contains / value / operator[] /
+// get<T> / scalar assignment). Prefer the real nlohmann_json headers from
+// the xmake package cache when they are available (see scripts/run_tests.sh);
+// this fake exists so those tests can still run standalone.
 #pragma once
 
 #include <map>
@@ -27,6 +27,16 @@ public:
         static const json empty;
         const auto it = m_children.find(key);
         return it == m_children.end() ? empty : it->second;
+    }
+
+    // value(key, fallback): the real API returns the stored value when the key
+    // is present and the fallback otherwise (the modules use this for every
+    // optional setting).
+    template <class T>
+    T value(const std::string& key, const T& fallback) const {
+        const auto it = m_children.find(key);
+        if (it == m_children.end()) return fallback;
+        return it->second.get<T>();
     }
 
     bool is_string() const { return m_type == Type::String; }
