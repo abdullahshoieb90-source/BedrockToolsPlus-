@@ -26,6 +26,11 @@ static const ExplicitDependency kExplicitDependencies[] = {
     {"indicatorDefaultColor", "hitboxIndicator"},
     {"indicatorActiveColor", "hitboxIndicator"},
 
+    // Block Outline: these names do not begin with their owning toggle, and
+    // toggle children need an explicit relationship.
+    {"lineThickness", "outline"},
+    {"fillFaceOnly", "fill"},
+
     // Effect Display: how the level is rendered only matters while the level
     // is shown at all.
     {"m_romanLevels", "m_showLevel"},
