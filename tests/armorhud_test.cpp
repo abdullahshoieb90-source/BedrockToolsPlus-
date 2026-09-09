@@ -74,7 +74,13 @@ struct PaintedIcon {
     float x;
     float y;
 };
+struct FilledCell {
+    hud::RectangleArea area;
+    hud::Color color;
+    float alpha;
+};
 std::vector<PaintedIcon> icons;
+std::vector<FilledCell> fills;
 std::vector<pl::modmenu::DrawCommand> commands;
 std::vector<pl::modmenu::HudEditorElement> elements;
 std::string schemaJson;
@@ -103,6 +109,9 @@ int fakeDamage(void* stack) {
 
 hud::RectangleArea fakeClip(void*) { return {0.0f, 1000.0f, 0.0f, 1000.0f}; }
 void fakeFlush(void*, const hud::Color&, float, const hud::HashedString&) {}
+void fakeFill(void*, const hud::RectangleArea& area, const hud::Color& color, float alpha) {
+    fills.push_back({area, color, alpha});
+}
 void fakeDestroyContext(void*) {}
 void fakeCreateContext(void* context, void*, void*, void*) {
     static void* vtable[] = {reinterpret_cast<void*>(fakeDestroyContext)};
@@ -256,6 +265,7 @@ int main() {
     std::array<void*, offsets::VTable::MinecraftUIRenderContextGetFullClippingRectangle + 1> contextVtable{};
     contextVtable[offsets::VTable::MinecraftUIRenderContextGetFullClippingRectangle] = reinterpret_cast<void*>(fakeClip);
     contextVtable[offsets::VTable::MinecraftUIRenderContextFlushImages] = reinterpret_cast<void*>(fakeFlush);
+    contextVtable[offsets::VTable::MinecraftUIRenderContextFillRectangle] = reinterpret_cast<void*>(fakeFill);
     Storage<offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext + sizeof(void*)> context;
     put(context.bytes, 0, contextVtable.data());
     put(context.bytes, offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext, &renderTag);
@@ -265,6 +275,7 @@ int main() {
     module.setMasterEnabled(true);
     auto frame = [&] {
         icons.clear();
+        fills.clear();
         module.renderNative(context.bytes, &client);
         module.onFrame();
     };
@@ -282,6 +293,18 @@ int main() {
     check(!findText("1"), "single items do not get redundant stack counts");
     check(findText("220/363") && findText("528/528") && findText("0/495") && findText("428/429"),
           "all four armor slots show clamped remaining/maximum durability by default");
+
+    // Slot backgrounds are on by default: every visible slot — empty or not —
+    // gets a cell behind its icon, painted in the same native pass.
+    check(fills.size() == 5, "default slot backgrounds cover the five visible slots");
+    check(near(fills[0].area.x0, 24.0f) && near(fills[0].area.x1, 56.0f) &&
+              near(fills[0].area.y0, 200.0f) && near(fills[0].area.y1, 232.0f),
+          "the first cell sits exactly under the helmet slot");
+    check(near(fills[4].area.y0, 200.0f + 4.0f * 36.0f) && near(fills[4].area.x0, 24.0f),
+          "the offhand slot has its own cell below the boots");
+    check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 0.0f) &&
+              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 114,
+          "default cells are black at the configured 45% opacity");
     const auto* label = findText("220/363");
     check(label && near(label->h, 32.0f) && near(label->size, 12.0f), "armor label is centered within its row");
 
@@ -370,6 +393,44 @@ int main() {
               near(roundTrip["hudPosX"].get<float>(), saved["hudPosX"].get<float>()) &&
               near(roundTrip["hudPosY"].get<float>(), saved["hudPosY"].get<float>()),
           "options and position round-trip");
+    check(saved.contains("m_slotBackground") && saved.contains("m_slotBgOpacity") &&
+              saved.contains("m_slotBgColor") && roundTrip.contains("m_slotBackground") &&
+              roundTrip["m_slotBackground"].get<bool>() == saved["m_slotBackground"].get<bool>(),
+          "slot background options are saved and round-trip");
+
+    // Slot backgrounds follow the module's own options: they can be turned
+    // off, they skip a hidden offhand slot, and they stay for empty slots.
+    config["m_slotBackground"] = false;
+    module.loadConfig(config);
+    frame();
+    check(fills.empty() && findIcon(armor.stack(0)),
+          "slot backgrounds can be switched off without hiding the icons");
+    config["m_slotBackground"] = true;
+    config["m_showOffhand"] = false;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 4 && !findIcon(heldStack.bytes),
+          "a hidden offhand slot gets neither an icon nor a background cell");
+    config["m_showOffhand"] = true;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 5 && near(fills[4].area.y0, 12.0f + 4.0f * 36.0f),
+          "re-enabling the offhand restores its cell below the boots");
+    setStack(armor.stack(1), nullptr, 0); // an empty chestplate slot
+    frame();
+    check(fills.size() == 5 && !findIcon(armor.stack(1)),
+          "empty slots keep their background cell");
+    setStack(armor.stack(1), &counters[1], 1);
+
+    config["m_slotBgColor"] = "#00FF00";
+    config["m_slotBgOpacity"] = 0.8f;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 5 && near(fills[0].area.x0, 500.0f),
+          "styled backgrounds still cover every visible slot");
+    check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 1.0f) && near(fills[0].color.b, 0.0f) &&
+              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 204,
+          "background color and opacity are applied to the cells");
 
     config["m_showArmorDurability"] = true;
     config["m_slotSize"] = 8.0f;
@@ -391,6 +452,11 @@ int main() {
     check(schemaJson.find("m_horizontal") != std::string::npos &&
               schemaJson.find("m_showOffhand") != std::string::npos,
           "menu exposes the module's own layout and offhand options");
+    check(schemaJson.find("m_slotBackground") != std::string::npos &&
+              schemaJson.find("m_slotBgOpacity") != std::string::npos &&
+              schemaJson.find("m_slotBgColor") != std::string::npos &&
+              schemaJson.find("Slot Background") != std::string::npos,
+          "menu exposes the slot background option");
 
     // Old configs stored these settings inside Inventory HUD; the migration
     // turns such a section into a config for this module.

@@ -73,7 +73,13 @@ struct PaintedIcon {
     float x;
     float y;
 };
+struct FilledCell {
+    hud::RectangleArea area;
+    hud::Color color;
+    float alpha;
+};
 std::vector<PaintedIcon> icons;
+std::vector<FilledCell> fills;
 std::vector<pl::modmenu::DrawCommand> commands;
 std::vector<pl::modmenu::HudEditorElement> elements;
 std::string schemaJson;
@@ -102,6 +108,9 @@ int fakeDamage(void* stack) {
 
 hud::RectangleArea fakeClip(void*) { return {0.0f, 1000.0f, 0.0f, 1000.0f}; }
 void fakeFlush(void*, const hud::Color&, float, const hud::HashedString&) {}
+void fakeFill(void*, const hud::RectangleArea& area, const hud::Color& color, float alpha) {
+    fills.push_back({area, color, alpha});
+}
 void fakeDestroyContext(void*) {}
 void fakeCreateContext(void* context, void*, void*, void*) {
     static void* vtable[] = {reinterpret_cast<void*>(fakeDestroyContext)};
@@ -229,6 +238,7 @@ int main() {
     std::array<void*, offsets::VTable::MinecraftUIRenderContextGetFullClippingRectangle + 1> contextVtable{};
     contextVtable[offsets::VTable::MinecraftUIRenderContextGetFullClippingRectangle] = reinterpret_cast<void*>(fakeClip);
     contextVtable[offsets::VTable::MinecraftUIRenderContextFlushImages] = reinterpret_cast<void*>(fakeFlush);
+    contextVtable[offsets::VTable::MinecraftUIRenderContextFillRectangle] = reinterpret_cast<void*>(fakeFill);
     Storage<offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext + sizeof(void*)> context;
     put(context.bytes, 0, contextVtable.data());
     put(context.bytes, offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext, &renderTag);
@@ -238,6 +248,7 @@ int main() {
     module.setMasterEnabled(true);
     auto frame = [&] {
         icons.clear();
+        fills.clear();
         module.renderNative(context.bytes, &client);
         module.onFrame();
     };
@@ -252,6 +263,18 @@ int main() {
           "inventory items are painted");
     check(findText("64"), "inventory stack counts remain visible");
     check(!findText("1"), "single items do not get redundant stack counts");
+
+    // Slot backgrounds are on by default and cover all 27 cells of the grid,
+    // so empty slots keep their place.
+    check(fills.size() == 27, "default slot backgrounds cover all 27 grid cells");
+    check(near(fills[0].area.x0, 24.0f) && near(fills[0].area.x1, 56.0f) &&
+              near(fills[0].area.y0, 200.0f) && near(fills[0].area.y1, 232.0f),
+          "the first cell sits exactly under the first grid slot");
+    check(near(fills[26].area.x0, 24.0f + 8.0f * 36.0f) && near(fills[26].area.y0, 200.0f + 2.0f * 36.0f),
+          "the last cell sits at the bottom-right of the 9x3 grid");
+    check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 0.0f) &&
+              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 114,
+          "default cells are black at the configured 45% opacity");
 
     const auto* firstIcon = findIcon(inventory.stack(9));
     const auto* gridElement = findElement(GridElementId);
@@ -311,10 +334,33 @@ int main() {
     config["m_columns"] = 9;
     module.loadConfig(config);
 
+    // Slot backgrounds follow the module's options.
+    config["m_slotBackground"] = false;
+    module.loadConfig(config);
+    frame();
+    check(fills.empty() && findIcon(inventory.stack(9)),
+          "slot backgrounds can be switched off without hiding the grid");
+    config["m_slotBackground"] = true;
+    config["m_slotBgColor"] = "#0000FF";
+    config["m_slotBgOpacity"] = 0.8f;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 27 && near(fills[13].area.x0, 120.0f + 4.0f * 36.0f) &&
+              near(fills[13].area.y0, 300.0f + 36.0f),
+          "styled backgrounds follow the grid geometry");
+    check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 1.0f) &&
+              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 204,
+          "background color and opacity are applied");
+
     module.onMenuRegistered();
     check(schemaJson.find("m_showStackCount") != std::string::npos &&
               schemaJson.find("Number Text") != std::string::npos,
           "menu exposes the grid options");
+    check(schemaJson.find("m_slotBackground") != std::string::npos &&
+              schemaJson.find("m_slotBgOpacity") != std::string::npos &&
+              schemaJson.find("m_slotBgColor") != std::string::npos &&
+              schemaJson.find("Slot Background") != std::string::npos,
+          "menu exposes the slot background option");
     check(schemaJson.find("m_showEquipment") == std::string::npos,
           "menu no longer offers the armor option");
 

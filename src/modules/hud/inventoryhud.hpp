@@ -55,6 +55,8 @@ private:
         bool stackCount = true;
         bool durability = true;
         bool hideInContainer = true;
+        bool slotBackground = true;
+        std::uint32_t slotBgColor = 0x73000000u; // "#000000" at 45%
         float countTextSize = 12.0f;
         std::uint32_t countColor = 0xFFFFFFFFu;
         float gridSize = 16.0f;
@@ -81,6 +83,9 @@ private:
     bool m_showStackCount = true;
     bool m_showDurability = true;
     bool m_hideInContainer = true;
+    bool m_slotBackground = true;
+    float m_slotBgOpacity = 0.45f;
+    std::string m_slotBgColor = "#000000";
     float m_countTextSize = 12.0f;
     std::string m_countColor = "#FFFFFF";
 

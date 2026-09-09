@@ -112,6 +112,12 @@ public:
     // Paints the icon of `stack` into the HUD-space square (hudX, hudY, hudSize).
     bool draw(void* stack, void* item, float hudX, float hudY, float hudSize);
 
+    // Fills a HUD-space rectangle (hudX, hudY, hudW, hudH) with an ARGB color
+    // through the same UI context the icons use. Call it before draw() for a
+    // slot: fills are submitted first, so the icons of the same pass always
+    // land on top of them (slot backgrounds).
+    bool fillRect(float hudX, float hudY, float hudW, float hudH, std::uint32_t color);
+
     // Dyed leather armor loses its tinted pixels when the HUD opacity shader
     // constant is at its default; the fix is an extra pass at a high opacity
     // with the renderer's "20" mode for just those stacks. Only stacks for

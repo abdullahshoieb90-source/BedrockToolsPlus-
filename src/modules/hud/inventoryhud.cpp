@@ -90,6 +90,8 @@ InventoryHudModule::ConfigSnapshot InventoryHudModule::snapshotConfig() const {
     config.stackCount = m_showStackCount;
     config.durability = m_showDurability;
     config.hideInContainer = m_hideInContainer;
+    config.slotBackground = m_slotBackground;
+    config.slotBgColor = huditems::withOpacity(huditems::parseColor(m_slotBgColor, 0xFF000000u), m_slotBgOpacity);
     config.countTextSize = m_countTextSize;
     config.countColor = huditems::parseColor(m_countColor, 0xFFFFFFFFu);
     config.gridSize = m_gridSize;
@@ -153,6 +155,16 @@ void InventoryHudModule::renderNative(void* context, void* client) {
     }
 
     if (!painter.ready()) return;
+
+    // The slot cells are painted before the icons of the same pass, so each
+    // item stays on top of its background. Cells cover empty slots too,
+    // keeping the grid's shape steady while the inventory changes.
+    if (config.slotBackground) {
+        for (std::size_t i = 0; i < GridSlotCount; ++i) {
+            const SlotRect rect = layout::gridSlotRect(config.grid, i);
+            painter.fillRect(rect.x, rect.y, rect.size, rect.size, config.slotBgColor);
+        }
+    }
 
     // Dyed leather armor (and a few other tinted items) need the HUD opacity
     // fix pass first, otherwise their tinted pixels come out transparent.
@@ -333,6 +345,28 @@ void InventoryHudModule::onMenuRegistered() {
         color.description = "Used for stack counts.";
         schema.node(std::move(color));
     }
+    section("slot_background", "Slot Background", "details");
+    {
+        auto toggle = node("m_slotBackground", "Slot Background", "details", ConfigControlTypeV2::Toggle);
+        toggle.section = "slot_background";
+        toggle.description = "Draws a cell behind every slot of the grid, including empty ones, so the grid reads like the inventory screen.";
+        schema.node(std::move(toggle));
+
+        auto opacity = node("m_slotBgOpacity", "Background Opacity", "details", ConfigControlTypeV2::SliderFloat);
+        opacity.section = "slot_background";
+        opacity.minValue = "0.05";
+        opacity.maxValue = "1";
+        opacity.step = "0.05";
+        opacity.visibleWhen = {{"m_slotBackground", ConfigConditionOpV2::Truthy, {}}};
+        schema.node(std::move(opacity));
+
+        auto color = node("m_slotBgColor", "Background Color", "details", ConfigControlTypeV2::Color);
+        color.section = "slot_background";
+        color.defaultValue = "#000000";
+        color.visibleWhen = {{"m_slotBackground", ConfigConditionOpV2::Truthy, {}}};
+        color.description = "Color of the cells behind the slots; the opacity slider above sets how strongly they show.";
+        schema.node(std::move(color));
+    }
 
     section("auto_hide", "Automatic Hiding", "visibility");
     {
@@ -381,6 +415,9 @@ void InventoryHudModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_showStackCount")) m_showStackCount = j["m_showStackCount"].get<bool>();
     if (j.contains("m_showDurability")) m_showDurability = j["m_showDurability"].get<bool>();
     if (j.contains("m_hideInContainer")) m_hideInContainer = j["m_hideInContainer"].get<bool>();
+    if (j.contains("m_slotBackground")) m_slotBackground = j["m_slotBackground"].get<bool>();
+    if (j.contains("m_slotBgOpacity")) m_slotBgOpacity = std::clamp(j["m_slotBgOpacity"].get<float>(), 0.05f, 1.0f);
+    if (j.contains("m_slotBgColor")) m_slotBgColor = j["m_slotBgColor"].get<std::string>();
     if (j.contains("m_countTextSize")) m_countTextSize = std::clamp(j["m_countTextSize"].get<float>(), 6.0f, 40.0f);
     if (j.contains("m_countColor")) m_countColor = j["m_countColor"].get<std::string>();
     if (j.contains("m_gridSize")) m_gridSize = std::clamp(j["m_gridSize"].get<float>(), 1.0f, 100.0f);
@@ -403,6 +440,9 @@ void InventoryHudModule::saveConfig(nlohmann::json& j) {
     j["m_showStackCount"] = m_showStackCount;
     j["m_showDurability"] = m_showDurability;
     j["m_hideInContainer"] = m_hideInContainer;
+    j["m_slotBackground"] = m_slotBackground;
+    j["m_slotBgOpacity"] = m_slotBgOpacity;
+    j["m_slotBgColor"] = m_slotBgColor;
     j["m_countTextSize"] = m_countTextSize;
     j["m_countColor"] = m_countColor;
     j["m_gridSize"] = m_gridSize;
