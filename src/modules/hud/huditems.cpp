@@ -429,14 +429,20 @@ bool IconPainter::fillRect(float hudX, float hudY, float hudW, float hudH, std::
         mMapping.x(hudX + hudW),
         mMapping.y(hudY),
         mMapping.y(hudY + hudH)};
+    // Like flushImages()/drawText(), fillRectangle() blends with a separate
+    // opacity argument rather than Color::a: the caller packs the alpha into
+    // the top byte of `color` (see withOpacity), so it must be decoded and
+    // handed over as that trailing float. Leaving Color::a at 1.0 keeps the
+    // RGB untouched, so only the trailing opacity drives the transparency.
+    const float opacity = static_cast<float>((color >> 24) & 0xFF) / 255.0f;
     const Color tint{
         static_cast<float>((color >> 16) & 0xFF) / 255.0f,
         static_cast<float>((color >> 8) & 0xFF) / 255.0f,
         static_cast<float>(color & 0xFF) / 255.0f,
-        static_cast<float>((color >> 24) & 0xFF) / 255.0f};
+        1.0f};
     reinterpret_cast<MinecraftUIRenderContextFillRectangleFn>(
         vtable[offsets::VTable::MinecraftUIRenderContextFillRectangle])(
-        mContext, area, tint, 1.0f);
+        mContext, area, tint, opacity);
     // Like the icons, a queued fill only becomes visible when the image mesh
     // is flushed, so it counts as work for the destructor's flush.
     mDrewAny = true;
