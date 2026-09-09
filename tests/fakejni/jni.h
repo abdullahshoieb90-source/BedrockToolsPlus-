@@ -39,6 +39,8 @@ struct _jfieldID {};
 using jobject = _jobject *;
 using jclass = _jclass *;
 using jstring = _jobject *; // real JNI strings are opaque; pointer identity is enough here
+using jarray = _jobject *;
+using jobjectArray = _jobject *;
 using jmethodID = _jmethodID *;
 using jfieldID = _jfieldID *;
 
@@ -55,6 +57,8 @@ struct JNIEnv {
     jobject (*CallObjectMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
     void (*CallVoidMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
     jobject (*GetObjectFieldFn)(JNIEnv *, jobject, jfieldID) = nullptr;
+    jsize (*GetArrayLengthFn)(JNIEnv *, jarray) = nullptr;
+    jobject (*GetObjectArrayElementFn)(JNIEnv *, jobjectArray, jsize) = nullptr;
     void (*SetObjectFieldFn)(JNIEnv *, jobject, jfieldID, jobject) = nullptr;
     jstring (*NewStringUTFFn)(JNIEnv *, const char *) = nullptr;
     jsize (*GetStringUTFLengthFn)(JNIEnv *, jstring) = nullptr;
@@ -113,6 +117,10 @@ struct JNIEnv {
         jobject r = CallObjectMethodVFn(this, o, m, ap);
         va_end(ap);
         return r;
+    }
+    jsize GetArrayLength(jarray a) { return GetArrayLengthFn(this, a); }
+    jobject GetObjectArrayElement(jobjectArray a, jsize i) {
+        return GetObjectArrayElementFn(this, a, i);
     }
     void CallVoidMethod(jobject o, jmethodID m, ...) {
         va_list ap;

@@ -17,6 +17,13 @@
 //   * a thread that is already attached is used as-is (no attach/detach pair).
 //   * the attach is not leaked when the launcher classes cannot be found.
 //
+// It also covers the button-set cases fixed on top of that: switching a
+// Comment/Command slot on registers a native button the launcher has no
+// overlay for yet (refresh must ask for a show so it appears immediately),
+// and switching a slot off leaves an overlay with no native button behind
+// (refresh must hide + show to rebuild the module's group). Pure value edits
+// change no button and must not trigger either path (no hide/show churn).
+//
 // The launcher classes are faked through tests/fakejni/jni.h hooks, so the
 // production ExternalButtonRefresh.cpp translation unit is compiled and
 // exercised directly on the host.
@@ -92,13 +99,19 @@ FakeClass gButtonClass{"ExternalButton", nullptr, {"buttonId", "moduleId"}};
 FakeClass gOverlayBase{"ExternalOverlayBase", nullptr, {"overlayView"}};
 FakeClass gOverlayClass{"ExternalButtonOverlay", &gOverlayBase, {"button"}};
 FakeClass gMapClass{"java/util/Map", nullptr, {}};
+FakeClass gCollectionClass{"java/util/Collection", nullptr, {}};
 
 FakeMethod mGetInstance{"getInstance"};
 FakeMethod mGetCount{"getExternalButtonCount"};
 FakeMethod mGetButton{"getExternalButton"};
 FakeMethod mMapGet{"get"};
+FakeMethod mMapValues{"values"};
+FakeMethod mCollectionToArray{"toArray"};
 FakeMethod mApplyChanges{"applyConfigurationChanges"};
 FakeMethod mConfigure{"configureOverlayView"};
+FakeMethod mOverlayGetModuleId{"getModuleId"};
+FakeMethod mOverlayGetButtonId{"getButtonId"};
+FakeMethod mHandleExternalToggle{"handleExternalModuleToggle"};
 
 FakeField fOverlays{"externalButtonOverlayMap"};
 FakeField fButtonId{"buttonId"};
@@ -107,12 +120,15 @@ FakeField fOverlayButton{"button"};
 FakeField fOverlayView{"overlayView"};
 
 // Instances: two buttons registered in the bridge, one for Command Hotkey and
-// one owned by an unrelated module (Zoom), each with its own overlay.
+// one owned by an unrelated module (Zoom), each with its own overlay. Extra
+// fake buttons cover a slot switched on (registered, no overlay yet) and a
+// slot switched off (overlay still present, native button gone).
 FakeObject gManager{"manager"};
 FakeObject gMap{"map"};
 FakeObject gButtonStale{"button"};   // old definition still held by the overlay
 FakeObject gButtonFresh{"button"};   // freshly registered Command Hotkey button
 FakeObject gButtonZoom{"button"};    // belongs to another module
+FakeObject gButtonNew{"button"};     // Command Hotkey button registered but not shown yet
 FakeObject gOverlay{"overlay"};
 FakeObject gOverlayZoom{"overlay"};
 FakeObject gView{"view"};
@@ -120,7 +136,10 @@ FakeObject gViewZoom{"view"};
 FakeObject gModuleStr{"string", "bedrocktoolsplus.Command Hotkey"};
 FakeObject gZoomModuleStr{"string", "bedrocktoolsplus.Zoom"};
 FakeObject gButtonIdStr{"string", "bedrocktoolsplus.CommandHotkey.Button1"};
+FakeObject gButton2IdStr{"string", "bedrocktoolsplus.CommandHotkey.Button2"};
 FakeObject gZoomButtonIdStr{"string", "bedrocktoolsplus.Zoom.Button1"};
+FakeObject gValuesCollection{"collection"}; // Map.values() result
+FakeObject gValuesArray{"array"};           // Collection.toArray() result
 
 // VM / call bookkeeping.
 int g_attachCalls = 0;
@@ -129,6 +148,16 @@ int g_attachResult = JNI_OK;
 int g_getSuperclassCalls = 0;
 bool g_classesReachable = true;
 std::vector<std::string> g_log; // ordered events: "attach", "detach", "findclass:..."
+
+// Native bridge button registry (see the hk_CallStaticIntMethod /
+// hk_CallStaticObjectMethod hooks). Default: one Command Hotkey button with an
+// overlay plus one unrelated Zoom button.
+std::vector<jobject> g_bridgeButtons;
+// Contents of the overlay manager's externalButtonOverlayMap, enumerated by
+// the orphan-overlay scan (Map.values -> Collection.toArray).
+std::vector<jobject> g_overlayElements;
+// handleExternalModuleToggle calls made by the refresh ("show" / "hide").
+std::vector<std::string> g_toggleEvents;
 
 FakeObject* asFake(jobject o) { return static_cast<FakeObject*>(o); }
 
@@ -144,6 +173,7 @@ jclass hk_FindClass(JNIEnv*, const char* name) {
     if (std::strstr(name, "ExternalButtonOverlay")) return &gOverlayClass;
     if (std::strstr(name, "ExternalModBridge")) return &gBridgeClass;
     if (std::strcmp(name, "java/util/Map") == 0) return &gMapClass;
+    if (std::strcmp(name, "java/util/Collection") == 0) return &gCollectionClass;
     return nullptr;
 }
 
@@ -156,8 +186,14 @@ jmethodID hk_GetStaticMethodID(JNIEnv*, jclass c, const char* name, const char*)
 
 jmethodID hk_GetMethodID(JNIEnv*, jclass c, const char* name, const char*) {
     if (c == &gMapClass && std::strcmp(name, "get") == 0) return &mMapGet;
+    if (c == &gMapClass && std::strcmp(name, "values") == 0) return &mMapValues;
+    if (c == &gCollectionClass && std::strcmp(name, "toArray") == 0) return &mCollectionToArray;
+    if (c == &gManagerClass && std::strcmp(name, "handleExternalModuleToggle") == 0)
+        return &mHandleExternalToggle;
     if (c == &gOverlayClass && std::strcmp(name, "applyConfigurationChanges") == 0) return &mApplyChanges;
     if (c == &gOverlayClass && std::strcmp(name, "configureOverlayView") == 0) return &mConfigure;
+    if (c == &gOverlayClass && std::strcmp(name, "getModuleId") == 0) return &mOverlayGetModuleId;
+    if (c == &gOverlayClass && std::strcmp(name, "getButtonId") == 0) return &mOverlayGetButtonId;
     return nullptr;
 }
 
@@ -185,14 +221,16 @@ jobject hk_CallStaticObjectMethod(JNIEnv*, jclass c, jmethodID m, va_list ap) {
     if (m == &mGetInstance) return &gManager;
     if (m == &mGetButton) {
         const jint index = va_arg(ap, jint);
-        return index == 0 ? &gButtonFresh : &gButtonZoom;
+        if (index < 0 || static_cast<std::size_t>(index) >= g_bridgeButtons.size())
+            return nullptr;
+        return g_bridgeButtons[static_cast<std::size_t>(index)];
     }
     (void)c;
     return nullptr;
 }
 
 jint hk_CallStaticIntMethod(JNIEnv*, jclass, jmethodID m, va_list) {
-    return m == &mGetCount ? 2 : 0;
+    return m == &mGetCount ? static_cast<jint>(g_bridgeButtons.size()) : 0;
 }
 
 jobject hk_CallObjectMethod(JNIEnv*, jobject o, jmethodID m, va_list ap) {
@@ -200,11 +238,25 @@ jobject hk_CallObjectMethod(JNIEnv*, jobject o, jmethodID m, va_list ap) {
         const jobject key = va_arg(ap, jobject);
         if (key == &gButtonIdStr) return &gOverlay;
         if (key == &gZoomButtonIdStr) return &gOverlayZoom;
+        // gButton2IdStr has no overlay yet -> newly registered slot.
+        return nullptr;
     }
+    if (m == &mMapValues && o == &gMap) return &gValuesCollection;
+    if (m == &mCollectionToArray && o == &gValuesCollection) return &gValuesArray;
+    if (m == &mOverlayGetModuleId)
+        return o == &gOverlayZoom ? &gZoomModuleStr : &gModuleStr;
+    if (m == &mOverlayGetButtonId)
+        return o == &gOverlayZoom ? &gZoomButtonIdStr : &gButtonIdStr;
     return nullptr;
 }
 
 void hk_CallVoidMethod(JNIEnv*, jobject o, jmethodID m, va_list ap) {
+    if (m == &mHandleExternalToggle) {
+        (void)va_arg(ap, jobject); // module id string
+        const int enabled = va_arg(ap, int);
+        g_toggleEvents.push_back(enabled ? "show" : "hide");
+        return;
+    }
     FakeObject* overlay = asFake(o);
     if (m == &mApplyChanges) {
         ++overlay->applyChangesCalls;
@@ -214,12 +266,22 @@ void hk_CallVoidMethod(JNIEnv*, jobject o, jmethodID m, va_list ap) {
     }
 }
 
+jsize hk_GetArrayLength(JNIEnv*, jarray) {
+    return static_cast<jsize>(g_overlayElements.size());
+}
+
+jobject hk_GetObjectArrayElement(JNIEnv*, jobjectArray, jsize i) {
+    if (i < 0 || static_cast<std::size_t>(i) >= g_overlayElements.size()) return nullptr;
+    return g_overlayElements[static_cast<std::size_t>(i)];
+}
+
 jobject hk_GetObjectField(JNIEnv*, jobject o, jfieldID f) {
     if (f == &fOverlays) return &gMap;
     if (f == &fModuleId)
         return o == &gButtonZoom ? &gZoomModuleStr : &gModuleStr;
     if (f == &fButtonId)
-        return o == &gButtonZoom ? &gZoomButtonIdStr : &gButtonIdStr;
+        return o == &gButtonZoom ? &gZoomButtonIdStr
+                                 : o == &gButtonNew ? &gButton2IdStr : &gButtonIdStr;
     if (f == &fOverlayButton) return asFake(o)->currentButton;
     if (f == &fOverlayView) return o == &gOverlayZoom ? &gViewZoom : &gView;
     return nullptr;
@@ -294,6 +356,8 @@ void installHooks() {
     e.CallObjectMethodVFn = hk_CallObjectMethod;
     e.CallVoidMethodVFn = hk_CallVoidMethod;
     e.GetObjectFieldFn = hk_GetObjectField;
+    e.GetArrayLengthFn = hk_GetArrayLength;
+    e.GetObjectArrayElementFn = hk_GetObjectArrayElement;
     e.SetObjectFieldFn = hk_SetObjectField;
     e.NewStringUTFFn = hk_NewStringUTF;
     e.GetStringUTFLengthFn = hk_GetStringUTFLength;
@@ -314,6 +378,9 @@ void resetWorld() {
     g_attachResult = JNI_OK;
     g_classesReachable = true;
     g_log.clear();
+    g_bridgeButtons = {&gButtonFresh, &gButtonZoom};
+    g_overlayElements = {&gOverlay, &gOverlayZoom};
+    g_toggleEvents.clear();
 
     gOverlay.currentButton = &gButtonStale;
     gOverlay.applyChangesCalls = 0;
@@ -356,6 +423,31 @@ int main() {
     check(gOverlayZoom.applyChangesCalls == 0 && gOverlayZoom.configureCalls == 0,
           "other modules' overlays are left untouched");
     check(gOverlayZoom.currentButton == &gButtonZoom, "other modules' buttons are not swapped");
+    check(g_toggleEvents.empty(), "no button set change -> no hide/show churn");
+
+    std::printf("external button refresh (slot switched on - no overlay exists yet)\n");
+    resetWorld();
+    g_envMode = EnvMode::Detached;
+    // Adds gButtonNew: a Command Hotkey button registered with no overlay yet.
+    g_bridgeButtons = {&gButtonFresh, &gButtonZoom, &gButtonNew};
+    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
+
+    check(g_toggleEvents == std::vector<std::string>{"show"},
+          "newly registered button asks the launcher to show the module's buttons");
+    check(gOverlay.currentButton == &gButtonFresh,
+          "already visible buttons are still updated in place (no full rebuild)");
+
+    std::printf("external button refresh (slot switched off - stale overlay remains)\n");
+    resetWorld();
+    g_envMode = EnvMode::Detached;
+    // The Command Hotkey button was unregistered; only Zoom remains. The
+    // overlay for the removed button still lingers in the overlay manager.
+    g_bridgeButtons = {&gButtonZoom};
+    g_overlayElements = {&gOverlay, &gOverlayZoom};
+    bedrocktools::launcher::refreshExternalButtonsForModule("bedrocktoolsplus.Command Hotkey");
+
+    check(g_toggleEvents == std::vector<std::string>{"hide", "show"},
+          "orphaned overlay triggers a hide + show rebuild of the module's buttons");
 
     std::printf("external button refresh (already-attached thread)\n");
     resetWorld();
