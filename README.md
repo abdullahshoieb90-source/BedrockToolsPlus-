@@ -27,7 +27,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Inventory HUD
 
-Shows the 27 slots of your inventory grid on the HUD without opening the inventory. Under **Details** you can toggle **Stack Count** and **Durability Bar**, and **Number Text** changes the size and color of the stack counts.
+Shows the 27 slots of your inventory grid on the HUD without opening the inventory. Under **Details** you can toggle **Stack Count** and **Durability Bar**, **Number Text** changes the size and color of the stack counts, and **Slot Background** (on by default) draws a cell behind every slot — empty ones included — so the grid reads like the inventory screen. **Background Color** and **Background Opacity** style those cells.
 
 The module owns a single HUD Editor element, **Inventory Grid**. Armor and the offhand are no longer part of it — they live in the separate **Armor** module below.
 
@@ -37,6 +37,7 @@ The module owns a single HUD Editor element, **Inventory Grid**. Armor and the o
 
 - **Offhand Slot**, **Stack Count** and **Durability Bar** under **Details** control what is drawn on each slot.
 - **Armor Durability Numbers** is on by default and displays each piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of the durability bars, and its labels are part of the armor element.
+- **Slot Background** (on by default) draws a cell behind every armor and offhand slot — empty ones included — so the column reads like the inventory screen. **Background Color** and **Background Opacity** style those cells.
 - **Horizontal Layout** lays the five slots out in a row instead of a column.
 
 Configs saved while armor was still an Inventory HUD option are migrated automatically: the new module inherits the position, size and style you had, and it starts enabled only if **Armor & Offhand** was on.

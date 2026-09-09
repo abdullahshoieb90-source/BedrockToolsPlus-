@@ -89,6 +89,8 @@ using ItemStackBaseGetRawNameIdFn = std::string (*)(void*);
 using ItemRendererRenderGuiItemNewFn = std::uint64_t (*)(
     void*, void*, void*, unsigned int, unsigned char, std::uint64_t,
     float, float, float, float, float);
+using MinecraftUIRenderContextFillRectangleFn = void (*)(
+    void*, const RectangleArea&, const Color&, float);
 
 ActorGetOffhandSlotFn actorGetOffhandSlot = nullptr;
 BaseActorRenderContextCtorFn baseActorRenderContextCtor = nullptr;
@@ -411,6 +413,32 @@ bool IconPainter::paint(void* stack, void* item, float hudX, float hudY, float h
 
 bool IconPainter::draw(void* stack, void* item, float hudX, float hudY, float hudSize) {
     if (!paint(stack, item, hudX, hudY, hudSize, RegularItemMode)) return false;
+    mDrewAny = true;
+    return true;
+}
+
+bool IconPainter::fillRect(float hudX, float hudY, float hudW, float hudH, std::uint32_t color) {
+    if (mInFixPass || !mContext || !mMapping.valid || hudW <= 0.0f || hudH <= 0.0f) return false;
+    void** vtable = getVtable(mContext);
+    if (!vtable || !vtable[offsets::VTable::MinecraftUIRenderContextFillRectangle]) return false;
+
+    // Fills go through the game's own MinecraftUIRenderContext, so the
+    // rectangle must use the same UI coordinates the icons are painted in.
+    const RectangleArea area{
+        mMapping.x(hudX),
+        mMapping.x(hudX + hudW),
+        mMapping.y(hudY),
+        mMapping.y(hudY + hudH)};
+    const Color tint{
+        static_cast<float>((color >> 16) & 0xFF) / 255.0f,
+        static_cast<float>((color >> 8) & 0xFF) / 255.0f,
+        static_cast<float>(color & 0xFF) / 255.0f,
+        static_cast<float>((color >> 24) & 0xFF) / 255.0f};
+    reinterpret_cast<MinecraftUIRenderContextFillRectangleFn>(
+        vtable[offsets::VTable::MinecraftUIRenderContextFillRectangle])(
+        mContext, area, tint, 1.0f);
+    // Like the icons, a queued fill only becomes visible when the image mesh
+    // is flushed, so it counts as work for the destructor's flush.
     mDrewAny = true;
     return true;
 }
