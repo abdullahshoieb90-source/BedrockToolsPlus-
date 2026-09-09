@@ -12,9 +12,11 @@
 #include "modules/visual/esp_geometry.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 int g_failures = 0;
@@ -336,6 +338,115 @@ int main() {
             check(box.visible && box.maxX < 500.0f,
                   "an entity to the east gets a box left of center");
         }
+    }
+
+    // --- world-space geometry ----------------------------------------------
+    //
+    // The box outline, brackets and fill are no longer projected by the
+    // module: they are emitted as world-space primitives and placed by the
+    // game's own matrices, which is what keeps them glued to the entity while
+    // the view turns. These builders are the whole of that half, so they are
+    // pinned here.
+    {
+        std::printf("esp world geometry\n");
+
+        const bedrocktools::sdk::AABB box{{0.0f, 0.0f, 0.0f}, {1.0f, 2.0f, 4.0f}};
+
+        auto axisLength = [](const overlay::Segment& segment) {
+            const float dx = segment.to.x - segment.from.x;
+            const float dy = segment.to.y - segment.from.y;
+            const float dz = segment.to.z - segment.from.z;
+            return std::array{std::fabs(dx), std::fabs(dy), std::fabs(dz)};
+        };
+        auto isAxisAligned = [&](const overlay::Segment& segment) {
+            const auto spans = axisLength(segment);
+            int nonZero = 0;
+            for (const float span : spans) {
+                if (span > 0.0001f) ++nonZero;
+            }
+            return nonZero == 1;
+        };
+        auto lengthOf = [&](const overlay::Segment& segment) {
+            const auto spans = axisLength(segment);
+            return spans[0] + spans[1] + spans[2]; // axis-aligned, so a sum works
+        };
+
+        std::vector<overlay::Segment> edges;
+        esp::world::addBoxEdges(edges, box);
+        check(edges.size() == 12, "the box style emits the twelve edges of the AABB");
+        check(std::all_of(edges.begin(), edges.end(), isAxisAligned),
+              "every edge runs along exactly one world axis");
+
+        float edgeLength = 0.0f;
+        for (const auto& edge : edges) edgeLength += lengthOf(edge);
+        check(near(edgeLength, 4.0f * (1.0f + 2.0f + 4.0f)),
+              "the twelve edges cover the box perimeter exactly");
+
+        int touchesMin = 0, touchesMax = 0;
+        for (const auto& edge : edges) {
+            for (const Vec3* corner : {&edge.from, &edge.to}) {
+                if (near(corner->x, 0.0f) && near(corner->y, 0.0f) && near(corner->z, 0.0f)) ++touchesMin;
+                if (near(corner->x, 1.0f) && near(corner->y, 2.0f) && near(corner->z, 4.0f)) ++touchesMax;
+            }
+        }
+        check(touchesMin == 3 && touchesMax == 3,
+              "the extreme corners of the box are wired up");
+
+        std::vector<overlay::Segment> corners;
+        esp::world::addBoxCorners(corners, box, 0.33f);
+        check(corners.size() == 24, "the corner style trims every edge into two brackets");
+        check(std::all_of(corners.begin(), corners.end(), isAxisAligned),
+              "every bracket still runs along exactly one world axis");
+
+        const float expectedTrim = 0.33f * 1.0f; // shortest box side * fraction
+        bool evenBrackets = true;
+        for (const auto& bracket : corners) {
+            if (!near(lengthOf(bracket), expectedTrim, 0.0005f)) evenBrackets = false;
+        }
+        check(evenBrackets, "all brackets are the same world length, so they look even");
+
+        bool bracketEndsOnBox = true;
+        for (const auto& bracket : corners) {
+            for (const Vec3* point : {&bracket.from, &bracket.to}) {
+                const bool onFace = near(point->x, 0.0f) || near(point->x, 1.0f) ||
+                                    near(point->y, 0.0f) || near(point->y, 2.0f) ||
+                                    near(point->z, 0.0f) || near(point->z, 4.0f);
+                const bool inside = point->x >= -0.001f && point->x <= 1.001f &&
+                                    point->y >= -0.001f && point->y <= 2.001f &&
+                                    point->z >= -0.001f && point->z <= 4.001f;
+                if (!onFace || !inside) bracketEndsOnBox = false;
+            }
+        }
+        check(bracketEndsOnBox, "no bracket endpoint leaves the box");
+
+        std::vector<overlay::Quad> faces;
+        esp::world::addBoxFaces(faces, box);
+        check(faces.size() == 6, "the filled box is the six faces of the AABB");
+
+        float area = 0.0f;
+        bool facesOnBox = true;
+        for (const auto& face : faces) {
+            float low[3] = {1e30f, 1e30f, 1e30f};
+            float high[3] = {-1e30f, -1e30f, -1e30f};
+            for (const Vec3& corner : face.corners) {
+                const float point[3] = {corner.x, corner.y, corner.z};
+                for (int axis = 0; axis < 3; ++axis) {
+                    low[axis] = std::min(low[axis], point[axis]);
+                    high[axis] = std::max(high[axis], point[axis]);
+                }
+                const bool onShell = near(corner.x, 0.0f) || near(corner.x, 1.0f) ||
+                                     near(corner.y, 0.0f) || near(corner.y, 2.0f) ||
+                                     near(corner.z, 0.0f) || near(corner.z, 4.0f);
+                if (!onShell) facesOnBox = false;
+            }
+            // An axis-aligned face spans exactly two of the three axes.
+            float span[3] = {high[0] - low[0], high[1] - low[1], high[2] - low[2]};
+            std::sort(span, span + 3);
+            area += span[1] * span[2];
+        }
+        check(facesOnBox, "every face corner sits on the box shell");
+        check(near(area, 2.0f * (1.0f * 2.0f + 2.0f * 4.0f + 1.0f * 4.0f)),
+              "the six faces together are the box surface area");
     }
 
     std::printf("\n%d failure(s)\n", g_failures);
