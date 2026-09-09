@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <string>
+#include <vector>
 
 #if defined(__ANDROID__)
 #include <jni.h>
@@ -16,6 +17,109 @@ std::atomic<JavaVM*> gJavaVm{nullptr};
 
 void clearJavaException(JNIEnv* env) {
     if (env && env->ExceptionCheck()) env->ExceptionClear();
+}
+
+constexpr const char* kExternalButtonOverlayName =
+    "org/levimc/launcher/core/mods/inbuilt/overlay/ExternalButtonOverlay";
+
+// Scans the overlays the launcher currently keeps for `moduleId` and reports
+// whether any of them no longer has a matching native button (its slot was
+// switched off in the module settings). Such an overlay cannot be reached by
+// the per-button refresh loop - its native button is gone - so the launcher
+// has to be asked to rebuild the module's whole button group instead.
+//
+// Best-effort: returns false (leaving the current behavior unchanged) when
+// the launcher build does not expose the java.util.Map / Collection surface
+// or the ExternalButtonOverlay accessors used here.
+bool hasOrphanedOverlays(JNIEnv* env, jobject overlays, const std::string& moduleId,
+                         const std::vector<std::string>& nativeButtonIds) {
+    jclass mapClass = nullptr;
+    jclass collectionClass = nullptr;
+    jclass overlayClass = nullptr;
+    jobject values = nullptr;
+    jobject array = nullptr;
+    bool orphaned = false;
+
+    const auto cleanup = [&]() {
+        if (values) env->DeleteLocalRef(values);
+        if (array) env->DeleteLocalRef(array);
+        if (mapClass) env->DeleteLocalRef(mapClass);
+        if (collectionClass) env->DeleteLocalRef(collectionClass);
+        if (overlayClass) env->DeleteLocalRef(overlayClass);
+    };
+
+    mapClass = env->FindClass("java/util/Map");
+    collectionClass = env->FindClass("java/util/Collection");
+    overlayClass = env->FindClass(kExternalButtonOverlayName);
+    if (!mapClass || !collectionClass || !overlayClass || env->ExceptionCheck()) {
+        clearJavaException(env);
+        cleanup();
+        return false;
+    }
+
+    const jmethodID mapValues =
+        env->GetMethodID(mapClass, "values", "()Ljava/util/Collection;");
+    const jmethodID collectionToArray =
+        env->GetMethodID(collectionClass, "toArray", "()[Ljava/lang/Object;");
+    const jmethodID overlayModuleId =
+        env->GetMethodID(overlayClass, "getModuleId", "()Ljava/lang/String;");
+    const jmethodID overlayButtonId =
+        env->GetMethodID(overlayClass, "getButtonId", "()Ljava/lang/String;");
+    clearJavaException(env); // any missing accessor -> bail out below
+    if (!mapValues || !collectionToArray || !overlayModuleId || !overlayButtonId) {
+        cleanup();
+        return false;
+    }
+
+    values = env->CallObjectMethod(overlays, mapValues);
+    array = values ? env->CallObjectMethod(values, collectionToArray) : nullptr;
+    if (!values || !array || env->ExceptionCheck()) {
+        clearJavaException(env);
+        cleanup();
+        return false;
+    }
+
+    const jsize length = env->GetArrayLength(static_cast<jarray>(array));
+    for (jsize i = 0; i < length && !env->ExceptionCheck(); ++i) {
+        jobject overlay = env->GetObjectArrayElement(static_cast<jobjectArray>(array), i);
+        if (!overlay) continue;
+
+        bool moduleMatches = false;
+        jstring mod = static_cast<jstring>(env->CallObjectMethod(overlay, overlayModuleId));
+        if (mod) {
+            const char* actual = env->GetStringUTFChars(mod, nullptr);
+            moduleMatches = actual && moduleId == actual;
+            if (actual) env->ReleaseStringUTFChars(mod, actual);
+            env->DeleteLocalRef(mod);
+        }
+
+        if (moduleMatches) {
+            bool stillRegistered = false;
+            jstring id = static_cast<jstring>(env->CallObjectMethod(overlay, overlayButtonId));
+            if (id) {
+                const char* actual = env->GetStringUTFChars(id, nullptr);
+                if (actual) {
+                    for (const auto& nativeId : nativeButtonIds) {
+                        if (nativeId == actual) {
+                            stillRegistered = true;
+                            break;
+                        }
+                    }
+                }
+                if (actual) env->ReleaseStringUTFChars(id, actual);
+                env->DeleteLocalRef(id);
+            }
+            if (!stillRegistered) {
+                orphaned = true;
+                env->DeleteLocalRef(overlay);
+                break;
+            }
+        }
+        env->DeleteLocalRef(overlay);
+    }
+    clearJavaException(env);
+    cleanup();
+    return orphaned;
 }
 
 // Runs the actual overlay refresh. The caller guarantees that env belongs to
@@ -96,6 +200,16 @@ void refreshExternalButtonsAttached(JNIEnv* env, std::string_view moduleId) {
         overlayClass, "configureOverlayView", "(Landroid/view/View;)V");
     clearJavaException(env);
 
+    // Optional on older launcher builds: handleExternalModuleToggle makes the
+    // overlay manager create/remove the ExternalButtonOverlay instances for a
+    // module. Needed because slots switched on/off inside the module settings
+    // change the native button set, and the loop below can only update
+    // overlays that already exist. When it is absent the new/stale buttons
+    // degrade to the old behavior (they appear/disappear on a module toggle).
+    const jmethodID handleExternalToggle = env->GetMethodID(
+        managerClass, "handleExternalModuleToggle", "(Ljava/lang/String;Z)V");
+    clearJavaException(env);
+
     jobject manager = env->CallStaticObjectMethod(managerClass, getInstance);
     jobject overlays = manager ? env->GetObjectField(manager, overlaysField) : nullptr;
     if (!manager || !overlays || env->ExceptionCheck()) {
@@ -107,6 +221,14 @@ void refreshExternalButtonsAttached(JNIEnv* env, std::string_view moduleId) {
     const std::string moduleIdString(moduleId);
     jstring wantedModule = env->NewStringUTF(moduleIdString.c_str());
     const jint count = env->CallStaticIntMethod(bridgeClass, getCount);
+
+    // Button ids of this module currently registered in the native bridge.
+    // Used to tell newly registered buttons (no overlay yet) apart from
+    // buttons whose overlay is no longer backed by a native registration.
+    std::vector<std::string> nativeButtonIds;
+    nativeButtonIds.reserve(count > 0 ? static_cast<std::size_t>(count) : 0);
+    bool addedButton = false;
+
     for (jint i = 0; i < count && !env->ExceptionCheck(); ++i) {
         jobject button = env->CallStaticObjectMethod(bridgeClass, getButton, i);
         if (!button) continue;
@@ -134,6 +256,13 @@ void refreshExternalButtonsAttached(JNIEnv* env, std::string_view moduleId) {
         }
 
         jstring buttonId = static_cast<jstring>(env->GetObjectField(button, buttonIdField));
+        if (buttonId) {
+            const char* idChars = env->GetStringUTFChars(buttonId, nullptr);
+            if (idChars) {
+                nativeButtonIds.emplace_back(idChars);
+                env->ReleaseStringUTFChars(buttonId, idChars);
+            }
+        }
         jobject overlay = buttonId ? env->CallObjectMethod(overlays, mapGet, buttonId) : nullptr;
         if (overlay) {
             // Swap in the freshly registered button definition, then re-apply
@@ -153,6 +282,10 @@ void refreshExternalButtonsAttached(JNIEnv* env, std::string_view moduleId) {
                     env->DeleteLocalRef(overlayView);
                 }
             }
+        } else {
+            // Registered natively but the launcher has no overlay for it yet
+            // (the slot was just switched on). See the reconciliation below.
+            addedButton = true;
         }
         if (buttonId) env->DeleteLocalRef(buttonId);
         if (buttonModule) env->DeleteLocalRef(buttonModule);
@@ -160,6 +293,27 @@ void refreshExternalButtonsAttached(JNIEnv* env, std::string_view moduleId) {
         if (overlay) env->DeleteLocalRef(overlay);
     }
     clearJavaException(env);
+
+    // A slot switched on/off in the module settings changes the native button
+    // set. Newly registered buttons have no ExternalButtonOverlay yet and
+    // stale overlays are no longer reachable through the loop above, so make
+    // the overlay manager reconcile the module's visible button group:
+    //   * button added  -> show (re-scans the native registry and creates the
+    //     missing overlays without touching the ones already on screen);
+    //   * button removed -> hide + show, rebuilding the module's group from
+    //     the current registry so the stale overlay is dropped.
+    // Pure value edits (label text, size/color) never change the button set,
+    // so they keep the no-flicker in-place path above.
+    if (handleExternalToggle) {
+        if (addedButton) {
+            env->CallVoidMethod(manager, handleExternalToggle, wantedModule, JNI_TRUE);
+        } else if (hasOrphanedOverlays(env, overlays, moduleIdString, nativeButtonIds)) {
+            env->CallVoidMethod(manager, handleExternalToggle, wantedModule, JNI_FALSE);
+            env->CallVoidMethod(manager, handleExternalToggle, wantedModule, JNI_TRUE);
+        }
+        clearJavaException(env);
+    }
+
     if (wantedModule) env->DeleteLocalRef(wantedModule);
     env->DeleteLocalRef(overlays);
     env->DeleteLocalRef(manager);
