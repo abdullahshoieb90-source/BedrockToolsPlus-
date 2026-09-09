@@ -4,6 +4,10 @@
 //   * every custom style submits geometry after the cursor renderer fires
 //   * nothing is drawn before the vanilla cursor hook fires (freshness gate)
 //   * Style::Vanilla forwards to the game's own crosshair renderer
+//   * every style draws its own shape, inside the size budget, and scales
+//     linearly with the Size option
+//   * the style radio is generated from the style table, append-only so old
+//     configs keep resolving to the same shape
 //   * save/load round-trips every setting, including the style radio format
 //   * the outline pass is drawn first (dark, thicker) and RGB animates
 //   * the hit indicator recolors a custom crosshair without Hitbox enabled
@@ -21,6 +25,8 @@
 //         tests/crosshair_test.cpp -o /tmp/crosshair_test
 //     /tmp/crosshair_test
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <span>
@@ -89,11 +95,69 @@ namespace bedrocktools::events {
 
 namespace {
 
-int g_failures = 0;
+    int g_failures = 0;
 
 void check(bool condition, const char* what) {
     if (condition) std::printf("  ok   %s\n", what);
     else { std::printf("  FAIL %s\n", what); ++g_failures; }
+}
+
+// Builds one style without the overlay pipeline: the center is the origin and
+// the scale is 1, so the coordinates below are plain pixel offsets from the
+// aim point and can be compared against the documented shape metrics.
+std::vector<PLModMenu_DrawCommand> shapeFor(CrosshairModule::Style style, float scale = 1.0f) {
+    std::vector<PLModMenu_DrawCommand> cmds;
+    ShapePainter painter{cmds, 0.0f, 0.0f, 2.0f, 0xFF112233u};
+    buildShape(style, painter, scale);
+    return cmds;
+}
+
+// Shortest distance from the shape's center to a drawn primitive. Lines are
+// measured to their segment, filled rects (dots) to their nearest corner, so a
+// "center stays clear" check cannot be fooled by a primitive whose start point
+// is close while its body runs through the middle.
+float distanceToCenter(const PLModMenu_DrawCommand& c) {
+    if (c.type != PL_DRAW_LINE) {
+        float best = 1e9f;
+        const float corners[4][2] = {
+            {c.x, c.y}, {c.x + c.w, c.y}, {c.x, c.y + c.h}, {c.x + c.w, c.y + c.h}
+        };
+        for (const auto& corner : corners) {
+            const float dx = corner[0] < 0.0f ? -corner[0] : corner[0];
+            const float dy = corner[1] < 0.0f ? -corner[1] : corner[1];
+            // A rect that straddles the origin has a negative coordinate on
+            // one side, which puts the center inside it.
+            if ((c.x <= 0.0f && c.x + c.w >= 0.0f) && (c.y <= 0.0f && c.y + c.h >= 0.0f)) return 0.0f;
+            const float len = std::sqrt(dx * dx + dy * dy);
+            if (len < best) best = len;
+        }
+        return best;
+    }
+
+    const float x2 = c.x + c.w;
+    const float y2 = c.y + c.h;
+    const float vx = x2 - c.x;
+    const float vy = y2 - c.y;
+    const float lenSq = vx * vx + vy * vy;
+    float t = lenSq > 1e-6f ? -(c.x * vx + c.y * vy) / lenSq : 0.0f;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    const float px = c.x + vx * t;
+    const float py = c.y + vy * t;
+    return std::sqrt(px * px + py * py);
+}
+
+// Identity of a shape: type plus geometry of every primitive it submits.
+// Two styles with the same signature are the same crosshair.
+std::string shapeSignature(const std::vector<PLModMenu_DrawCommand>& cmds) {
+    std::string signature;
+    char part[64];
+    for (const auto& c : cmds) {
+        std::snprintf(part, sizeof part, "%d:%.2f,%.2f,%.2f,%.2f|", static_cast<int>(c.type),
+                      c.x, c.y, c.w, c.h);
+        signature += part;
+    }
+    return signature;
 }
 
 } // namespace
@@ -139,6 +203,247 @@ int main() {
     mod.onFrame();
     check(g_lastCmds.empty(), "vanilla style submits no overlay");
 
+    // -----------------------------------------------------------------------
+    // Shape geometry. Each custom style must draw something, must not collide
+    // with another style, must keep its size budget and - for the gapped
+    // reticles - must leave the exact aim point free.
+    // -----------------------------------------------------------------------
+    std::vector<std::string> signatures;
+    bool allDraw = true;
+    bool allDistinct = true;
+    bool allInBox = true;
+    for (int s = 1; s < (int)CrosshairModule::Style::Count; ++s) {
+        const auto cmds = shapeFor((CrosshairModule::Style)s);
+        if (cmds.empty()) allDraw = false;
+        const std::string signature = shapeSignature(cmds);
+        if (std::find(signatures.begin(), signatures.end(), signature) != signatures.end()) {
+            allDistinct = false;
+        }
+        signatures.push_back(signature);
+        for (const auto& c : cmds) {
+            if (std::fabs(c.x) > 26.0f || std::fabs(c.y) > 26.0f ||
+                std::fabs(c.x + c.w) > 26.0f || std::fabs(c.y + c.h) > 26.0f) {
+                allInBox = false;
+            }
+        }
+    }
+    check(allDraw, "every custom style submits geometry");
+    check(signatures.size() == (size_t)((int)CrosshairModule::Style::Count - 1),
+          "one shape per custom style value");
+    check(allDistinct, "no two styles draw the same shape");
+    check(allInBox, "every shape stays within 26 px of the center at scale 1");
+    check(shapeFor(CrosshairModule::Style::Vanilla).empty(), "vanilla style has no custom geometry");
+
+    struct ShapeCheck {
+        CrosshairModule::Style style;
+        size_t commands;
+        const char* what;
+    };
+    const ShapeCheck kShapeChecks[] = {
+        {CrosshairModule::Style::Cross, 4, "Cross keeps its four arms"},
+        {CrosshairModule::Style::CrossX, 8, "Cross X is four axis arms plus four diagonals"},
+        {CrosshairModule::Style::Vertical, 2, "Vertical is the top and bottom arm only"},
+        {CrosshairModule::Style::Horizontal, 2, "Horizontal is the left and right arm only"},
+        {CrosshairModule::Style::TShapeDown, 2, "T Shape Down is a stem plus a bottom bar"},
+        {CrosshairModule::Style::Brackets, 8, "Brackets is one L per corner"},
+        {CrosshairModule::Style::BracketsDot, 9, "Brackets Dot adds the center dot"},
+        {CrosshairModule::Style::Target, 41, "Target is two rings plus the center dot"},
+        {CrosshairModule::Style::RingTicks, 28, "Ring Ticks is a ring plus four outward ticks"},
+        {CrosshairModule::Style::BrokenRing, 40, "Broken Ring is four ten-segment arcs"},
+        {CrosshairModule::Style::Triangle, 3, "Triangle is three closed edges"},
+        {CrosshairModule::Style::Grid, 4, "Grid is two lines per axis"},
+        {CrosshairModule::Style::MilDot, 12, "Mil Dots is four arms plus eight dots"},
+        {CrosshairModule::Style::Converge, 8, "Converge is four inward chevrons"},
+    };
+    for (const auto& expected : kShapeChecks) {
+        check(shapeFor(expected.style).size() == expected.commands, expected.what);
+    }
+
+    // The gapped styles exist to keep the target unobstructed, so no primitive
+    // of theirs may reach into the center gap.
+    const CrosshairModule::Style kGapped[] = {
+        CrosshairModule::Style::Cross,   CrosshairModule::Style::CrossX,
+        CrosshairModule::Style::Vertical, CrosshairModule::Style::Horizontal,
+        CrosshairModule::Style::MilDot,  CrosshairModule::Style::Brackets,
+        CrosshairModule::Style::BrokenRing, CrosshairModule::Style::Grid,
+        CrosshairModule::Style::RingTicks, CrosshairModule::Style::Converge,
+    };
+    bool centerClear = true;
+    for (const auto style : kGapped) {
+        for (const auto& c : shapeFor(style)) {
+            if (distanceToCenter(c) < 2.5f) centerClear = false;
+        }
+    }
+    check(centerClear, "gapped styles keep the aim point free of geometry");
+
+    {
+        const auto cmds = shapeFor(CrosshairModule::Style::Vertical);
+        bool vertical = cmds.size() == 2;
+        for (const auto& c : cmds) {
+            if (c.type != PL_DRAW_LINE || std::fabs(c.x) > 0.01f || std::fabs(c.w) > 0.01f) vertical = false;
+        }
+        const float top = std::min(cmds[0].y, cmds[0].y + cmds[0].h);
+        const float bottom = std::max(cmds[1].y, cmds[1].y + cmds[1].h);
+        check(vertical && top < 0.0f && bottom > 0.0f && std::fabs(top + bottom) < 0.01f,
+              "Vertical draws two symmetric arms on the y axis");
+
+        const auto horiz = shapeFor(CrosshairModule::Style::Horizontal);
+        bool horizontal = horiz.size() == 2;
+        for (const auto& c : horiz) {
+            if (c.type != PL_DRAW_LINE || std::fabs(c.y) > 0.01f || std::fabs(c.h) > 0.01f) horizontal = false;
+        }
+        const float left = std::min(horiz[0].x, horiz[0].x + horiz[0].w);
+        const float right = std::max(horiz[1].x, horiz[1].x + horiz[1].w);
+        check(horizontal && left < 0.0f && right > 0.0f && std::fabs(left + right) < 0.01f,
+              "Horizontal draws two symmetric arms on the x axis");
+    }
+
+    {
+        // Brackets/BracketsDot: every arm starts on a corner of the box, which
+        // is what makes the frame read as four separate corners.
+        const float half = 9.0f * 1.1f;
+        const auto cmds = shapeFor(CrosshairModule::Style::Brackets);
+        bool onCorners = cmds.size() == 8;
+        for (const auto& c : cmds) {
+            if (std::fabs(std::fabs(c.x) - half) > 0.01f ||
+                std::fabs(std::fabs(c.y) - half) > 0.01f) {
+                onCorners = false;
+            }
+        }
+        check(onCorners, "Brackets anchors every arm on a box corner");
+    }
+
+    {
+        const auto cmds = shapeFor(CrosshairModule::Style::Target);
+        float nearest = 1e9f, farthest = 0.0f;
+        int lines = 0, dots = 0;
+        for (const auto& c : cmds) {
+            if (c.type == PL_DRAW_LINE) {
+                ++lines;
+                const float d = distanceToCenter(c);
+                if (d < nearest) nearest = d;
+                if (d > farthest) farthest = d;
+            } else {
+                ++dots;
+            }
+        }
+        check(lines == 40 && dots == 1, "Target draws a large and a small ring plus one dot");
+        check(nearest > 4.0f && farthest > 9.0f && farthest < 10.0f,
+              "Target rings stay concentric around the aim point");
+    }
+
+    {
+        // The broken ring's gaps sit on the axes, so no point of it may come
+        // closer than ~8.5 degrees to the horizontal or vertical line.
+        const auto cmds = shapeFor(CrosshairModule::Style::BrokenRing);
+        bool gapsOnAxes = cmds.size() == 40;
+        for (const auto& c : cmds) {
+            const float pts[2][2] = {{c.x, c.y}, {c.x + c.w, c.y + c.h}};
+            for (const auto& q : pts) {
+                const float ratio = std::min(std::fabs(q[0]), std::fabs(q[1])) /
+                                    std::max(std::fabs(q[0]), std::fabs(q[1]));
+                if (ratio < 0.15f) gapsOnAxes = false;
+            }
+        }
+        check(gapsOnAxes, "Broken Ring keeps its four gaps centered on the axes");
+    }
+
+    {
+        const auto cmds = shapeFor(CrosshairModule::Style::MilDot);
+        int dots = 0;
+        bool dotsOnArms = true;
+        for (const auto& c : cmds) {
+            if (c.type != PL_DRAW_RECT_FILLED) continue;
+            ++dots;
+            const float cx = c.x + c.w * 0.5f;
+            const float cy = c.y + c.h * 0.5f;
+            if (std::fabs(cx) > 0.01f && std::fabs(cy) > 0.01f) dotsOnArms = false;
+        }
+        check(dots == 8, "Mil Dots draws eight aiming dots");
+        check(dotsOnArms, "Mil Dots keeps every dot on one of the four arms");
+    }
+
+    {
+        const auto cmds = shapeFor(CrosshairModule::Style::Converge);
+        float maxX = 0.0f, maxY = 0.0f;
+        for (const auto& c : cmds) {
+            maxX = std::max({maxX, std::fabs(c.x), std::fabs(c.x + c.w)});
+            maxY = std::max({maxY, std::fabs(c.y), std::fabs(c.y + c.h)});
+        }
+        check(cmds.size() == 8 && std::fabs(maxX - maxY) < 0.01f,
+              "Converge is symmetric on both axes");
+    }
+
+    // Size scales every shape linearly, so a new style cannot drift off center
+    // or grow non-uniformly at the extremes of the slider.
+    bool linear = true;
+    for (int s = 1; s < (int)CrosshairModule::Style::Count; ++s) {
+        const auto one = shapeFor((CrosshairModule::Style)s, 1.0f);
+        const auto two = shapeFor((CrosshairModule::Style)s, 2.0f);
+        if (one.size() != two.size()) {
+            linear = false;
+            continue;
+        }
+        for (size_t i = 0; i < one.size(); ++i) {
+            if (std::fabs(two[i].x - 2.0f * one[i].x) > 0.01f ||
+                std::fabs(two[i].y - 2.0f * one[i].y) > 0.01f ||
+                std::fabs(two[i].w - 2.0f * one[i].w) > 0.01f ||
+                std::fabs(two[i].h - 2.0f * one[i].h) > 0.01f) {
+                linear = false;
+            }
+        }
+    }
+    check(linear, "every shape scales linearly with the Size option");
+
+    // The menu radio is generated from the style table: one label per style,
+    // in enum order, with the legacy indices untouched so configs written
+    // before the new shapes existed keep resolving to the same crosshair.
+    auto splitRadio = [](const std::string& text) {
+        std::vector<std::string> parts;
+        size_t start = 0;
+        while (true) {
+            const size_t comma = text.find(',', start);
+            if (comma == std::string::npos) {
+                parts.push_back(text.substr(start));
+                break;
+            }
+            parts.push_back(text.substr(start, comma - start));
+            start = comma + 1;
+        }
+        return parts;
+    };
+    nlohmann::json jRadio;
+    mod.saveConfig(jRadio);
+    const auto radio = splitRadio(jRadio["m_style"].get<std::string>());
+    check(radio.size() == (size_t)((int)CrosshairModule::Style::Count + 1),
+          "radio value carries one label per style");
+    bool labelsFollowEnum = radio.size() == (size_t)((int)CrosshairModule::Style::Count + 1);
+    if (labelsFollowEnum) {
+        for (int i = 0; i < (int)CrosshairModule::Style::Count; ++i) {
+            if (radio[(size_t)i + 1] != kStyleNames[i]) labelsFollowEnum = false;
+        }
+    }
+    check(labelsFollowEnum, "radio labels follow the style enum");
+    check(radio.size() > 17 && radio[1] == "Vanilla" && radio[2] == "Cross" && radio[17] == "Scope",
+          "legacy style indices keep their labels (Vanilla 0 ... Scope 16)");
+    std::vector<std::string> uniqueLabels(radio.begin() + 1, radio.end());
+    std::sort(uniqueLabels.begin(), uniqueLabels.end());
+    check(std::unique(uniqueLabels.begin(), uniqueLabels.end()) == uniqueLabels.end(),
+          "style labels are unique");
+
+    CrosshairModule probe;
+    bool styleRoundTrip = true;
+    for (int i = 0; i < (int)CrosshairModule::Style::Count; ++i) {
+        mod.m_style = static_cast<CrosshairModule::Style>(i);
+        nlohmann::json jStyle;
+        mod.saveConfig(jStyle);
+        probe.m_style = CrosshairModule::Style::Count;
+        probe.loadConfig(jStyle);
+        if (probe.m_style != static_cast<CrosshairModule::Style>(i)) styleRoundTrip = false;
+    }
+    check(styleRoundTrip, "every style index round-trips through the radio value");
+    mod.m_style = CrosshairModule::Style::Vanilla;
+
     // Config round-trip.
     mod.m_style = CrosshairModule::Style::Scope;
     mod.m_scale = 2.5f; mod.m_thickness = 4.0f; mod.m_opacity = 0.7f;
@@ -166,9 +471,13 @@ int main() {
     j3["m_style"] = "8,Square Dot,Diamond";
     mod3.loadConfig(j3);
     check(mod3.m_style == CrosshairModule::Style::SquareDot, "index,labels radio parses");
+    j3["m_style"] = "25,Broken Ring,Triangle";
+    mod3.loadConfig(j3);
+    check(mod3.m_style == CrosshairModule::Style::BrokenRing, "new style indices parse");
+    const auto styleBeforeBogus = mod3.m_style;
     j3["m_style"] = "99,Bogus";
     mod3.loadConfig(j3);
-    check(mod3.m_style == CrosshairModule::Style::SquareDot, "out-of-range index ignored");
+    check(mod3.m_style == styleBeforeBogus, "out-of-range index ignored");
 
     // Outline + RGB layering. mod3 is the module g_crosshairMod points at,
     // matching the production wiring.

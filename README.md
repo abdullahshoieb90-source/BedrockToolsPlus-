@@ -53,6 +53,20 @@ The module owns a single HUD Editor element, **Inventory Grid**. Armor and the o
 
 Configs saved while armor was still an Inventory HUD option are migrated automatically: the new module inherits the position, size and style you had, and it starts enabled only if **Armor & Offhand** was on.
 
+## Crosshair
+
+**Crosshair** replaces the game's own crosshair with one of 29 shapes drawn at the exact screen center. The **Style** picker is grouped by how the shape reads on screen:
+
+- **Marks** — Dot, Plus, X, T Shape, T Shape Down, Chevron, Arrow, Star
+- **Gapped crosses** — Cross, Cross Dot, Cross X, Vertical, Horizontal
+- **Rings** — Circle, Circle Dot, Circle Cross, Ring Ticks, Broken Ring, Target
+- **Boxes** — Square, Square Dot, Diamond, Triangle, Brackets, Brackets Dot, Grid
+- **Reticles** — Scope, Mil Dots, Converge
+
+Every shape shares the same controls: **Scale** and **Thickness** set the size and the line weight, **Color** plus **Opacity** style it, and **Outline** adds a dark back-pass so bright skies and sand stay readable. **Rgb** animates the hue through the whole wheel with **Rgb Speed** controlling the cycle. **Indicator** recolors the crosshair (with **Indicator Color**) while you are aiming at a mob or another player — the hit test lives in this module, so it works without enabling Hitbox. **Show Third Person** also draws the overlay while the camera is behind or in front of you; it is off by default, like vanilla.
+
+Selecting **Vanilla** gives the crosshair back to the game: the module then only tints the game's own crosshair when the indicator fires (and, on builds that cannot be tinted in place, briefly swaps it for a same-shaped overlay), so exactly one crosshair is ever on screen. New styles are always appended to the picker, so configs saved by an older version keep drawing the same shape.
+
 ## Wings
 
 The **Wings** module renders animated 3D wings on your back that flap, idle and glide with your movement. Open the module's **Wing Style** selector to choose a shape:

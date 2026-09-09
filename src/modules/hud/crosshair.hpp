@@ -9,12 +9,21 @@ extern CrosshairModule* g_crosshairMod;
 // Crosshair
 //
 // Replaces the vanilla crosshair (textures/gui/crosshair.png, drawn by
-// HudCursorRenderer) with one of 16 custom shapes drawn through the HUD
+// HudCursorRenderer) with one of 29 custom shapes drawn through the HUD
 // overlay. Color, scale, thickness, opacity, an outline pass, an
 // animated RGB (rainbow) mode and a hit indicator are configurable from
 // the mod menu. Selecting the "Vanilla" style restores the game's own
 // crosshair.png - the module then only draws when the hit indicator is
 // active and in-place tinting is unavailable.
+//
+// The picker is grouped by how the shapes read on screen: single marks (Dot,
+// Plus, X, T Shape, T Shape Down, Chevron, Arrow, Star), gapped crosses
+// (Cross, Cross Dot, Cross X, Vertical, Horizontal), rings (Circle, Circle
+// Dot, Circle Cross, Ring Ticks, Broken Ring, Target), boxes (Square, Square
+// Dot, Diamond, Triangle, Brackets, Brackets Dot, Grid) and reticles (Scope,
+// Mil Dots, Converge). Every one of them is pure line/rect geometry through
+// the same ShapePainter, so they all share the color, thickness, opacity and
+// outline options.
 //
 // "Show In Third Person" (m_showThirdPerson) controls whether the overlay
 // also appears while the camera is behind (1) or in front (2) of the
@@ -23,7 +32,9 @@ extern CrosshairModule* g_crosshairMod;
 class CrosshairModule : public Module {
 public:
     // The radio option order is persisted by index (see saveConfig), so new
-    // styles must only ever be appended at the end, never inserted.
+    // styles must only ever be appended at the end, never inserted. Every
+    // entry also needs a label in kStyleNames (crosshair.cpp) and a case in
+    // buildShape; a static_assert there catches a missing label.
     enum class Style : int {
         Vanilla = 0,   // game default crosshair.png (module draws nothing)
         Cross,         // classic 4-arm crosshair with a center gap
@@ -42,6 +53,19 @@ public:
         Arrow,         // upward pointing arrow
         Star,          // 8-spoke star/asterisk
         Scope,         // large circle with long thin arms (sniper style)
+        CrossX,        // cross and diagonal X at once, 8 gapped arms
+        Vertical,      // only the top and bottom arms
+        Horizontal,    // only the left and right arms
+        TShapeDown,    // bottom bar with a stem up to the center
+        Brackets,      // four corner brackets framing the aim point
+        BracketsDot,   // corner brackets + center dot
+        Target,        // bullseye: two rings + center dot
+        RingTicks,     // ring with four ticks pointing outwards
+        BrokenRing,    // ring split into four arcs, keeping the axes clear
+        Triangle,      // hollow triangle pointing up
+        Grid,          // tic-tac-toe grid around the aim point
+        MilDot,        // gapped cross with aiming dots on the arms
+        Converge,      // four chevrons pointing in at the center
         Count
     };
 

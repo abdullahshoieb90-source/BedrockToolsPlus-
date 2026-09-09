@@ -292,33 +292,91 @@ struct ShapePainter {
 
     // Square center dot with the given half size.
     void dot(float halfSize) const {
-        rect(-halfSize, -halfSize, halfSize * 2.0f, halfSize * 2.0f);
+        dotAt(0.0f, 0.0f, halfSize);
     }
 
-    // Hollow circle approximated with line segments, so only the well-known
-    // line primitive is needed. 24 segments stay smooth up to large scales.
-    void circle(float radius, int segments = 24) const {
-        const float step = 2.0f * kPi / static_cast<float>(segments);
+    // Square dot centered on an arbitrary offset from the crosshair center,
+    // used by the reticle styles that put aiming dots along their arms.
+    void dotAt(float x, float y, float halfSize) const {
+        rect(x - halfSize, y - halfSize, halfSize * 2.0f, halfSize * 2.0f);
+    }
+
+    // Arc between two angles in radians, approximated with line segments so
+    // only the well-known line primitive is needed. Ten segments fit a quarter
+    // turn; circle() below passes more for a whole ring.
+    void arc(float radius, float from, float to, int segments = 10) const {
+        const float step = (to - from) / static_cast<float>(segments);
         for (int i = 0; i < segments; ++i) {
-            const float a0 = static_cast<float>(i) * step;
-            const float a1 = static_cast<float>(i + 1) * step;
+            const float a0 = from + step * static_cast<float>(i);
+            const float a1 = a0 + step;
             line(radius * std::cos(a0), radius * std::sin(a0),
                  radius * std::cos(a1), radius * std::sin(a1));
         }
     }
+
+    // Hollow circle: a full turn of the arc above.
+    void circle(float radius, int segments = 24) const {
+        arc(radius, 0.0f, 2.0f * kPi, segments);
+    }
 };
+
+// Menu labels for the Style radio, indexed by CrosshairModule::Style. The
+// persisted radio value is generated from this table in saveConfig, so adding
+// a style means appending here plus the new enum entry and buildShape case -
+// no hand-written label list to keep in sync. Labels are append-only for the
+// same reason the enum is: the config stores the index.
+const char* const kStyleNames[] = {
+    "Vanilla", "Cross", "Dot", "Cross Dot", "Circle", "Circle Dot", "Circle Cross",
+    "Square", "Square Dot", "Diamond", "Plus", "X", "T Shape", "Chevron", "Arrow",
+    "Star", "Scope", "Cross X", "Vertical", "Horizontal", "T Shape Down", "Brackets",
+    "Brackets Dot", "Target", "Ring Ticks", "Broken Ring", "Triangle", "Grid",
+    "Mil Dots", "Converge",
+};
+
+constexpr int kStyleNameCount = static_cast<int>(sizeof(kStyleNames) / sizeof(kStyleNames[0]));
+
+static_assert(kStyleNameCount == static_cast<int>(CrosshairModule::Style::Count),
+              "every CrosshairModule::Style needs exactly one kStyleNames label");
+// Guards the two places that state the shape count in prose (the module
+// description below and the README): append a style, update the wording.
+static_assert(kStyleNameCount - 1 == 29,
+              "custom shape count changed - update the Crosshair module description");
 
 void buildShape(CrosshairModule::Style style, const ShapePainter& p, float s) {
     const float arm = 11.0f * s;  // arm length for cross-like shapes
     const float gap = 3.0f * s;   // empty space around the exact center
     const float radius = 9.0f * s;  // hollow-shape radius
     const float halfDot = 2.2f * s; // center dot half size
+    // A unit step along a diagonal costs sqrt(1/2) on each axis, so diagonal
+    // arms line up with the axis-aligned ones at the same length.
+    constexpr float kInvSqrt2 = 0.70710678f;
 
-    auto cross = [&](float from, float to) {
+    auto verticalArms = [&](float from, float to) {
         p.line(0.0f, -from, 0.0f, -to);  // top
         p.line(0.0f, from, 0.0f, to);    // bottom
+    };
+
+    auto horizontalArms = [&](float from, float to) {
         p.line(-from, 0.0f, -to, 0.0f);  // left
-        p.line(from, 0.0f, to, 0.0f);    // right
+        p.line(from, 0.0f, to, 0.0f);     // right
+    };
+
+    auto cross = [&](float from, float to) {
+        verticalArms(from, to);
+        horizontalArms(from, to);
+    };
+
+    // One L-shaped corner bracket per side of the box, each opening towards
+    // the center so the aim point stays inside an unbroken frame.
+    auto cornerBrackets = [&](float half, float leg) {
+        p.line(-half, -half, -half + leg, -half);
+        p.line(-half, -half, -half, -half + leg);
+        p.line(half, -half, half - leg, -half);
+        p.line(half, -half, half, -half + leg);
+        p.line(half, half, half - leg, half);
+        p.line(half, half, half, half - leg);
+        p.line(-half, half, -half + leg, half);
+        p.line(-half, half, -half, half - leg);
     };
 
     switch (style) {
@@ -428,9 +486,130 @@ void buildShape(CrosshairModule::Style style, const ShapePainter& p, float s) {
             break;
         }
 
+        case CrosshairModule::Style::CrossX: {
+            cross(gap, gap + arm);
+            const float from = gap * kInvSqrt2;
+            const float to = (gap + arm) * kInvSqrt2;
+            p.line(-from, -from, -to, -to);
+            p.line(from, from, to, to);
+            p.line(-to, from, -from, to);
+            p.line(from, -to, to, -from);
+            break;
+        }
+
+        case CrosshairModule::Style::Vertical:
+            verticalArms(gap, gap + arm);
+            break;
+
+        case CrosshairModule::Style::Horizontal:
+            horizontalArms(gap, gap + arm);
+            break;
+
+        case CrosshairModule::Style::TShapeDown: {
+            const float h = arm * 0.65f; // half bar width
+            p.line(0.0f, 0.0f, 0.0f, arm);   // stem down to the bar
+            p.line(-h, arm, h, arm);         // bottom bar
+            break;
+        }
+
+        case CrosshairModule::Style::Brackets:
+            cornerBrackets(radius * 1.1f, radius * 0.5f);
+            break;
+
+        case CrosshairModule::Style::BracketsDot:
+            cornerBrackets(radius * 1.1f, radius * 0.5f);
+            p.dot(halfDot);
+            break;
+
+        case CrosshairModule::Style::Target:
+            p.circle(radius * 1.1f);
+            p.circle(radius * 0.55f, 16);
+            p.dot(halfDot * 0.85f);
+            break;
+
+        case CrosshairModule::Style::RingTicks: {
+            const float r = radius * 0.85f;
+            p.circle(r);
+            // Short marks leaving the ring towards the four edges of the
+            // screen: they read as a scope dial without covering the target.
+            const float to = r + arm * 0.45f;
+            cross(r, to);
+            break;
+        }
+
+        case CrosshairModule::Style::BrokenRing: {
+            // Four arcs centred on the diagonals, so the gaps line up with
+            // the axes and the aim direction stays unobstructed.
+            for (int i = 0; i < 4; ++i) {
+                const float middle = kPi * 0.5f * static_cast<float>(i) + kPi * 0.25f;
+                p.arc(radius, middle - 0.6f, middle + 0.6f);
+            }
+            break;
+        }
+
+        case CrosshairModule::Style::Triangle: {
+            const float r = radius * 1.15f; // circumradius of the triangle
+            const float side = r * 0.866025f;
+            p.line(0.0f, -r, side, r * 0.5f);
+            p.line(side, r * 0.5f, -side, r * 0.5f);
+            p.line(-side, r * 0.5f, 0.0f, -r);
+            break;
+        }
+
+        case CrosshairModule::Style::Grid: {
+            // Two lines per axis, offset from the center so their crossings
+            // frame it instead of running through it.
+            const float off = radius * 0.5f;
+            const float len = arm;
+            p.line(-off, -len, -off, len);
+            p.line(off, -len, off, len);
+            p.line(-len, -off, len, -off);
+            p.line(-len, off, len, off);
+            break;
+        }
+
+        case CrosshairModule::Style::MilDot: {
+            cross(gap, gap + arm);
+            // Two dots per arm, halfway along it and just inside its tip. The
+            // names avoid "near"/"far": those are Windows compatibility macros.
+            const float midDot = gap + arm * 0.42f;
+            const float tipDot = gap + arm * 0.84f;
+            const float size = halfDot * 0.55f;
+            p.dotAt(0.0f, -midDot, size);
+            p.dotAt(0.0f, -tipDot, size);
+            p.dotAt(0.0f, midDot, size);
+            p.dotAt(0.0f, tipDot, size);
+            p.dotAt(-midDot, 0.0f, size);
+            p.dotAt(-tipDot, 0.0f, size);
+            p.dotAt(midDot, 0.0f, size);
+            p.dotAt(tipDot, 0.0f, size);
+            break;
+        }
+
+        case CrosshairModule::Style::Converge: {
+            // Four inward pointing chevrons; their tips define the aim point
+            // without any line crossing it.
+            const float d = gap + arm * 0.75f;
+            const float w = arm * 0.4f;
+            p.line(0.0f, -d, -w, -d - w);
+            p.line(0.0f, -d, w, -d - w);
+            p.line(0.0f, d, -w, d + w);
+            p.line(0.0f, d, w, d + w);
+            p.line(-d, 0.0f, -d - w, -w);
+            p.line(-d, 0.0f, -d - w, w);
+            p.line(d, 0.0f, d + w, -w);
+            p.line(d, 0.0f, d + w, w);
+            break;
+        }
+
         case CrosshairModule::Style::Vanilla:
         case CrosshairModule::Style::Count:
-        default:
+            // Vanilla lets the game draw its own texture, Count is only the
+            // sentinel. There is deliberately no `default` label here: an
+            // exhaustive switch turns a style that was added to the enum
+            // without a shape into a -Wswitch warning instead of a silently
+            // empty crosshair (the config loader rejects out-of-range indices,
+            // so no other value can reach this switch).
             break;
     }
 }
@@ -438,7 +617,7 @@ void buildShape(CrosshairModule::Style style, const ShapePainter& p, float s) {
 } // namespace
 
 CrosshairModule::CrosshairModule()
-    : Module("Crosshair", "Replaces the vanilla crosshair with 16 custom shapes. Color, size, thickness, outline, an animated RGB mode, a hit indicator and a show-in-third-person option are configurable.") {
+    : Module("Crosshair", "Replaces the vanilla crosshair with 29 custom shapes. Color, size, thickness, outline, an animated RGB mode, a hit indicator and a show-in-third-person option are configurable.") {
     // The crosshair always sits at the exact screen center; there is nothing
     // to drag in the HUD editor.
     hideInHudEditor = true;
@@ -672,9 +851,15 @@ void CrosshairModule::loadConfig(const nlohmann::json& j) {
 void CrosshairModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
 
-    j["m_style"] = std::to_string(static_cast<int>(m_style)) +
-        ",Vanilla,Cross,Dot,Cross Dot,Circle,Circle Dot,Circle Cross,"
-        "Square,Square Dot,Diamond,Plus,X,T Shape,Chevron,Arrow,Star,Scope";
+    // Launcher radio format: "<selectedIndex>,<label>,<label>...". The label
+    // list is generated from kStyleNames so it can never drift from the enum.
+    std::string styleValue = std::to_string(static_cast<int>(m_style));
+    for (const char* const name : kStyleNames) {
+        styleValue += ',';
+        styleValue += name;
+    }
+    j["m_style"] = styleValue;
+
     j["m_scale"] = m_scale;
     j["m_thickness"] = m_thickness;
     j["m_opacity"] = m_opacity;
