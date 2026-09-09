@@ -340,6 +340,125 @@ int main() {
         }
     }
 
+    // --- Tracer anchor ------------------------------------------------------
+    // The tracer has to end on the projected center (middle) of the entity's
+    // own box. Ending it on the 2D box's middle instead leaves it visibly
+    // detached from the hitbox, which is what these cases pin down: the 2D
+    // average and the true anchor disagree by design.
+    {
+        const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
+        const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
+
+        // The anchor is exactly the projection of the box's center.
+        {
+            const Vec3 mn{-0.3f, 0.0f, 4.7f};
+            const Vec3 mx{0.3f, 1.8f, 5.3f};
+            float ax = 0.0f, ay = 0.0f;
+            check(esp::projectBoxCenter(cam, proj, mn, mx, ax, ay),
+                  "the center anchor of a box ahead projects");
+            float px = 0.0f, py = 0.0f;
+            check(esp::project(cam, proj, {0.0f, 0.9f, 5.0f}, px, py) &&
+                      near(ax, px) && near(ay, py),
+                  "the anchor is the projection of the box center");
+            check(near(ax, 500.0f, 0.5f) && near(ay, 572.0f, 0.5f),
+                  "a dead-ahead anchor lands mid-hitbox");
+        }
+
+        // Dead ahead, the 2D box's middle sits off the true center: the near
+        // face wins the min/max over the anchor's depth, so the screen-space
+        // average is not where the hitbox middle lands.
+        {
+            const Vec3 mn{-0.3f, 0.0f, 4.7f};
+            const Vec3 mx{0.3f, 1.8f, 5.3f};
+            float ax = 0.0f, ay = 0.0f;
+            esp::projectBoxCenter(cam, proj, mn, mx, ax, ay);
+            const esp::ScreenBox box = esp::projectBox(cam, proj, mn, mx, 0.0f);
+            const float boxCenterY = (box.minY + box.maxY) * 0.5f;
+            check(box.visible && std::fabs(boxCenterY - ay) > 1.0f,
+                  "dead ahead, the 2D box middle drifts off the center anchor");
+        }
+
+        // Off-axis, the 2D box's middle is shifted sideways as well: the
+        // projected box is asymmetric, so its screen-space middle is not
+        // where the hitbox's middle lands.
+        {
+            const Vec3 mn{2.0f, 0.0f, 4.0f};
+            const Vec3 mx{4.0f, 1.8f, 6.0f};
+            float ax = 0.0f, ay = 0.0f;
+            check(esp::projectBoxCenter(cam, proj, mn, mx, ax, ay),
+                  "the center anchor of an off-axis box projects");
+            check(near(ax, 200.0f, 0.5f) && near(ay, 572.0f, 0.5f),
+                  "the off-axis anchor lands mid-hitbox");
+            const esp::ScreenBox box = esp::projectBox(cam, proj, mn, mx, 0.0f);
+            const float boxCenterX = (box.minX + box.maxX) * 0.5f;
+            const float boxCenterY = (box.minY + box.maxY) * 0.5f;
+            check(box.visible && std::fabs(boxCenterX - ax) > 5.0f &&
+                      std::fabs(boxCenterY - ay) > 5.0f,
+                  "off-axis, the 2D box middle drifts off the anchor");
+        }
+
+        // An anchor behind the camera is rejected, so the caller can fall
+        // back to the 2D box instead of mirroring the line across the screen.
+        {
+            float ax = 0.0f, ay = 0.0f;
+            check(!esp::projectBoxCenter(cam, proj, {-0.3f, 0.0f, -10.0f},
+                                         {0.3f, 1.8f, -9.0f}, ax, ay),
+                  "an anchor behind the camera is rejected");
+        }
+    }
+
+    // --- Head anchor --------------------------------------------------------
+    // The nametag (and the label column above the box) is centered on the
+    // projected head point -- the top-center of the entity's own box. The 2D
+    // box's top-middle is a screen-space average that perspective shifts away
+    // from the head, which is what these cases pin down.
+    {
+        const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
+        const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
+
+        // The anchor is exactly the projection of the box's top-center.
+        {
+            const Vec3 mn{-0.3f, 0.0f, 4.7f};
+            const Vec3 mx{0.3f, 1.8f, 5.3f};
+            float ax = 0.0f, ay = 0.0f;
+            check(esp::projectBoxTopCenter(cam, proj, mn, mx, ax, ay),
+                  "the head anchor of a box ahead projects");
+            float px = 0.0f, py = 0.0f;
+            check(esp::project(cam, proj, {0.0f, 1.8f, 5.0f}, px, py) &&
+                      near(ax, px) && near(ay, py),
+                  "the anchor is the projection of the top-center");
+            check(near(ax, 500.0f, 0.5f) && near(ay, 482.0f, 0.5f),
+                  "a dead-ahead head anchor sits above the head");
+        }
+
+        // Off-axis, the 2D box's top-middle is shifted sideways off the head:
+        // the projected box is asymmetric, so its screen-space middle is not
+        // the head column, and its top edge is not the head height either.
+        {
+            const Vec3 mn{2.0f, 0.0f, 4.0f};
+            const Vec3 mx{4.0f, 1.8f, 6.0f};
+            float ax = 0.0f, ay = 0.0f;
+            check(esp::projectBoxTopCenter(cam, proj, mn, mx, ax, ay),
+                  "the head anchor of an off-axis box projects");
+            check(near(ax, 200.0f, 0.5f) && near(ay, 482.0f, 0.5f),
+                  "the off-axis head anchor sits above the head");
+            const esp::ScreenBox box = esp::projectBox(cam, proj, mn, mx, 0.0f);
+            const float boxMidX = (box.minX + box.maxX) * 0.5f;
+            check(box.visible && std::fabs(boxMidX - ax) > 5.0f &&
+                      std::fabs(box.minY - ay) > 1.0f,
+                  "off-axis, the 2D box top-middle drifts off the head");
+        }
+
+        // An anchor behind the camera is rejected, so the caller can fall
+        // back to the 2D box instead of mirroring the name across the screen.
+        {
+            float ax = 0.0f, ay = 0.0f;
+            check(!esp::projectBoxTopCenter(cam, proj, {-0.3f, 0.0f, -10.0f},
+                                            {0.3f, 1.8f, -9.0f}, ax, ay),
+                  "a head anchor behind the camera is rejected");
+        }
+    }
+
     // --- world-space geometry ----------------------------------------------
     //
     // The box outline, brackets and fill are no longer projected by the
