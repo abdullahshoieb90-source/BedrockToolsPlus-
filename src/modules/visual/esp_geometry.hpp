@@ -2,16 +2,19 @@
 
 // Geometry for the Esp overlay, in its two halves:
 //
-//   * esp::world builds the box outline and fill as *world-space* primitives,
-//     which the game then transforms with the matrices it rendered the level
-//     with (see overlay_mesh.hpp). Nothing can drift, because the module never
-//     has to model the camera for them.
+//   * esp::world builds the box outline, the tracer and the distance readout
+//     as *world-space* primitives, which the game then transforms with the
+//     matrices it rendered the level with (see overlay_mesh.hpp). Nothing can
+//     drift, because the module never has to model the camera for them: the
+//     tracer ends inside the hitbox, and the distance is a billboard anchored
+//     to the entity's feet whose size -- never its position -- follows the
+//     projection.
 //   * esp::computeCamera / makeProjection / project / projectBox are the
 //     camera basis + perspective projection for the launcher HUD layer, which
-//     is where text (nametags, distance, health) and tracers have to live
-//     because the HUD owns the font. That projection is only ever as good as
-//     the module's model of the camera, which is exactly why the geometry that
-//     has to sit *on* an entity is no longer part of it.
+//     is where the nametag and the health readout have to live because the
+//     HUD owns the font. That projection is only ever as good as the module's
+//     model of the camera, which is exactly why everything that has to sit
+//     *on* an entity is no longer part of it.
 //
 // Pure functions with no game or preloader dependencies so host tests can
 // cover both halves (see tests/esp_geometry_test.cpp) without bringing in the
@@ -224,25 +227,13 @@ inline ScreenBox projectBox(const Camera& cam, const SurfaceProjection& proj,
     return out;
 }
 
-// Center of a world box: the middle of the hitbox. A tracer line has to end
-// here -- on the entity's own box -- and not on the 2D box's middle, which is
-// a screen-space average of eight projected corners that perspective shifts
-// away from the hitbox (the projected box is asymmetric, so its middle is not
-// where the box's middle lands).
+// Center of a world box: the middle of the hitbox. The world-space tracer
+// ends here -- inside the entity's own box -- so the game pins the line to
+// the very wireframe it drew around the same AABB.
 inline bedrocktools::sdk::Vec3 boxCenter(const bedrocktools::sdk::Vec3& boxMin,
                                          const bedrocktools::sdk::Vec3& boxMax) {
     return {(boxMin.x + boxMax.x) * 0.5f, (boxMin.y + boxMax.y) * 0.5f,
             (boxMin.z + boxMax.z) * 0.5f};
-}
-
-// Projects that center anchor to surface coordinates. Returns false when the
-// anchor is at or behind the near plane (an entity straddling the camera),
-// in which case the caller falls back to the 2D box so the line still draws.
-inline bool projectBoxCenter(const Camera& cam, const SurfaceProjection& proj,
-                             const bedrocktools::sdk::Vec3& boxMin,
-                             const bedrocktools::sdk::Vec3& boxMax,
-                             float& outX, float& outY) {
-    return project(cam, proj, boxCenter(boxMin, boxMax), outX, outY);
 }
 
 // Top-center of a world box: the head point of the hitbox. The nametag -- and
@@ -344,6 +335,153 @@ inline void addBoxFaces(std::vector<Quad>& out, const bedrocktools::sdk::AABB& b
         for (int i = 0; i < 4; ++i) quad.corners[i] = cornerOf(box, face[i]);
         out.push_back(quad);
     }
+}
+
+// ---------------------------------------------------------------------------
+// World-space billboard text (the distance readout).
+//
+// The HUD layer can only place text through the module's own projection of
+// the world, and that projection disagrees with the game's real camera
+// whenever the view is moving (sprint FOV, view bob, a frame of look
+// latency, aspect handling) -- which reads as the readout sliding off the
+// hitbox. Drawing the readout as world-space quads instead anchors it to the
+// entity's feet in the very pass the hitbox is drawn in, so it cannot move
+// relative to the box. The projection is still consulted, but only for the
+// text's *size*: an FOV that is off by ten percent makes the digits ten
+// percent too large, never ten percent off the hitbox.
+// ---------------------------------------------------------------------------
+
+// One filled rectangle of a glyph, in a 5-row cell with y pointing down.
+struct GlyphRect {
+    float x, y, w, h;
+};
+
+// A glyph: merged rectangles plus the width of its cell. The digits live in a
+// 3x5 cell, 'm' in a 5x5 one and '.' occupies a 1-wide strip, all on the same
+// five-row baseline. Rectangles deliberately overlap at the corners, which
+// keeps every glyph at three to five quads.
+struct Glyph {
+    const GlyphRect* rects;
+    int rectCount;
+    float width;
+};
+
+inline constexpr GlyphRect kGlyph0[] = {{0, 0, 3, 1}, {0, 4, 3, 1}, {0, 0, 1, 5}, {2, 0, 1, 5}};
+inline constexpr GlyphRect kGlyph1[] = {{1, 0, 1, 5}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph2[] = {{0, 0, 3, 1}, {2, 1, 1, 1}, {0, 2, 3, 1}, {0, 3, 1, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph3[] = {{0, 0, 3, 1}, {2, 0, 1, 5}, {0, 2, 3, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph4[] = {{0, 0, 1, 3}, {2, 0, 1, 5}, {0, 2, 3, 1}};
+inline constexpr GlyphRect kGlyph5[] = {{0, 0, 3, 1}, {0, 1, 1, 1}, {0, 2, 3, 1}, {2, 3, 1, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph6[] = {{0, 0, 3, 1}, {0, 0, 1, 5}, {0, 2, 3, 1}, {2, 3, 1, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph7[] = {{0, 0, 3, 1}, {2, 1, 1, 4}};
+inline constexpr GlyphRect kGlyph8[] = {{0, 0, 3, 1}, {0, 4, 3, 1}, {0, 0, 1, 5}, {2, 0, 1, 5}, {0, 2, 3, 1}};
+inline constexpr GlyphRect kGlyph9[] = {{0, 0, 3, 1}, {0, 0, 1, 3}, {2, 0, 1, 5}, {0, 2, 3, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyphDot[] = {{0, 3, 1, 2}};
+inline constexpr GlyphRect kGlyphM[] = {{0, 1, 1, 4}, {2, 1, 1, 4}, {4, 1, 1, 4}, {0, 1, 5, 1}};
+
+// The characters "%.1fm" can produce. Anything else (a '-' cannot appear: the
+// distance is non-negative) is skipped together with its spacing.
+inline bool glyphFor(char c, Glyph& out) {
+    switch (c) {
+        case '0': out = {kGlyph0, 4, 3.0f}; return true;
+        case '1': out = {kGlyph1, 2, 3.0f}; return true;
+        case '2': out = {kGlyph2, 5, 3.0f}; return true;
+        case '3': out = {kGlyph3, 4, 3.0f}; return true;
+        case '4': out = {kGlyph4, 3, 3.0f}; return true;
+        case '5': out = {kGlyph5, 5, 3.0f}; return true;
+        case '6': out = {kGlyph6, 5, 3.0f}; return true;
+        case '7': out = {kGlyph7, 2, 3.0f}; return true;
+        case '8': out = {kGlyph8, 5, 3.0f}; return true;
+        case '9': out = {kGlyph9, 5, 3.0f}; return true;
+        case '.': out = {kGlyphDot, 1, 1.0f}; return true;
+        case 'm': out = {kGlyphM, 4, 5.0f}; return true;
+        default: return false;
+    }
+}
+
+// Minimum camera-space depth a billboard is still drawn at. Closer than this
+// the anchor is at (or nearly at) the near plane and the entity fills the
+// view anyway.
+inline constexpr float kBillboardMinDepth = 0.25f;
+
+// Builds the quads of one line of billboarded text.
+//
+//   * `anchor` is the *top-center* of the text block: the block hangs below
+//     and spreads left/right of it, so a caller can place it just under an
+//     entity's feet.
+//   * `pixelHeight` is the wanted on-screen height in HUD surface pixels.
+//     The camera-space depth of the anchor converts it to a world size, so
+//     the text keeps its apparent size at any range; only this size consults
+//     the projection -- the anchor itself never does.
+//   * The quads face the camera (they live in the camera's right/up plane),
+//     so the game's own transform puts them flat on the screen.
+//
+// Returns false when there is nothing to draw: empty text, no representable
+// glyph, or an anchor at/behind the camera.
+inline bool addBillboardText(std::vector<Quad>& out, const Camera& cam,
+                             const SurfaceProjection& proj, const Vec3& anchor,
+                             const char* text, float pixelHeight) {
+    if (!text || text[0] == '\0') return false;
+
+    const Vec3 toAnchor{anchor.x - cam.pos.x, anchor.y - cam.pos.y,
+                        anchor.z - cam.pos.z};
+    const float depth = dot(toAnchor, cam.forward);
+    if (depth <= kBillboardMinDepth) return false;
+
+    // World size of one HUD pixel at the anchor's depth, then of one font
+    // cell unit (the glyphs are five units tall).
+    const float wantedHeight = std::clamp(pixelHeight, 4.0f, 64.0f);
+    const float worldPerPixel = 2.0f * proj.tanHalfFov * depth / proj.height;
+    const float unit = wantedHeight * 0.2f * worldPerPixel;
+
+    // Measure the line in font units (one unit of spacing between glyphs).
+    float advance = 0.0f;
+    int glyphs = 0;
+    for (const char* p = text; *p != '\0'; ++p) {
+        Glyph glyph{};
+        if (!glyphFor(*p, glyph)) continue;
+        advance += glyph.width + 1.0f;
+        ++glyphs;
+    }
+    if (glyphs == 0) return false;
+    advance -= 1.0f; // the last glyph does not need trailing spacing
+
+    // Top-left corner of the block, in world space: centered on the anchor
+    // along the camera's right vector, top edge at the anchor itself.
+    const float halfWidth = advance * unit * 0.5f;
+    const Vec3 origin{anchor.x - cam.right.x * halfWidth,
+                      anchor.y - cam.right.y * halfWidth,
+                      anchor.z - cam.right.z * halfWidth};
+
+    float pen = 0.0f;
+    for (const char* p = text; *p != '\0'; ++p) {
+        Glyph glyph{};
+        if (!glyphFor(*p, glyph)) continue;
+        for (int i = 0; i < glyph.rectCount; ++i) {
+            const GlyphRect& r = glyph.rects[i];
+            const float x0 = (pen + r.x) * unit;
+            const float x1 = (pen + r.x + r.w) * unit;
+            const float y0 = r.y * unit;
+            const float y1 = (r.y + r.h) * unit;
+
+            Quad quad{};
+            quad.corners[0] = {origin.x + cam.right.x * x0 - cam.up.x * y0,
+                               origin.y + cam.right.y * x0 - cam.up.y * y0,
+                               origin.z + cam.right.z * x0 - cam.up.z * y0};
+            quad.corners[1] = {origin.x + cam.right.x * x1 - cam.up.x * y0,
+                               origin.y + cam.right.y * x1 - cam.up.y * y0,
+                               origin.z + cam.right.z * x1 - cam.up.z * y0};
+            quad.corners[2] = {origin.x + cam.right.x * x1 - cam.up.x * y1,
+                               origin.y + cam.right.y * x1 - cam.up.y * y1,
+                               origin.z + cam.right.z * x1 - cam.up.z * y1};
+            quad.corners[3] = {origin.x + cam.right.x * x0 - cam.up.x * y1,
+                               origin.y + cam.right.y * x0 - cam.up.y * y1,
+                               origin.z + cam.right.z * x0 - cam.up.z * y1};
+            out.push_back(quad);
+        }
+        pen += glyph.width + 1.0f;
+    }
+    return true;
 }
 
 } // namespace world
