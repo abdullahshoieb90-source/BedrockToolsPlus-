@@ -638,6 +638,189 @@ int main() {
         }
     }
 
+    // --- Why the Crosshair origin cannot be geometry ----------------------
+    // A world-space segment that starts at the camera lies on a single view
+    // ray, so the game's projection collapses the whole of it onto one pixel.
+    // That -- not the menu -- is what made the tracer "disappear" when
+    // Crosshair was selected, and no amount of fixing on the geometry side
+    // helps, so the crosshair line is placed on the screen instead.
+    {
+        const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
+        const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
+        const Vec3 target{3.0f, 0.9f, 5.0f};
+        auto along = [&](float t) {
+            return Vec3{cam.pos.x + (target.x - cam.pos.x) * t,
+                        cam.pos.y + (target.y - cam.pos.y) * t,
+                        cam.pos.z + (target.z - cam.pos.z) * t};
+        };
+
+        float x1 = 0.0f, y1 = 0.0f, x2 = 0.0f, y2 = 0.0f;
+        const bool first = esp::project(cam, proj, along(0.3f), x1, y1);
+        const bool second = esp::project(cam, proj, along(0.8f), x2, y2);
+        check(first && second, "two points of a camera-origin line do project");
+        check(first && second && near(x1, x2) && near(y1, y2),
+              "onto the same pixel, i.e. there is no line to see there");
+        float cx = 0.0f, cy = 0.0f;
+        check(!esp::project(cam, proj, cam.pos, cx, cy),
+              "and the camera's own position is not projectable at all");
+    }
+
+    // --- Crosshair tracer --------------------------------------------------
+    // The screen-space line the module draws in its place: out of the exact
+    // middle of the surface, onto the projected hitbox, and -- for a target
+    // that is not on the surface at all -- out to the edge along the same
+    // direction, which is the only place its coordinates may be clipped.
+    {
+        const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
+        const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
+        const float kRadius = 0.5f * std::sqrt(1000.0f * 1000.0f + 1000.0f * 1000.0f);
+
+        const Vec3 onScreen{3.0f, 0.9f, 5.0f};
+        const esp::ScreenSegment ahead = esp::crosshairTracer(cam, proj, onScreen);
+        float ex = 0.0f, ey = 0.0f;
+        check(esp::project(cam, proj, onScreen, ex, ey), "the on-screen target projects");
+        check(ahead.visible && near(ahead.x0, 500.0f) && near(ahead.y0, 500.0f),
+              "the tracer starts on the middle of the surface");
+        check(ahead.visible && near(ahead.x1, ex, 0.01f) && near(ahead.y1, ey, 0.01f),
+              "and ends on the projected anchor");
+
+        const esp::ScreenSegment side =
+            esp::crosshairTracer(cam, proj, {40.5f, 0.9f, 4.5f});
+        const float dx = side.x1 - 500.0f;
+        const float dy = side.y1 - 500.0f;
+        check(side.visible && side.x1 < 500.0f,
+              "an entity far to the east keeps a line pointing left");
+        check(near(std::sqrt(dx * dx + dy * dy), kRadius, 0.5f),
+              "whose end sits on the screen edge, never past it");
+        check(near(dx / dy, -4500.0f / 80.0f, 0.5f),
+              "and was scaled along its own direction, not sideways");
+
+        check(!esp::crosshairTracer(cam, proj, {0.0f, 1.62f, 8.0f}).visible,
+              "an entity dead ahead gets no stub of a line under the crosshair");
+
+        // Behind the camera plane a raw division mirrors the target to the
+        // other half of the screen, so the lateral sign is kept on purpose:
+        // west of a south-facing camera stays on the right when it is over the
+        // player's shoulder.
+        const esp::ScreenSegment behind =
+            esp::crosshairTracer(cam, proj, {-20.0f, 1.0f, -5.0f});
+        check(behind.visible && behind.x1 > 500.0f,
+              "an entity behind the camera keeps its side instead of mirroring");
+
+        // A box of NaNs must not be able to hand the launcher coordinates it
+        // would reject the whole batch for.
+        const float kNan = std::nanf("");
+        check(!esp::crosshairTracer(cam, proj, {kNan, 1.0f, 5.0f}).visible,
+              "a non-finite anchor produces no line at all");
+        const esp::ScreenSegment broken =
+            esp::crosshairTracer(cam, proj, {0.0f, 1.62f, kNan});
+        check(!broken.visible && std::isfinite(broken.x0) && std::isfinite(broken.y0),
+              "and the center it started from is not submitted either");
+    }
+
+    // --- Nametag text ------------------------------------------------------
+    // The name field holds what the game's own font has to make sense of:
+    // markup codes, zero-width formatting characters, padding whitespace, and
+    // occasionally bytes that are not UTF-8 at all. Every one of them reads as
+    // an extra character on a HUD font, and every one of them also fed the
+    // width the label is centered on.
+    {
+        std::string marked;
+        marked += "\xC2\xA7";
+        marked += "r";
+        marked += "\xC2\xA7";
+        marked += "4";
+        marked += "Steve";
+        check(esp::sanitizeName(marked) == "Steve",
+              "the section-sign markup the game's font eats is stripped");
+
+        std::string latin1;
+        latin1 += "\xA7";
+        latin1 += "l";
+        latin1 += "Steve";
+        check(esp::sanitizeName(latin1) == "Steve",
+              "including the single-byte form some builds store");
+
+        std::string messy;
+        messy += " ";
+        messy += "\xE2\x80\x8B"; // zero-width space
+        messy += "\xE2\x80\xAE"; // right-to-left override
+        messy += "\xC2\xAD";     // soft hyphen
+        messy += "\nAhmed\n";
+        messy += "\xC2\xA0";     // no-break space
+        messy += "X";
+        check(esp::sanitizeName(messy) == "Ahmed X",
+              "invisible format characters are dropped and stray whitespace collapses");
+
+        std::string broken = "Jo";
+        broken += "\xFF"; // not a valid lead byte at all
+        broken += "n";
+        check(esp::sanitizeName(broken) == "Jon",
+              "and bytes that are not UTF-8 never reach the font");
+
+        std::string truncated = "Jon";
+        truncated += "\xE2\x80"; // a sequence cut off at the end of the string
+        check(esp::sanitizeName(truncated) == "Jon",
+              "including a truncated sequence");
+
+        // One oversized text makes the launcher reject the whole draw batch, so
+        // an unbounded name has to be cut here instead.
+        check(esp::sanitizeName(std::string(5000, 'a')).size() ==
+                  esp::kMaxNameCodePoints,
+              "an over-long name is capped rather than hiding every label");
+
+        // Widths are measured per glyph, which is what the centering needs.
+        check(near(esp::measureTextWidth("100", 10.0f), 18.0f),
+              "digits and letters share the 0.6 em cell");
+        check(near(esp::measureTextWidth("ill", 10.0f), 9.6f),
+              "thin strokes take about half of it");
+        check(near(esp::measureTextWidth("MW", 10.0f), 18.4f),
+              "and M and W nearly the whole of it");
+
+        std::string arabic;
+        arabic += "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8"; // four letters, eight bytes
+        check(arabic.size() == 8, "the name really is multi-byte");
+        check(near(esp::measureTextWidth(arabic, 10.0f), 24.0f),
+              "and is measured in code points, not bytes");
+        check(!near(esp::measureTextWidth(arabic, 10.0f),
+                    static_cast<float>(arabic.size()) * 0.6f * 10.0f),
+              "which is the half: the byte count used to double it and slide the "
+              "label off the head");
+
+        std::string cjk;
+        cjk += "\xE7\x8E\xA9"; // U+73A9, a full-width ideograph
+        check(near(esp::measureTextWidth(cjk, 10.0f), 10.0f),
+              "a CJK glyph is one full em wide");
+
+        std::string combining = "e";
+        combining += "\xCC\x81"; // U+0301 combining acute
+        check(near(esp::measureTextWidth(combining, 10.0f), 6.0f),
+              "a combining mark rides on its base letter and adds no width");
+    }
+
+    // --- A broken collision box cannot poison the frame -------------------
+    // project() and projectBox() are the only road from an actor's AABB to a
+    // draw command, and one non-finite command costs the whole frame's labels.
+    {
+        const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
+        const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
+        const float kNan = std::nanf("");
+
+        float x = 0.0f, y = 0.0f;
+        check(!esp::project(cam, proj, {kNan, 1.0f, 5.0f}, x, y),
+              "a non-finite world point is not projected");
+
+        const esp::ScreenBox all =
+            esp::projectBox(cam, proj, {kNan, kNan, kNan}, {kNan, kNan, kNan}, 4000.0f);
+        check(!all.visible, "a box of NaNs is reported invisible");
+
+        const esp::ScreenBox partial =
+            esp::projectBox(cam, proj, {-0.3f, 0.0f, 4.7f}, {0.3f, kNan, 5.3f}, 4000.0f);
+        check(partial.visible && std::isfinite(partial.minX) &&
+                  std::isfinite(partial.maxX) && std::isfinite(partial.minY),
+              "and a partly broken box keeps its finite bounds instead of poisoning the min/max");
+    }
+
     std::printf("\n%d failure(s)\n", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

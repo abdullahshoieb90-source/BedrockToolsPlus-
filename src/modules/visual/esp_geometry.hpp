@@ -14,7 +14,16 @@
 //     is where the nametag and the health readout have to live because the
 //     HUD owns the font. That projection is only ever as good as the module's
 //     model of the camera, which is exactly why everything that has to sit
-//     *on* an entity is no longer part of it.
+//     *on* an entity is no longer part of it. The one exception is the
+//     Crosshair tracer (esp::crosshairTracer): a line that leaves the camera
+//     cannot be geometry at all, because the game projects it onto a single
+//     pixel -- see the comment on that function.
+//   * esp::sanitizeName / measureTextWidth prepare the nametag string for the
+//     HUD: the raw name field holds the markup codes and invisible format
+//     characters the game's own font swallows (which a plain HUD font paints
+//     as extra characters), and the label is centered on a width measured in
+//     glyphs, never in bytes -- a UTF-8 name is two to four bytes per
+//     character, which is what used to shove Arabic names off the head.
 //
 // Pure functions with no game or preloader dependencies so host tests can
 // cover both halves (see tests/esp_geometry_test.cpp) without bringing in the
@@ -43,6 +52,10 @@
 #include <bedrocktools/sdk/Types.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace esp {
@@ -119,13 +132,17 @@ inline SurfaceProjection makeProjection(float width, float height, float fovDegr
 }
 
 // Projects one world point to surface coordinates (pixels in the HUD surface
-// space). Returns false when the point is at or behind the camera plane.
+// space). Returns false when the point is at or behind the camera plane, or
+// when the arithmetic did not produce a finite position (an actor whose
+// collision box holds garbage still has to be skipped rather than handed to
+// the launcher: one non-finite draw command makes the launcher reject the
+// whole batch, and every label in it with it).
 inline bool project(const Camera& cam, const SurfaceProjection& proj,
                     const bedrocktools::sdk::Vec3& world, float& outX, float& outY) {
     const bedrocktools::sdk::Vec3 d = {world.x - cam.pos.x, world.y - cam.pos.y,
                                        world.z - cam.pos.z};
     const float vz = dot(d, cam.forward);
-    if (vz <= kNearPlane) return false;
+    if (!(vz > kNearPlane)) return false;
 
     const float vx = dot(d, cam.right);
     const float vy = dot(d, cam.up);
@@ -135,7 +152,7 @@ inline bool project(const Camera& cam, const SurfaceProjection& proj,
 
     outX = (ndcX * 0.5f + 0.5f) * proj.width;
     outY = (0.5f - ndcY * 0.5f) * proj.height;
-    return true;
+    return std::isfinite(outX) && std::isfinite(outY);
 }
 
 // Tight 2D bounding box of a projected world box, in surface coordinates.
@@ -186,6 +203,10 @@ inline ScreenBox projectBox(const Camera& cam, const SurfaceProjection& proj,
         const float ndcY = (vy / vz) / proj.tanHalfFov;
         float sx = (ndcX * 0.5f + 0.5f) * proj.width;
         float sy = (0.5f - ndcY * 0.5f) * proj.height;
+        // A corner that did not survive the division (a box holding garbage)
+        // cannot be allowed into the min/max: it would make the whole result
+        // non-finite and take the frame's other labels down with it.
+        if (!std::isfinite(sx) || !std::isfinite(sy)) return;
         if (clamp) {
             sx = std::clamp(sx, -limit, proj.width + limit);
             sy = std::clamp(sy, -limit, proj.height + limit);
@@ -256,6 +277,300 @@ inline bool projectBoxTopCenter(const Camera& cam, const SurfaceProjection& proj
                                 const bedrocktools::sdk::Vec3& boxMax,
                                 float& outX, float& outY) {
     return project(cam, proj, boxTopCenter(boxMin, boxMax), outX, outY);
+}
+
+// ---------------------------------------------------------------------------
+// The Crosshair tracer.
+//
+// A line that starts at the camera cannot be world-space geometry: every one
+// of its points sits on the same view ray, so the game's projection collapses
+// the whole segment onto a single pixel and the tracer simply disappears when
+// Crosshair is selected (and the vertex at the eye sits behind the near plane,
+// so a driver is free to clip the line away entirely). The
+// origin is what makes it screen furniture, so it is placed on the surface
+// like the nametags: from the exact middle of the screen to where the entity
+// projects.
+//
+// Off-screen entities keep a snapline: the direction is what carries the
+// information there, so the far end is pushed out to the surface's
+// circumscribed radius -- never beyond it, which both keeps the coordinates
+// finite for the launcher and keeps the direction untouched.
+// ---------------------------------------------------------------------------
+struct ScreenSegment {
+    float x0 = 0.0f;
+    float y0 = 0.0f;
+    float x1 = 0.0f;
+    float y1 = 0.0f;
+    bool visible = false;
+};
+
+// `minPixels` is how long the line has to be before it is worth submitting:
+// an entity sitting dead ahead has its hitbox under the crosshair already, and
+// a one-pixel stub is noise (and a stray dot on the HUD).
+inline ScreenSegment crosshairTracer(const Camera& cam, const SurfaceProjection& proj,
+                                     const bedrocktools::sdk::Vec3& world,
+                                     float minPixels = 1.5f) {
+    ScreenSegment out;
+    out.x0 = proj.width * 0.5f;
+    out.y0 = proj.height * 0.5f;
+
+    const bedrocktools::sdk::Vec3 d = {world.x - cam.pos.x, world.y - cam.pos.y,
+                                       world.z - cam.pos.z};
+    const float vx = dot(d, cam.right);
+    const float vy = dot(d, cam.up);
+    const float vz = dot(d, cam.forward);
+
+    // Lateral offset per unit of depth, in "tan space" (the same basis the
+    // projection above uses). In front of the camera that is the plain
+    // perspective divide; at or behind it, the depth is clamped and the
+    // lateral sign is kept, so an entity over your shoulder points at the
+    // side you have to turn to instead of being mirrored across the screen.
+    float dirX = 0.0f;
+    float dirY = 0.0f;
+    if (vz > kNearPlane) {
+        dirX = vx / vz;
+        dirY = vy / vz;
+    } else {
+        const float behind = std::max(-vz, 1.0f);
+        dirX = vx / behind;
+        dirY = vy / behind;
+    }
+
+    float dx = (dirX / (proj.tanHalfFov * proj.aspect)) * 0.5f * proj.width;
+    float dy = -(dirY / proj.tanHalfFov) * 0.5f * proj.height; // y grows down
+    if (!std::isfinite(dx) || !std::isfinite(dy)) return out;
+
+    const float length = std::sqrt(dx * dx + dy * dy);
+    if (!(length > minPixels)) return out;
+
+    const float radius =
+        0.5f * std::sqrt(proj.width * proj.width + proj.height * proj.height);
+    if (length > radius) {
+        const float scale = radius / length;
+        dx *= scale;
+        dy *= scale;
+    }
+
+    out.x1 = out.x0 + dx;
+    out.y1 = out.y0 + dy;
+    out.visible = true;
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Nametag text.
+//
+// The name is read straight out of the game's Player, and what lives in that
+// field is not always what the game draws:
+//
+//   * servers, nick add-ons and right-to-left clients pad names with the
+//     legacy section-sign markup ("§r", "§4§l"), which the game's font eats
+//     and a plain HUD font paints as extra characters beside the name;
+//   * control characters and the invisible format code points (soft hyphen,
+//     zero-width spaces, the bidi overrides) sit in the same field;
+//   * bytes that are not valid UTF-8 at all turn into replacement glyphs.
+//
+// sanitizeName() decodes the raw bytes as UTF-8 and keeps only what has a
+// glyph of its own, so the label reads as the name and nothing else. It also
+// enforces a length cap, because the launcher rejects an *entire* draw batch
+// whose text exceeds its own limit -- one corrupt name would otherwise blank
+// every nametag on screen.
+// ---------------------------------------------------------------------------
+
+// Bedrock usernames are 16 characters, so this only has to be far enough away
+// from the launcher's limit to never be the thing that hides the overlay.
+inline constexpr std::size_t kMaxNameCodePoints = 48;
+
+// One UTF-8 code point at `index`, strict: overlong forms, surrogates, values
+// past U+10FFFF and truncated sequences are rejected and leave `index` alone
+// so the caller can skip the single offending byte.
+inline bool decodeCodePoint(std::string_view text, std::size_t& index,
+                            std::uint32_t& outCp) {
+    const unsigned char lead = static_cast<unsigned char>(text[index]);
+
+    std::uint32_t cp = 0;
+    std::size_t extra = 0;
+    if (lead < 0x80) {
+        outCp = lead;
+        index += 1;
+        return true;
+    } else if ((lead & 0xE0) == 0xC0 && lead >= 0xC2) {
+        cp = lead & 0x1Fu;
+        extra = 1;
+    } else if ((lead & 0xF0) == 0xE0) {
+        cp = lead & 0x0Fu;
+        extra = 2;
+    } else if ((lead & 0xF8) == 0xF0) {
+        cp = lead & 0x07u;
+        extra = 3;
+    } else {
+        return false; // a continuation byte or 0xF5.. as a lead
+    }
+
+    if (index + extra >= text.size()) return false;
+    for (std::size_t i = 1; i <= extra; ++i) {
+        const unsigned char next = static_cast<unsigned char>(text[index + i]);
+        if ((next & 0xC0) != 0x80) return false;
+        cp = (cp << 6) | (next & 0x3Fu);
+    }
+    if (extra == 2 && cp < 0x800) return false;                    // overlong
+    if (extra == 3 && (cp < 0x10000 || cp > 0x10FFFF)) return false; // out of range
+    if (cp >= 0xD800 && cp <= 0xDFFF) return false;                  // surrogate
+
+    index += extra + 1;
+    outCp = cp;
+    return true;
+}
+
+inline void appendCodePoint(std::string& out, std::uint32_t cp) {
+    if (cp < 0x80) {
+        out.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xC0u | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    } else if (cp < 0x10000) {
+        out.push_back(static_cast<char>(0xE0u | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    } else {
+        out.push_back(static_cast<char>(0xF0u | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    }
+}
+
+// The character a section-sign markup code may be. The documented set is
+// 0-9, a-o, k-o and r in either case; every alphanumeric is swallowed here,
+// because a username that really contains "§x" does not exist while a client
+// that emits a code this table does not know does.
+inline bool isMarkupCodeByte(unsigned char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+inline bool isSpaceCodePoint(std::uint32_t cp) {
+    return cp == 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0B || cp == 0x0C ||
+           cp == 0x0D || cp == 0x85 || cp == 0xA0 || cp == 0x1680 ||
+           (cp >= 0x2000 && cp <= 0x200A) || cp == 0x2028 || cp == 0x2029 ||
+           cp == 0x205F || cp == 0x3000;
+}
+
+// Code points that carry no glyph of their own: the zero-width joiners and
+// spaces, the bidi overrides and isolates, soft hyphen, BOM and the C1
+// controls. A name does not need them and the HUD font has nothing to draw,
+// which is exactly what looks like "extra characters" after the name.
+inline bool isInvisibleCodePoint(std::uint32_t cp) {
+    if (cp <= 0x20) return true;
+    if (cp >= 0x7F && cp <= 0x9F) return true;
+    if (cp == 0xAD || cp == 0x61C || cp == 0x180E || cp == 0xFEFF) return true;
+    if (cp >= 0x200B && cp <= 0x200F) return true;
+    if (cp >= 0x202A && cp <= 0x202E) return true;
+    if (cp >= 0x2060 && cp <= 0x2064) return true;
+    if (cp >= 0x2066 && cp <= 0x2069) return true;
+    return false;
+}
+
+inline std::string sanitizeName(std::string_view raw,
+                                std::size_t maxCodePoints = kMaxNameCodePoints) {
+    std::string out;
+    out.reserve(raw.size());
+
+    std::size_t index = 0;
+    std::size_t codePoints = 0;
+    bool pendingSpace = false;
+
+    while (index < raw.size() && codePoints < maxCodePoints) {
+        const unsigned char lead = static_cast<unsigned char>(raw[index]);
+
+        // Legacy markup: "§" as UTF-8 (0xC2 0xA7) or as the single latin-1
+        // byte some builds store, each followed by its code character.
+        if ((lead == 0xC2 && index + 1 < raw.size() &&
+             static_cast<unsigned char>(raw[index + 1]) == 0xA7) ||
+            lead == 0xA7) {
+            index += (lead == 0xA7) ? 1 : 2;
+            if (index < raw.size() &&
+                isMarkupCodeByte(static_cast<unsigned char>(raw[index]))) {
+                ++index;
+            }
+            continue;
+        }
+
+        std::uint32_t cp = 0;
+        if (!decodeCodePoint(raw, index, cp)) {
+            ++index; // an invalid byte: drop it, never hand it to the font
+            continue;
+        }
+
+        if (isSpaceCodePoint(cp)) {
+            // Whitespace runs collapse to a single space, and a name padded
+            // with newlines (a real nametag trick) stops pushing the label
+            // around. The pending space is only written once something follows
+            // it, which trims both ends at the same time.
+            pendingSpace = true;
+            continue;
+        }
+        if (isInvisibleCodePoint(cp)) continue;
+
+        if (pendingSpace && !out.empty()) {
+            out.push_back(' ');
+            ++codePoints;
+        }
+        pendingSpace = false;
+
+        appendCodePoint(out, cp);
+        ++codePoints;
+    }
+
+    return out;
+}
+
+// Advance of one code point, in multiples of the pixel size, following the
+// proportions of the game's bitmap font (a normal glyph is 6/10 of the cell,
+// the thin strokes about half that, M and W nearly the whole cell, CJK one
+// full em). Combining marks ride on the previous glyph and take no room.
+inline float codePointAdvance(std::uint32_t cp) {
+    if (cp == 0x20) return 0.30f;
+    if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F)) return 0.0f;
+    if (cp <= 0x7F) {
+        switch (cp) {
+            case 'M': case 'W': case 'm': case 'w': return 0.92f;
+            case 'i': case 'j': case 'l': case 'I': case '.': case ',':
+            case ':': case ';': case '\'': case '`': case '|': case '!':
+            case '[': case ']': case '(': case ')': case '{': case '}':
+            case '/': case '\\': case 't': case 'f': return 0.32f;
+            default: return 0.60f;
+        }
+    }
+    if ((cp >= 0x0300 && cp <= 0x036F) ||   // combining diacriticals
+        (cp >= 0x20D0 && cp <= 0x20FF)) {
+        return 0.0f;
+    }
+    // Full-width East Asian blocks, then everything else in a normal cell.
+    if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) ||
+        (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+        (cp >= 0xFE30 && cp <= 0xFE6F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
+        (cp >= 0xFFE0 && cp <= 0xFFE6)) {
+        return 1.0f;
+    }
+    return 0.60f;
+}
+
+// Width of an already-sanitized string in surface pixels, measured in code
+// points. Counting bytes instead (the bug this replaces) doubles the width of
+// every two-byte name, which slid Arabic names half a label to the left of
+// the head they are supposed to sit above.
+inline float measureTextWidth(std::string_view text, float pixelSize) {
+    std::size_t index = 0;
+    float advance = 0.0f;
+    while (index < text.size()) {
+        std::uint32_t cp = 0;
+        if (!decodeCodePoint(text, index, cp)) {
+            ++index;
+            continue;
+        }
+        advance += codePointAdvance(cp);
+    }
+    return advance * pixelSize;
 }
 
 // ---------------------------------------------------------------------------
