@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <new>
 #include <string>
@@ -40,6 +41,7 @@
 #include "bedrocktools/memory/Signatures.hpp"
 #include "bedrocktools/sdk/Offsets.hpp"
 #include "bedrocktools/sdk/Types.hpp"
+#include "core/Runtime.hpp"
 
 namespace {
 
@@ -150,6 +152,22 @@ pl::modmenu::HudSurfaceSize pl::modmenu::getHudSurfaceSize() {
 void pl::modmenu::submitDrawCommands(std::string_view, std::span<const pl::modmenu::DrawCommand> commands) {
     g_commands.assign(commands.begin(), commands.end());
 }
+
+// The module asks the runtime for the package's resource directory, because the
+// nametag font has to be registered before a label may be measured in it (see
+// core/PixelFont.hpp). There is no packaged font on the host, so the answer is
+// the empty path and the module stays on the launcher's own face until a case
+// below switches the module's cached answer by hand.
+namespace bedrocktools::core {
+Runtime& Runtime::get() {
+    static Runtime instance;
+    return instance;
+}
+const std::filesystem::path& Runtime::resourceDirectory() const noexcept {
+    static const std::filesystem::path empty;
+    return empty;
+}
+} // namespace bedrocktools::core
 
 namespace bedrocktools::memory {
 std::uintptr_t resolve(SignatureId id) {
@@ -325,6 +343,17 @@ int textCommandCount() {
         if (cmd.type == pl::modmenu::DrawCommandType::Text) ++count;
     }
     return count;
+}
+
+// The HUD text command drawing `text` (the last one wins), or nullptr. Used by
+// the cases that care about how a label was measured rather than that it exists.
+const pl::modmenu::DrawCommand* findText(const std::string& text) {
+    for (auto it = g_commands.rbegin(); it != g_commands.rend(); ++it) {
+        if (it->type == pl::modmenu::DrawCommandType::Text && it->text == text) {
+            return &*it;
+        }
+    }
+    return nullptr;
 }
 
 // The screen-space box is gone; the only 2D rectangle the HUD layer still
@@ -818,6 +847,65 @@ int main() {
         renderFrame();
         check(textCommandCount() == 0,
               "without a player name no HUD text is left (the distance is geometry)");
+    }
+
+    // --- The label is measured in the font that draws it -------------------
+    // Centering a nametag means knowing how wide it will come out, and of the
+    // two faces the launcher can draw HUD text with, only one has metrics this
+    // module can know: the packaged pixel font. So the module asks for that face
+    // when it is registered and the name fits inside it, and leaves the text --
+    // and its measurement -- with the launcher's own font otherwise. That is not
+    // only about looks: a script the pixel font has no glyph for is drawn as a
+    // row of replacement boxes, which is the other half of the "extra characters
+    // beside the nametag" report, and the launcher's font is also the only one
+    // that shapes right-to-left names.
+    {
+        setCameraRotation(0.0f, 0.0f);
+        setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
+        auto* nameField = new (mob.data() + Player::mName) std::string("Steve");
+        fake::g_actorIsPlayer = true;
+
+        // No font registered (the state on a host with no package to read it
+        // from): the launcher's own face draws the label and the estimate that
+        // goes with it centers it -- exactly the case above.
+        renderFrame();
+        const pl::modmenu::DrawCommand* nameCmd = findText("Steve");
+        check(nameCmd != nullptr && nameCmd->fontId.empty(),
+              "without the pixel font the label stays on the launcher's own face");
+        check(nameCmd != nullptr && near(nameCmd->w, 38.08f, 0.5f),
+              "measured with the estimate that goes with it");
+
+        // With it, the same name is measured on the font's real cells: 't' is
+        // two thirds of a cell and not the half-ish stroke the estimate charges,
+        // so the 14px name is 39.2 wide. Because the launcher draws the label
+        // with that very font, the centering lands on the head instead of a few
+        // pixels to one side of it.
+        s_pixelFontReady = true;
+        renderFrame();
+        nameCmd = findText("Steve");
+        check(nameCmd != nullptr && nameCmd->fontId == "minecraft",
+              "the pixel font is asked for once the launcher has it");
+        check(nameCmd != nullptr && near(nameCmd->w, 39.2f, 0.01f) &&
+                  near(nameCmd->x, 200.0f - 39.2f * 0.5f, 0.5f),
+              "and the name is centered on the cell widths of that font");
+
+        // A name the pixel font cannot draw does not get it anyway, and neither
+        // does a name that only partly fits: the whole label switches face.
+        std::string arabic;
+        arabic += "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8"; // "لاعب"
+        std::destroy_at(nameField);
+        nameField = new (mob.data() + Player::mName) std::string(arabic + " X");
+        renderFrame();
+        nameCmd = findText(arabic + " X");
+        check(nameCmd != nullptr && nameCmd->fontId.empty(),
+              "a name outside the pixel font keeps the launcher's font");
+        check(nameCmd != nullptr && near(nameCmd->w, (4.0f * 0.6f + 0.3f + 0.6f) * 14.0f, 0.5f),
+              "and is measured in code points on that font's estimate");
+
+        s_pixelFontReady = false;
+        fake::g_actorIsPlayer = false;
+        std::destroy_at(nameField);
+        renderFrame();
     }
 
     // --- The nametag shows the name, and only the name ---------------------

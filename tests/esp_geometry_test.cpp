@@ -769,6 +769,22 @@ int main() {
                   esp::kMaxNameCodePoints,
               "an over-long name is capped rather than hiding every label");
 
+        // "§§" is the game's own escape for a literal section sign: the
+        // pair draws one "§" and is not a markup code. A strip
+        // that only knows the codes eats the first sign and leaves the second
+        // (a sign is not an alphanumeric code character), which paints a stray
+        // "§" in front of the name of every player a server renamed with an
+        // escaped sign.
+        const std::string kSign = "\xC2\xA7";
+        check(esp::sanitizeName(kSign + kSign + "Steve") == kSign + "Steve",
+              "an escaped section sign survives as the character it stands for");
+        check(esp::sanitizeName(std::string("\xA7\xA7") + "Steve") == kSign + "Steve",
+              "in the single-byte form some builds store too");
+        check(esp::sanitizeName("a" + kSign + kSign) == "a" + kSign,
+              "and at the end of a name, where it used to be dropped along with it");
+        check(esp::sanitizeName(kSign + "r" + kSign + kSign + "x") == kSign + "x",
+              "a real markup code is still consumed before the escape is read");
+
         // Widths are measured per glyph, which is what the centering needs.
         check(near(esp::measureTextWidth("100", 10.0f), 18.0f),
               "digits and letters share the 0.6 em cell");
@@ -796,6 +812,68 @@ int main() {
         combining += "\xCC\x81"; // U+0301 combining acute
         check(near(esp::measureTextWidth(combining, 10.0f), 6.0f),
               "a combining mark rides on its base letter and adds no width");
+    }
+
+    // --- Which face draws the label, and how wide it comes out -------------
+    // The nametag is centered on a width, and a width only means something for
+    // the font that draws the text, so the two are decided together: Esp hands
+    // the launcher the packaged pixel font for the text it carries -- whose
+    // metrics are readable out of the TTF and are what the centering below uses
+    // -- and its default font for every script that font has no glyph for, which
+    // the launcher shapes instead of drawing boxes for.
+    {
+        using esp::LabelFont;
+
+        // The pixel font is monospaced: one full cell for an ordinary glyph and
+        // narrower cells for the hairline strokes, exactly as the shipped
+        // resources/minecraft.ttf measures them.
+        check(near(esp::measureTextWidth("Steve", 10.0f, LabelFont::Pixel), 28.0f),
+              "a normal glyph is one cell and the thin 't' two thirds of it");
+        check(near(esp::measureTextWidth("WiiiW", 10.0f, LabelFont::Pixel), 18.0f),
+              "M and W take no more than any other letter, and 'i' a third");
+        check(near(esp::measureTextWidth("a b", 10.0f, LabelFont::Pixel), 14.0f),
+              "a space is a hairline cell as well");
+        check(near(esp::measureTextWidth("@~", 10.0f, LabelFont::Pixel), 14.0f),
+              "and the two glyphs that overflow a cell are the only wider ones");
+
+        // The estimate the proportional system font has to be measured with
+        // still disagrees with the pixel font on purpose -- and this is the name
+        // that shows why the distinction is worth a font at all: "WiiiW" is 18px
+        // wide in the font that draws it and 28px in the hunch, so the label
+        // used to be centered with its middle five pixels off the head.
+        check(near(esp::measureTextWidth("WiiiW", 10.0f), 28.0f),
+              "the system estimate bills M and W as wide and i as half-thin");
+        check(!near(esp::measureTextWidth("WiiiW", 10.0f),
+                    esp::measureTextWidth("WiiiW", 10.0f, LabelFont::Pixel)),
+              "and is a different number from the real one, which is why the "
+              "label has to be asked for the pixel font to be measured on it");
+
+        // Coverage: only text the pixel font is known to carry in full goes to
+        // it. Basic Latin is; the section sign a "§§" escape leaves behind,
+        // any other script and a stray control byte are not.
+        check(esp::pixelFontCovers("Steve_99"), "an ASCII username is covered");
+        const std::string kLiteralSign = "\xC2\xA7";
+        check(!esp::pixelFontCovers(kLiteralSign + "Steve"),
+              "a literal section sign is not, so the whole label changes face");
+        check(!esp::pixelFontCovers("a\x01" "b"),
+              "and neither is a control character that never got sanitized");
+
+        std::string arabic = "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8";
+        check(esp::labelFontFor("Steve", true) == LabelFont::Pixel,
+              "the pixel font is chosen when the launcher has it");
+        check(esp::labelFontFor("Steve", false) == LabelFont::System,
+              "and the launcher default when it does not");
+        check(esp::labelFontFor(arabic, true) == LabelFont::System,
+              "and never for a script that font has no glyphs for");
+
+        // A label that switches face switches measurement with it, which is the
+        // point: the position and the box have to describe the same drawing.
+        check(near(esp::measureTextWidth(arabic, 10.0f,
+                                         esp::labelFontFor(arabic, true)), 24.0f),
+              "the Arabic name is measured on the estimate of the font it gets");
+        check(near(esp::measureTextWidth("Steve", 10.0f,
+                                         esp::labelFontFor("Steve", true)), 28.0f),
+              "and the ASCII one on the font it is actually drawn with");
     }
 
     // --- A broken collision box cannot poison the frame -------------------

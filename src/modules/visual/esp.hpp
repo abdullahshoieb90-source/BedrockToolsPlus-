@@ -116,8 +116,16 @@ public:
     // markup codes and invisible format characters the game's own font
     // swallows before it reaches the HUD, and it is centered on a width
     // measured in glyphs rather than bytes, so a multi-byte (Arabic, CJK)
-    // name sits above the head instead of beside it. HUD furniture, so its
-    // placement follows the module's projection (see Fov below).
+    // name sits above the head instead of beside it.
+    //
+    // That width is measured against the face the launcher will actually draw
+    // with, which is why the module registers the packaged pixel font (see
+    // core/PixelFont.hpp) and asks for it per label: the font is the only one
+    // whose cell widths are known here, and its own glyphs stop at Basic Latin,
+    // so a name in a script it cannot draw -- Arabic, Hebrew, CJK, emoji -- is
+    // left to the launcher's default font, which has them and shapes them
+    // instead of drawing a row of replacement boxes. HUD furniture either way,
+    // so the placement follows the module's projection (see Fov below).
     bool nametag = true;
     uint32_t nametagColor = 0xFFFFFFFF;
     float nametagScale = 1.0f; // 0.5 .. 2 (multiplier on the base 14px text)

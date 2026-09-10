@@ -23,7 +23,11 @@
 //     characters the game's own font swallows (which a plain HUD font paints
 //     as extra characters), and the label is centered on a width measured in
 //     glyphs, never in bytes -- a UTF-8 name is two to four bytes per
-//     character, which is what used to shove Arabic names off the head.
+//     character, which is what used to shove Arabic names off the head. The
+//     width only means something for the font that draws the text, so
+//     esp::labelFontFor also decides which one that is: the packaged pixel font
+//     for the names it carries (its metrics are known exactly), the launcher's
+//     default for the scripts it does not have.
 //
 // Pure functions with no game or preloader dependencies so host tests can
 // cover both halves (see tests/esp_geometry_test.cpp) without bringing in the
@@ -484,10 +488,40 @@ inline std::string sanitizeName(std::string_view raw,
 
         // Legacy markup: "§" as UTF-8 (0xC2 0xA7) or as the single latin-1
         // byte some builds store, each followed by its code character.
-        if ((lead == 0xC2 && index + 1 < raw.size() &&
-             static_cast<unsigned char>(raw[index + 1]) == 0xA7) ||
-            lead == 0xA7) {
-            index += (lead == 0xA7) ? 1 : 2;
+        if (lead == 0xA7 || (lead == 0xC2 && index + 1 < raw.size() &&
+                             static_cast<unsigned char>(raw[index + 1]) == 0xA7)) {
+            // One section sign, in either encoding the field may hold it in.
+            auto signAt = [&](std::size_t at) {
+                if (at >= raw.size()) return std::size_t{0};
+                const unsigned char c = static_cast<unsigned char>(raw[at]);
+                if (c == 0xA7) return std::size_t{1};
+                if (c == 0xC2 && at + 1 < raw.size() &&
+                    static_cast<unsigned char>(raw[at + 1]) == 0xA7) {
+                    return std::size_t{2};
+                }
+                return std::size_t{0};
+            };
+            const std::size_t after = index + (lead == 0xA7 ? 1 : 2);
+
+            // "§§" is the game's own escape for a literal section sign: the
+            // pair draws one "§" and is not a markup code. Eating the first and
+            // leaving the second -- which is what a naive strip does, because a
+            // sign is not an alphanumeric code character -- is what puts a
+            // stray "§" in front of a renamed player's name.
+            const std::size_t escaped = signAt(after);
+            if (escaped != 0) {
+                index = after + escaped;
+                if (pendingSpace && !out.empty()) {
+                    out.push_back(' ');
+                    ++codePoints;
+                }
+                pendingSpace = false;
+                appendCodePoint(out, 0xA7);
+                ++codePoints;
+                continue;
+            }
+
+            index = after;
             if (index < raw.size() &&
                 isMarkupCodeByte(static_cast<unsigned char>(raw[index]))) {
                 ++index;
@@ -524,11 +558,106 @@ inline std::string sanitizeName(std::string_view raw,
     return out;
 }
 
-// Advance of one code point, in multiples of the pixel size, following the
-// proportions of the game's bitmap font (a normal glyph is 6/10 of the cell,
-// the thin strokes about half that, M and W nearly the whole cell, CJK one
-// full em). Combining marks ride on the previous glyph and take no room.
-inline float codePointAdvance(std::uint32_t cp) {
+// ---------------------------------------------------------------------------
+// Which font draws the label, and how wide it comes out
+//
+// The launcher draws module text with one of two faces: the packaged
+// resources/minecraft.ttf it registers under the id "minecraft" (the game's
+// own pixel font), or its default UI font, which is what a module asks for by
+// leaving fontId empty. Which of the two it is decides both questions a label
+// has to answer:
+//
+//   * can the name even be drawn? The pixel font ships 722 glyphs -- Latin,
+//     Greek, Cyrillic and a little punctuation -- and Arabic, Hebrew, CJK, Thai
+//     and emoji are not among them. A missing glyph comes out as a replacement
+//     box, which is the other way a nametag grows characters that are not in
+//     the name; the launcher's own font has those glyphs and, unlike the pixel
+//     font, shapes right-to-left text;
+//   * how wide is it? A label is centered on its measured width, and a width is
+//     only knowable for a font whose metrics the module can read. For the pixel
+//     font those metrics are the hmtx values of the TTF this repository ships,
+//     measured rather than guessed, so a name in the game's own character set
+//     lands dead center on the head.
+//
+// The font is monospaced -- 1152 units (0.75 of its 1536-unit em) for every
+// ordinary glyph -- except for a handful of narrow cells (384, 576, 768, 960)
+// and two that overflow it (1344). How the launcher turns a text command's
+// `size` into an em is not documented, so that part is not rederived here: one
+// full cell keeps the 0.6 the module has always charged for a normal glyph, and
+// only the *ratio* between the glyphs comes from the font. That leaves how big
+// a label looks exactly as it was, and fixes where its middle ends up -- an 'i'
+// used to be billed 0.32 and a 'W' 0.92, while the font gives them 1/3 and 1
+// of the same cell -- so "WiiiW" came out half again too wide, and a label
+// centered on that number landed beside the head rather than above it.
+// ---------------------------------------------------------------------------
+
+// The two faces a label can be drawn with.
+enum class LabelFont {
+    Pixel,  // "minecraft": the packaged pixel font
+    System, // empty fontId: the launcher default, which shapes RTL and CJK
+};
+
+// Which fontId string each of the two is -- the pixel font's own id, and the
+// empty id that asks for the launcher default -- is a property of the draw
+// command, so the module maps them (see addText in esp.cpp) rather than this
+// header, which stays free of launcher constants.
+
+// True when every byte of an already-sanitized string is printable ASCII, the
+// range the pixel font is known to cover in full (the file has gaps in Latin-1
+// and beyond, and a gap in the middle of a name is exactly the failure this
+// exists to avoid). Bedrock usernames are [0-9A-Za-z_], so this covers every
+// name the game can carry by itself; a server that renames a player into
+// another script falls through to the launcher's font.
+inline bool pixelFontCovers(std::string_view text) {
+    for (const char c : text) {
+        const unsigned char byte = static_cast<unsigned char>(c);
+        if (byte < 0x20 || byte > 0x7E) return false;
+    }
+    return true;
+}
+
+// The face to draw `text` with: the pixel font when it is registered and the
+// text fits inside it, the launcher's default otherwise.
+inline LabelFont labelFontFor(std::string_view text, bool pixelFontAvailable) {
+    return pixelFontAvailable && pixelFontCovers(text) ? LabelFont::Pixel
+                                                       : LabelFont::System;
+}
+
+// Advance of one code point of the pixel font in cells, where 1.0 is the
+// 0.75 em every ordinary glyph occupies. The sets are the font's own, read out
+// of the hmtx table of resources/minecraft.ttf.
+inline float pixelFontCell(std::uint32_t cp) {
+    switch (cp) {
+        case ' ': case '!': case '\'': case ',': case '.': case ':': case ';':
+        case 'i': case '|':
+            return 1.0f / 3.0f; // 384 units
+        case '`': case 'l':
+            return 0.5f;        // 576
+        case '"': case 'I': case '[': case ']': case 't':
+            return 2.0f / 3.0f; // 768
+        case '(': case ')': case '*': case '<': case '>': case 'f': case 'k':
+        case '{': case '}':
+            return 5.0f / 6.0f; // 960
+        case '@': case '~':
+            return 7.0f / 6.0f; // 1344
+        default:
+            return 1.0f;        // 1152: letters, digits, the rest of the ASCII
+    }
+}
+
+// Advance of one code point, in multiples of the pixel size. The system face is
+// proportional and its metrics cannot be read from here, so it keeps an
+// estimate -- a normal glyph 0.6, the thin strokes about half that, CJK a full
+// em -- while the pixel font is measured on its real cells. Combining marks
+// ride on the previous glyph and take no room in either.
+inline float codePointAdvance(std::uint32_t cp, LabelFont font) {
+    if (font == LabelFont::Pixel) {
+        // sanitizeName() drops what has no glyph; the guard is for a caller
+        // that hands this something it never sanitized.
+        if (cp < 0x20) return 0.0f;
+        return pixelFontCell(cp) * 0.60f;
+    }
+
     if (cp == 0x20) return 0.30f;
     if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F)) return 0.0f;
     if (cp <= 0x7F) {
@@ -556,10 +685,11 @@ inline float codePointAdvance(std::uint32_t cp) {
 }
 
 // Width of an already-sanitized string in surface pixels, measured in code
-// points. Counting bytes instead (the bug this replaces) doubles the width of
-// every two-byte name, which slid Arabic names half a label to the left of
-// the head they are supposed to sit above.
-inline float measureTextWidth(std::string_view text, float pixelSize) {
+// points of the font it will be drawn with. Counting bytes instead (the bug
+// this replaces) doubles the width of every two-byte name, which slid Arabic
+// names half a label to the left of the head they are supposed to sit above.
+inline float measureTextWidth(std::string_view text, float pixelSize,
+                              LabelFont font) {
     std::size_t index = 0;
     float advance = 0.0f;
     while (index < text.size()) {
@@ -568,9 +698,15 @@ inline float measureTextWidth(std::string_view text, float pixelSize) {
             ++index;
             continue;
         }
-        advance += codePointAdvance(cp);
+        advance += codePointAdvance(cp, font);
     }
     return advance * pixelSize;
+}
+
+// The estimate for a label whose font is not settled here, i.e. for nothing
+// that centers on the result.
+inline float measureTextWidth(std::string_view text, float pixelSize) {
+    return measureTextWidth(text, pixelSize, LabelFont::System);
 }
 
 // ---------------------------------------------------------------------------

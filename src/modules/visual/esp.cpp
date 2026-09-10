@@ -2,6 +2,7 @@
 
 #include "../ModuleRegistry.hpp"
 #include "esp_geometry.hpp"
+#include "core/PixelFont.hpp"
 #include "core/memory/Hooks.hpp"
 #include "overlay_mesh.hpp"
 #include <bedrocktools/events/EventBus.hpp>
@@ -91,6 +92,16 @@ int (*_getPerspective_orig)(void*) = nullptr;
 std::atomic<int> s_perspective{0};
 std::atomic<bool> s_perspectiveKnown{false};
 bool s_perspectiveHooked = false;
+
+// Whether the launcher has the packaged pixel font (see core/PixelFont.hpp).
+// Sampled once, at onInit: an unregistered font does not fail loudly, it just
+// draws something else, so the module may only ask for it when it really is
+// there -- and the nametag is centered on a width measured in that font, which
+// is the whole reason the module cares. Queried here rather than at draw time
+// because the query opens a file on the first attempt, and the render pass must
+// not do that. Being written during init -- i.e. before applyPatch() has handed
+// the render thread the hook that reads it -- it needs no atomic of its own.
+bool s_pixelFontReady = false;
 
 // The overlay is published from the render hook, which also runs on the render
 // thread (before the frame is swapped), so these two flags are only ever read
@@ -458,20 +469,41 @@ void addRect(std::vector<PLModMenu_DrawCommand>& cmds, float x, float y,
     pushCommand(cmds, cmd);
 }
 
+// The two font ids the launcher's text commands take: the packaged pixel font
+// (registered by core/PixelFont.hpp) and the empty id that means "the
+// launcher's own face", which is the only one with the glyphs and the bidi
+// shaping for a name written outside the pixel font.
+const char* fontIdFor(esp::LabelFont font) {
+    return font == esp::LabelFont::Pixel ? bedrocktools::core::kPixelFontId : "";
+}
+
+// Appends a text label to the batch. The face it is drawn with and the width it
+// comes out at are decided here, in one place, so that the box the launcher lays
+// the text out in and the position it is centered from can never disagree --
+// separately is how a label ends up beside the head instead of above it.
+//
+//   * `x` is the left edge of the label, or -- with `centered` -- the point the
+//     label is centered on, which is what the nametag and the health value use
+//     to sit on the head column;
+//   * the launcher's pixel font is asked for whenever it can draw the text,
+//     because that is the only face whose metrics are known (see
+//     esp::labelFontFor); anything it has no glyphs for goes to the launcher's
+//     default, which shapes it properly instead of drawing boxes for it.
 void addText(std::vector<PLModMenu_DrawCommand>& cmds, const std::string& text,
-             float x, float y, float size, uint32_t color) {
+             float x, float y, float size, uint32_t color, bool centered = false) {
+    const esp::LabelFont font = esp::labelFontFor(text, s_pixelFontReady);
+    const float width = esp::measureTextWidth(text, size, font);
+
     PLModMenu_DrawCommand cmd{};
     cmd.type = PL_DRAW_TEXT;
-    cmd.x = x;
+    cmd.x = centered ? x - width * 0.5f : x;
     cmd.y = y;
-    // Measured in glyphs rather than bytes (see esp::measureTextWidth): this is
-    // the box the label is centered on, and a byte count used to slide every
-    // multi-byte name sideways off the head it belongs to.
-    cmd.w = esp::measureTextWidth(text, size);
+    cmd.w = width;
     cmd.h = size + 3.0f;
     cmd.size = size;
     cmd.color = color;
     cmd.text = text;
+    cmd.fontId = fontIdFor(font);
     pushCommand(cmds, cmd);
 }
 
@@ -794,12 +826,12 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
                 reinterpret_cast<bedrocktools::sdk::Player*>(ent)->name());
         }
         if (options.nametag && !name.empty()) {
-            // Centered on the measured glyph width of the cleaned name, on the
-            // head column. A byte count used to over-count every multi-byte
-            // character and pull the label off the player it belongs to.
-            const float textW = esp::measureTextWidth(name, nametagSize);
-            addText(labels, name, headX - textW * 0.5f, textY, nametagSize,
-                    forceOpaqueColor(options.nametagColor));
+            // Centered on the head column, on the width the chosen font
+            // measures the cleaned name to (both halves of that are addText's
+            // decision; a byte count used to over-count every multi-byte
+            // character and pull the label off the player it belongs to).
+            addText(labels, name, headX, textY, nametagSize,
+                    forceOpaqueColor(options.nametagColor), /*centered=*/true);
             textY -= nametagSize + 2.0f;
         }
 
@@ -938,6 +970,13 @@ EspModule::~EspModule() {
 }
 
 void EspModule::onInit() {
+    // The nametag is HUD text, and HUD text is centered on a width the module
+    // has to supply, so the answer only means something for a font whose
+    // metrics are known. The packaged one is the game's own pixel font and is
+    // the only such face, so it is registered here (once per package, shared
+    // with Effect Display) and its availability is what addText consults.
+    s_pixelFontReady = bedrocktools::core::pixelFontAvailable();
+
     const auto resolveFn = [](SignatureId id) { return bedrocktools::memory::resolve(id); };
 
     const uintptr_t aip = resolveFn(SignatureId::ActorIsPlayer);
