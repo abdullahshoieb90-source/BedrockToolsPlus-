@@ -24,11 +24,17 @@ extern EspModule* g_espMod;
 // The elements that are screen furniture rather than geometry -- nametags
 // and the health value and bar -- stay on the launcher HUD layer, because
 // that is where the font lives. They are anchored with the projection in
-// esp_geometry.hpp and are therefore tuned by Fov. The tracer and the
-// distance readout used to live there too, but a HUD projection can only
-// approximate the game's camera (sprint FOV, view bob, a frame of look
-// latency), which made them slide off the hitbox while the view moved --
-// so both are world-space geometry now, drawn (and pinned) by the game.
+// esp_geometry.hpp and are therefore tuned by Fov. The distance readout and
+// the feet-origin tracer used to live there too, but a HUD projection can
+// only approximate the game's camera (sprint FOV, view bob, a frame of look
+// latency), which made them slide off the hitbox while the view moved -- so
+// both are world-space geometry now, drawn (and pinned) by the game.
+//
+// The Crosshair tracer is the one line that cannot make that trip: a
+// world-space segment that starts at the camera lies on a single view ray, so
+// the game projects all of it onto one pixel and the tracer disappears when
+// Crosshair is picked. It stays on the HUD layer, drawn from the exact middle
+// of the screen to the projected hitbox (see esp::crosshairTracer).
 //
 // Entity selection mirrors Hitbox: players, mobs and items are toggled
 // independently, invisible actors are skipped, and Show Local Player adds the
@@ -92,20 +98,34 @@ public:
     float rgbSpeed = 0.3f; // full hue cycles per second (0.05 .. 1)
 
     // ---- Tracers -----------------------------------------------------------
-    // A world-space line handed to the game's renderer together with the
-    // boxes: it ends inside the entity's hitbox (its AABB center), so it
+    // A line that ends inside the entity's hitbox (its AABB center), so it
     // cannot detach from the wireframe while the view moves. The origin is
-    // the local player's own feet (Bottom) or the render camera, i.e. the
-    // screen center (Crosshair). Hairline only, and the same Through Walls
-    // material as the box edges.
+    // the local player's own feet (Bottom) or the screen center (Crosshair),
+    // and the two take different render paths for a geometric reason: Bottom
+    // is world-space geometry handed to the game next to the box edges, while
+    // a line through the camera projects to a single pixel and therefore has
+    // to be a screen-space HUD line. Hairline either way, and the same Through
+    // Walls material as the box edges for the world-space half.
     bool tracer = false;
     TracerOrigin tracerOrigin = TracerOrigin::Bottom;
     uint32_t tracerColor = 0xFFFFFFFF;
 
     // ---- Nametag -----------------------------------------------------------
     // Centered above the projected head point (top-center of the player's
-    // AABB), together with the health stack. HUD furniture, so its placement
-    // follows the module's projection (see Fov below).
+    // AABB), together with the health stack. The name is cleaned of the
+    // markup codes and invisible format characters the game's own font
+    // swallows before it reaches the HUD, and it is centered on a width
+    // measured in glyphs rather than bytes, so a multi-byte (Arabic, CJK)
+    // name sits above the head instead of beside it.
+    //
+    // That width is measured against the face the launcher will actually draw
+    // with, which is why the module registers the packaged pixel font (see
+    // core/PixelFont.hpp) and asks for it per label: the font is the only one
+    // whose cell widths are known here, and its own glyphs stop at Basic Latin,
+    // so a name in a script it cannot draw -- Arabic, Hebrew, CJK, emoji -- is
+    // left to the launcher's default font, which has them and shapes them
+    // instead of drawing a row of replacement boxes. HUD furniture either way,
+    // so the placement follows the module's projection (see Fov below).
     bool nametag = true;
     uint32_t nametagColor = 0xFFFFFFFF;
     float nametagScale = 1.0f; // 0.5 .. 2 (multiplier on the base 14px text)
@@ -123,10 +143,17 @@ public:
     bool distance = true;
 
     // ---- HUD label projection ----------------------------------------------
-    // Only the screen-space half (the nametag and health labels, plus the
-    // apparent size of the world-space distance digits) needs it; the box,
-    // tracer and distance anchors are placed by the game.
-    float fov = 60.0f; // vertical field of view in degrees (30 .. 120)
+    // Only the screen-space half (the nametag and health labels, the apparent
+    // size of the world-space distance digits, and the Crosshair tracer's far
+    // end) needs it; the box, the feet-origin tracer and the distance anchors
+    // are placed by the game.
+    //
+    // The default is Bedrock's own FOV (the game's gfx_fov option is 70 by
+    // default), which is what the level is rendered with as long as the player
+    // did not touch the slider: assuming a narrower field of view used to push
+    // every off-axis label radially away from the crosshair, and the nametag
+    // landed above and beside the head instead of on it.
+    float fov = 70.0f; // vertical field of view in degrees (30 .. 120)
 
 private:
     bool m_patched = false;

@@ -3,6 +3,7 @@
 #include "effectformat.hpp"
 #include "effecti18n.hpp"
 #include "effectlayout.hpp"
+#include "core/PixelFont.hpp"
 #include "core/Runtime.hpp"
 #include "core/memory/Hooks.hpp"
 #include "modules/ModuleRegistry.hpp"
@@ -1235,12 +1236,11 @@ EffectDisplayModule::~EffectDisplayModule() {
 void EffectDisplayModule::registerResources() {
     if (m_resourcesRegistered) return;
 
-    const auto fontPath = bedrocktools::core::Runtime::get().resourceDirectory() / "minecraft.ttf";
-    std::ifstream fontFile(fontPath, std::ios::binary);
-    if (fontFile) {
-        std::vector<unsigned char> font((std::istreambuf_iterator<char>(fontFile)), std::istreambuf_iterator<char>());
-        if (!font.empty()) pl::modmenu::registerFont("minecraft", font);
-    }
+    // The packaged pixel font, registered once per process by the shared
+    // helper (core/PixelFont.hpp) that the Esp nametags lean on for their
+    // metrics: whichever module initializes first hands the launcher the file,
+    // and the other finds it already done.
+    bedrocktools::core::pixelFontAvailable();
 
     for (std::uint32_t id = 1; id < kEffectColors.size(); ++id) {
         ensureEffectIcon(id);

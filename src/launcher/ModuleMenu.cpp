@@ -268,6 +268,15 @@ void registerModulesWithLauncher() {
                     maxVal = 2000.0f;
                 } else if (kLower.find("range") != std::string::npos) {
                     maxVal = 180.0f;
+                } else if (kLower == "fov") {
+                    // The Esp module's own clamp for the FOV its label
+                    // projection is built with (esp.hpp). A slider that reaches
+                    // past what the module honors is a slider that lies: the
+                    // value it reports is rewritten on the way in, and a
+                    // projection that disagrees with the game's is a nametag
+                    // that misses the player it belongs to.
+                    minVal = 30.0f;
+                    maxVal = 120.0f;
                 } else if (kLower.find("fov") != std::string::npos) {
                     minVal = 1.0f;
                     maxVal = 179.0f;
