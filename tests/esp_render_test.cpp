@@ -49,11 +49,16 @@ constexpr float kSurfaceWidth = 1000.0f;
 constexpr float kSurfaceHeight = 1000.0f;
 
 // Per-actor vertex budgets the assertions below use. The wireframe is twelve
-// edges * two vertices; the world-space distance readout for "10.0m" is
-// fifteen merged glyph rectangles * four corners * two windings ('1' = 2,
-// '0' = 4, '.' = 1, '0' = 4, 'm' = 4).
+// edges * two vertices; the label geometry is one quad per merged rectangle of
+// every glyph of the line, twice wound -- see billboardVertsFor() below, which
+// counts them off the same generated face the module draws from.
 constexpr std::size_t kWireVertsPerActor = 24;
-constexpr std::size_t kReadoutVertsForTenMeters = 15 * 8;
+
+// "لاعب" -- a name the packaged pixel face has no cells for, so the Esp module
+// leaves it (and the rest of that entity's label column) on the launcher's HUD
+// font. The cases that care about the HUD path steer by it; the ones that care
+// about the mesh path use a plain ASCII name, which now goes to the geometry.
+const std::string kHudName = "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8";
 
 // Captured HUD-layer commands (nametags, distance, tracers, health bar).
 std::vector<pl::modmenu::DrawCommand> g_commands;
@@ -65,6 +70,9 @@ struct MeshBatch {
     int reservedVertices = 0;
     std::vector<std::array<float, 3>> vertices;
     std::array<float, 4> color{0.0f, 0.0f, 0.0f, 0.0f};
+    // Every color the batch was told, in order: a grouped flush (the health
+    // bars) sets one per group, so `color` alone is only the last of them.
+    std::vector<std::array<float, 4>> colors;
 };
 std::vector<MeshBatch> g_batches;
 MeshBatch g_currentBatch;
@@ -130,6 +138,7 @@ void tessellatorBegin(void*, void*, int mode, int vertexCount, int) {
 }
 void tessellatorColor(void*, float r, float g, float b, float a) {
     g_currentBatch.color = {r, g, b, a};
+    g_currentBatch.colors.push_back({r, g, b, a});
 }
 void tessellatorVertex(void*, float x, float y, float z) {
     g_currentBatch.vertices.push_back({x, y, z});
@@ -267,6 +276,46 @@ int quadBatchCount() {
     return count;
 }
 
+// The vertices one billboarded line costs the mesh: a quad per merged
+// rectangle of every glyph, both windings each. Counted off the generated face
+// the module spells its labels with (esp_pixel_font.hpp), so the numbers below
+// say "this text and nothing else" instead of hard-coding a count that changes
+// whenever the font is regenerated.
+std::size_t billboardVertsFor(std::string_view text) {
+    std::size_t rects = 0;
+    for (const char c : text) {
+        const esp::world::PixelGlyph* glyph =
+            esp::world::pixelGlyph(static_cast<unsigned char>(c));
+        if (glyph) rects += glyph->rectCount;
+    }
+    return rects * 8;
+}
+
+// "10.0m" is what the mob ten blocks away reads, and the number the batch-count
+// assertions below share.
+std::size_t readoutVertsForTenMeters() { return billboardVertsFor("10.0m"); }
+
+// What a billboarded line occupies, in the font's own pixel cells: the left edge
+// of the first glyph's ink, the right edge of the last, and the total advance.
+// The pinned labels are laid out on exactly these numbers, so recomputing them
+// here checks "the label is as wide as the face says and no wider" without
+// trusting a constant nobody can read off a font.
+std::array<float, 3> billboardInkFor(std::string_view text) {
+    float pen = 0.0f, left = 1e30f, right = -1e30f;
+    for (const char c : text) {
+        const esp::world::PixelGlyph* glyph =
+            esp::world::pixelGlyph(static_cast<unsigned char>(c));
+        if (!glyph) continue;
+        for (std::size_t i = 0; i < glyph->rectCount; ++i) {
+            const esp::world::PixelRect& rect = esp::world::kPixelRects[glyph->firstRect + i];
+            left = std::min(left, pen + static_cast<float>(rect.x));
+            right = std::max(right, pen + static_cast<float>(rect.x + rect.width));
+        }
+        pen += static_cast<float>(glyph->advance);
+    }
+    return {left, right, pen};
+}
+
 // The last line batch (GL_LINES), i.e. the tracer batch once tracers are on:
 // the wireframe flushes first, the tracer right after it.
 const MeshBatch* lastLineBatch() {
@@ -277,12 +326,30 @@ const MeshBatch* lastLineBatch() {
     return out;
 }
 
-// The last quad batch (GL_QUADS): the distance readout, which flushes after
-// the box fill (see the flush order in drawWorldOverlay).
-const MeshBatch* distanceBatch() {
+// The last quad batch (GL_QUADS): the billboarded text -- the distance readout,
+// the nametag and the health value, all one color and all flushed last so a
+// label stays readable over the wireframe it crosses (see the flush order in
+// drawWorldOverlay).
+const MeshBatch* labelBatch() {
     const MeshBatch* out = nullptr;
     for (const auto& batch : g_batches) {
         if (batch.mode == 1) out = &batch;
+    }
+    return out;
+}
+
+// The health bars of the frame: the one quad batch that opens with the track's
+// translucent black and is followed by a fill of another color. Recognizing it
+// by its colors is the point -- a bar that is not two color groups in one mesh
+// is a bar the module did not group.
+const MeshBatch* barBatch() {
+    const MeshBatch* out = nullptr;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 1 || batch.colors.size() < 2) continue;
+        if (near(batch.colors[0][3], 0.5f) && near(batch.colors[0][0], 0.0f) &&
+            near(batch.colors[0][1], 0.0f) && near(batch.colors[0][2], 0.0f)) {
+            out = &batch;
+        }
     }
     return out;
 }
@@ -372,10 +439,18 @@ int filledRectCount() {
 struct PlayerNameGuard {
     std::string* field;
 
-    explicit PlayerNameGuard(std::byte* actor, const char* name)
+    explicit PlayerNameGuard(std::byte* actor, const std::string& name)
         : field(new (actor + bedrocktools::sdk::offsets::Player::mName)
                     std::string(name)) {
         fake::g_actorIsPlayer = true;
+    }
+
+    // Swapping the name is how one case checks both label paths on the same
+    // actor: a name the pixel face can spell goes into the mesh, one it cannot
+    // spell stays on the launcher's font.
+    void rename(std::byte* actor, const std::string& name) {
+        std::destroy_at(field);
+        field = new (actor + bedrocktools::sdk::offsets::Player::mName) std::string(name);
     }
 
     ~PlayerNameGuard() {
@@ -503,12 +578,14 @@ int main() {
               "thickness 1 keeps the box a crisp line pass");
 
         // The distance readout left the HUD layer: it is world geometry
-        // under the entity's feet now, pinned by the game like the box. The
-        // mob is sqrt(109) = 10.4 blocks away, and "10.4m" is fourteen glyph
-        // rectangles ('4' merges into three).
-        const MeshBatch* readout = distanceBatch();
-        check(readout != nullptr && readout->vertices.size() == 14 * 8,
-              "the distance readout is world geometry (10.4m = 14 glyph rects)");
+        // under the entity's feet now, pinned by the game like the box. The mob
+        // is sqrt(109) = 10.4 blocks away, so the batch has to be exactly the
+        // glyphs of "10.4m" -- which is also the only way to tell that the
+        // readout still says what it measured.
+        const MeshBatch* readout = labelBatch();
+        check(readout != nullptr &&
+                  readout->vertices.size() == billboardVertsFor("10.4m"),
+              "the distance readout is world geometry, spelled out of \"10.4m\"");
         check(readout != nullptr &&
                   allVerticesBelow(*readout, 0.0f, cameraPosition),
               "and it hangs below the entity's feet, not next to the hitbox");
@@ -519,19 +596,34 @@ int main() {
     // --- Turning the view cannot move the geometry --------------------------
     // The old screen-space box re-projected every frame from the module's own
     // camera model, so a mismatch there read as "the box moves when I move the
-    // screen". World-space edges are the same numbers whatever the view does.
-    // The tracer and the distance readout used to slide off the hitbox the
-    // same way from the HUD layer; both are world geometry now, so this also
-    // pins their anchors while the view turns.
+    // screen". World-space edges are the same numbers whatever the view does --
+    // and that is now true of the tracers, the readout and the label column too,
+    // which is the whole reason the nametag and the health stack moved into the
+    // mesh. The one label that still has to be projected is a name the pixel
+    // face cannot spell, so the pair of cases below is the difference between
+    // the two paths, on the same entity at the same angles.
     {
-        PlayerNameGuard name(mob.data(), "Steve"); // a HUD label to steer by
+        auto centroid = [](const std::vector<std::array<float, 3>>& vertices) {
+            std::array<float, 3> sum{0.0f, 0.0f, 0.0f};
+            for (const auto& vertex : vertices) {
+                sum[0] += vertex[0];
+                sum[1] += vertex[1];
+                sum[2] += vertex[2];
+            }
+            if (vertices.empty()) return sum;
+            return std::array<float, 3>{sum[0] / vertices.size(),
+                                        sum[1] / vertices.size(),
+                                        sum[2] / vertices.size()};
+        };
+
+        // --- a spellable name: geometry, and therefore still there ---------
+        PlayerNameGuard name(mob.data(), "Steve");
         setMobBox({0.7f, 0.0f, 9.7f}, {1.3f, 1.8f, 10.3f});
 
         setCameraRotation(0.0f, 0.0f);
         renderFrame();
         const auto levelWire = lineBatchVertices();
         const auto levelReadout = quadBatchVertices();
-        const auto levelLabels = g_commands;
 
         setCameraRotation(-20.0f, 15.0f); // look up and turn right, mob still on screen
         renderFrame();
@@ -545,23 +637,12 @@ int main() {
         check(turnedReadout.size() == levelReadout.size() && !levelReadout.empty(),
               "the distance readout is drawn at every view angle");
 
-        // The readout stays under the hitbox: its world anchor is the
-        // entity's feet (x=1, z=10, just under y=0), so turning the view may
-        // only tilt and resize the billboard, never move it off the box.
-        // (The HUD projection this replaces moved the readout by whole box
-        // widths whenever its camera model disagreed with the game's.)
-        auto centroid = [](const std::vector<std::array<float, 3>>& vertices) {
-            std::array<float, 3> sum{0.0f, 0.0f, 0.0f};
-            for (const auto& vertex : vertices) {
-                sum[0] += vertex[0];
-                sum[1] += vertex[1];
-                sum[2] += vertex[2];
-            }
-            if (vertices.empty()) return sum;
-            return std::array<float, 3>{sum[0] / vertices.size(),
-                                        sum[1] / vertices.size(),
-                                        sum[2] / vertices.size()};
-        };
+        // The readout and the name stay on the hitbox: their world anchors are
+        // the entity's feet (x=1, z=10, just under y=0) and the top-center of its
+        // box, so turning the view may only tilt and resize a billboard, never
+        // move it off the box. (The HUD projection this replaced moved the readout
+        // by whole box widths whenever its camera model disagreed with the
+        // game's -- which is exactly what a nametag used to do, one batch later.)
         const auto levelCenter = centroid(levelReadout);
         const auto turnedCenter = centroid(turnedReadout);
         const float drift = std::sqrt(
@@ -573,12 +654,52 @@ int main() {
         check(levelCenter[0] > 0.5f && levelCenter[0] < 1.5f &&
                   levelCenter[2] > 9.5f && levelCenter[2] < 10.5f,
               "the readout stays centered under the entity's feet");
+        check(g_commands.empty() && textCommandCount() == 0,
+              "and none of it is on the HUD at all");
 
-        check(g_commands.size() == levelLabels.size(),
-              "the labels keep being drawn while the view turns");
-        check(!levelLabels.empty() && !g_commands.empty() &&
-                  std::fabs(g_commands.back().x - levelLabels.back().x) > 1.0f,
-              "the labels do follow the view, which is what a projection is for");
+        // The name is in the same batch as the readout -- one color, one flush --
+        // so what separates them is the head: the rows above it are the nametag's.
+        // Its centroid has to stay on the head column however the billboard tilts.
+        auto nameVertices = [&](const std::vector<std::array<float, 3>>& quads) {
+            std::vector<std::array<float, 3>> out;
+            for (const auto& vertex : quads) {
+                if (vertex[1] + cameraPosition.y > 1.8f) out.push_back(vertex);
+            }
+            return out;
+        };
+        const auto levelName = nameVertices(levelReadout);
+        const auto turnedName = nameVertices(turnedReadout);
+        check(levelName.size() == billboardVertsFor("Steve") &&
+                  turnedName.size() == levelName.size(),
+              "the nametag is spelled in both frames, one vertex pair per rectangle");
+        const auto levelNameCenter = centroid(levelName);
+        const auto turnedNameCenter = centroid(turnedName);
+        check(near(levelNameCenter[0], 1.0f, 0.05f) &&
+                  near(levelNameCenter[2], 10.0f, 0.05f) &&
+                  levelNameCenter[1] + cameraPosition.y > 1.8f,
+              "and it hangs over the head of the box, not beside it");
+        check(near(turnedNameCenter[0], levelNameCenter[0], 0.05f) &&
+                  near(turnedNameCenter[1], levelNameCenter[1], 0.05f) &&
+                  near(turnedNameCenter[2], levelNameCenter[2], 0.05f),
+              "turning the view cannot slide the nametag off the head either");
+
+        // --- an unspellable name: still a projection, and it does move ------
+        // The fallback is not a bug to fix here but a trade the module makes on
+        // purpose (Arabic and CJK have no cells in the pixel face), so what has
+        // to hold is that its label keeps up with the view instead of sticking to
+        // where the last frame put it.
+        const std::string arabic = "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8"; // "لاعب"
+        name.rename(mob.data(), arabic);
+        setCameraRotation(0.0f, 0.0f);
+        renderFrame();
+        const auto levelLabels = g_commands;
+        setCameraRotation(-20.0f, 15.0f);
+        renderFrame();
+        check(g_commands.size() == levelLabels.size() && !g_commands.empty(),
+              "the fallback label keeps being drawn while the view turns");
+        check(std::fabs(g_commands.back().x - levelLabels.back().x) > 1.0f,
+              "and follows the view, which is what a projection is for");
+        setCameraRotation(0.0f, 0.0f);
     }
 
     // --- Through walls is the default --------------------------------------
@@ -592,7 +713,7 @@ int main() {
 
         fake::g_solidBlocks = true;
         renderFrame();
-        check(allVertices().size() == kWireVertsPerActor + kReadoutVertsForTenMeters,
+        check(allVertices().size() == kWireVertsPerActor + readoutVertsForTenMeters(),
               "an actor behind a wall is still drawn, readout included");
         check(textCommandCount() == 0,
               "and nothing needs the HUD layer for it anymore");
@@ -607,13 +728,13 @@ int main() {
 
         fake::g_solidBlocks = false;
         renderFrame();
-        check(allVertices().size() == kWireVertsPerActor + kReadoutVertsForTenMeters,
+        check(allVertices().size() == kWireVertsPerActor + readoutVertsForTenMeters(),
               "and it comes back as soon as the raycast is clear");
 
         fake::g_solidBlocks = true;
         esp.throughWalls = true;
         renderFrame();
-        check(allVertices().size() == kWireVertsPerActor + kReadoutVertsForTenMeters,
+        check(allVertices().size() == kWireVertsPerActor + readoutVertsForTenMeters(),
               "the cull never runs while Through Walls is on, even with a region");
     }
 
@@ -630,9 +751,9 @@ int main() {
         fake::g_solidBlocks = false;
 
         renderFrame();
-        const MeshBatch* readout = distanceBatch();
+        const MeshBatch* readout = labelBatch();
         check(readout != nullptr &&
-                  readout->vertices.size() == kReadoutVertsForTenMeters,
+                  readout->vertices.size() == readoutVertsForTenMeters(),
               "ten blocks away reads as the five-glyph 10.0m readout");
 
         // The readout hangs just under the hitbox: every vertex below the
@@ -647,8 +768,8 @@ int main() {
         const Vec3 thirdPersonCam{0.0f, 3.0f, -4.0f};
         writeAt(playerRenderer, LevelRendererPlayer::mCamPos, thirdPersonCam);
         renderFrame();
-        check(distanceBatch() != nullptr &&
-                  distanceBatch()->vertices.size() == kReadoutVertsForTenMeters,
+        check(labelBatch() != nullptr &&
+                  labelBatch()->vertices.size() == readoutVertsForTenMeters(),
               "the same entity still reads 10.0m in third person");
 
         // Degraded local box: with no feet anchor there is no second
@@ -663,8 +784,8 @@ int main() {
 
         writeAt(playerRenderer, LevelRendererPlayer::mCamPos, cameraPosition);
         renderFrame();
-        check(distanceBatch() != nullptr &&
-                  distanceBatch()->vertices.size() == kReadoutVertsForTenMeters,
+        check(labelBatch() != nullptr &&
+                  labelBatch()->vertices.size() == readoutVertsForTenMeters(),
               "the feet anchor is used again once the local box is back");
     }
 
@@ -726,33 +847,62 @@ int main() {
     }
 
     // --- Health bar + value -------------------------------------------------
+    // The value and the bar are part of the pinned column now: the bar is two
+    // boxes in the label plane (a translucent track, then a fill on top of it)
+    // and the number is spelled out of the same face as the name, so the stack
+    // cannot come apart from the head it was measured against.
     {
-        writeAt(mobHealthAttribute, AttributeInstance::mCurrentValue, 10.0f);
+        writeAt(mobHealthAttribute, AttributeInstance::mCurrentValue, 15.0f);
         writeAt(mobHealthAttribute, AttributeInstance::mCurrentValue + 8, 20.0f);
         writeAt(mob, Mob::mHealthAttribute, static_cast<void*>(mobHealthAttribute.data()));
 
         renderFrame();
-        check(textCommandCount() == 1,
-              "the health value is the one HUD text left (the distance is geometry)");
-        check(filledRectCount() == 2, "the health bar draws a track and a fill");
-        check(distanceBatch() != nullptr,
-              "the distance readout keeps drawing beside the health stack");
+        const MeshBatch* bars = barBatch();
+        check(bars != nullptr && bars->vertices.size() == 16,
+              "the bar is a track and a fill, in one grouped mesh");
+        check(bars != nullptr && bars->colors.size() == 2 &&
+                  near(bars->colors[0][3], 0.5f) && near(bars->colors[1][3], 1.0f),
+              "which is how one batch carries two colors: the track's half alpha, "
+              "the fill opaque");
+        // 15 of 20 is three quarters, and green is what that fraction is worth.
+        check(bars != nullptr && near(bars->colors[1][0], 0x22 / 255.0f, 0.01f) &&
+                  near(bars->colors[1][1], 0xC5 / 255.0f, 0.01f),
+              "a healthy entity's fill is the green one");
+        check(labelBatch() != nullptr &&
+                  labelBatch()->vertices.size() ==
+                      readoutVertsForTenMeters() + billboardVertsFor("15"),
+              "and the value is a line of the label batch, over the readout");
+        check(filledRectCount() == 0 && textCommandCount() == 0,
+              "nothing of it is left on the HUD layer");
+
+        // The column switches paths whole: an entity whose name the face cannot
+        // spell keeps bar, value and name on the launcher's font, because a
+        // pinned name over a projected bar is two labels that disagree.
+        PlayerNameGuard hudName(mob.data(), kHudName);
+        renderFrame();
+        check(filledRectCount() == 2 && textCommandCount() == 2,
+              "an unspellable name takes the bar and the value back to the HUD with it");
+        check(barBatch() == nullptr, "and leaves the mesh nothing to group");
+        fake::g_actorIsPlayer = false;
 
         // Dead actors lose the bar instead of drawing a negative fraction.
         writeAt(mobHealthAttribute, AttributeInstance::mCurrentValue, -4.0f);
         renderFrame();
-        check(filledRectCount() == 0, "a non-positive health value draws no bar");
+        check(filledRectCount() == 0 && barBatch() == nullptr,
+              "a non-positive health value draws no bar");
         writeAt(mobHealthAttribute, AttributeInstance::mCurrentValue, 20.0f);
         writeAt(mob, Mob::mHealthAttribute, static_cast<void*>(nullptr));
     }
 
     // --- Tracers -------------------------------------------------------------
-    // Both origins aim at the world center of the entity's own box, so the
-    // line lands mid-hitbox and cannot slide off while the view moves. Only
-    // the feet origin can be *geometry* though: a world-space segment that
-    // starts at the camera lies on a single view ray, which the game collapses
-    // onto one pixel -- the "selecting Crosshair removes the tracer" this used
-    // to be. The crosshair line is therefore HUD furniture, like the nametags.
+    // Both origins aim at the world center of the entity's own box and both are
+    // handed to the mesh now, so the line ends mid-hitbox at any FOV and cannot
+    // slide off while the view moves. Only where they start differs: the feet
+    // origin at the local player's own feet, the crosshair origin on the view
+    // axis -- where every point projects to the middle of the screen, which is
+    // what makes a crosshair line drawable as geometry at all. A line that
+    // started *at the eye* lay on one single ray, the game collapsed it onto one
+    // pixel, and the tracer vanished: the report this whole block exists for.
     {
         setCameraRotation(0.0f, 0.0f);
         setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
@@ -773,80 +923,123 @@ int main() {
 
         esp.tracerOrigin = EspModule::TracerOrigin::Crosshair;
         renderFrame();
-        check(lineBatchCount() == 1,
-              "a crosshair tracer is not emitted as a line through the camera");
-        std::vector<pl::modmenu::DrawCommand> lines = lineCommands();
-        check(lines.size() == 1, "the crosshair tracer is a HUD line");
-        if (lines.size() == 1) {
-            const auto& line = lines[0];
-            check(near(line.x, 500.0f) && near(line.y, 500.0f),
-                  "it starts dead on the crosshair, at the middle of the surface");
-            check(near(line.x + line.w, 200.0f, 0.5f) &&
-                      near(line.y + line.h, 572.0f, 0.5f),
-                  "and ends on the hitbox center the projection puts there");
-            check(std::isfinite(line.x) && std::isfinite(line.y) &&
-                      std::isfinite(line.w) && std::isfinite(line.h) &&
-                      line.size > 0.0f,
-                  "with a finite, non-zero stroke the launcher can draw");
-        }
+        check(lineBatchCount() == 2,
+              "the crosshair origin gets its own line batch, exactly like Bottom");
+        tracer = lastLineBatch();
+        // Camera at (0, 1.62, 0) facing south, the hitbox five blocks out: the
+        // segment starts half a block along the view axis, the far end of the
+        // entity's own box.
+        const Vec3 axisStart{0.0f, 1.62f, 0.5f};
+        check(tracer != nullptr && tracer->vertices.size() == 2 &&
+                  anyVertexCloseTo(tracer->vertices, hitboxCenter, cameraPosition),
+              "which ends inside the hitbox, at the same world point Bottom aims at");
+        check(tracer != nullptr &&
+                  anyVertexCloseTo(tracer->vertices, axisStart, cameraPosition),
+              "and starts on the view axis, in front of the eye instead of at it");
+        check(lineCommands().empty(),
+              "so nothing about it is left for the module's projection to place");
 
-        // An entity that is already off the surface keeps a snapline pointing
-        // the way: the direction is the information there, so the end is pushed
-        // out to the edge of the screen instead of to a projected point a
-        // thousand pixels out -- and never past it, which is what would hand
-        // the launcher coordinates it rejects the whole batch for.
+        // The pixel it starts on is a property of the axis, not of the module's
+        // model of the camera: any depth along it lands on the surface center, so
+        // the start is where the drift used to be visible and is now gone with it.
+        const auto axisVertices = tracer->vertices;
+        const float savedFov = esp.fov;
+        esp.fov = 110.0f; // sprint FOV: the number the HUD path used to slide on
+        renderFrame();
+        check(lineBatchCount() == 2 && lastLineBatch() != nullptr &&
+                  lastLineBatch()->vertices == axisVertices,
+              "and an FOV the module was not told about cannot move the line at all");
+        esp.fov = savedFov;
+
+        // An entity off the edge of the surface is not a special case any more:
+        // the game clips the line at the viewport, which is both cheaper than
+        // clamping it here and exact -- the visible part points at the entity
+        // because the whole of it does.
         setMobBox({40.0f, 0.0f, 4.0f}, {41.0f, 1.8f, 5.0f});
         renderFrame();
-        lines = lineCommands();
-        check(lines.size() == 1, "an off-screen entity keeps its crosshair snapline");
+        check(lineBatchCount() == 2 && lineCommands().empty(),
+              "an off-screen entity in front of the camera keeps geometry, not a snapline");
+        check(lastLineBatch()->vertices.size() == 2 &&
+                  anyVertexCloseTo(lastLineBatch()->vertices, {40.5f, 0.9f, 4.5f},
+                                   cameraPosition),
+              "whose far end is still the entity's own box center, unclamped");
+        check(textCommandCount() == 0 && quadBatchCount() == 1,
+              "while its HUD furniture is culled, the readout still clips in-world");
+
+        // Behind the eye there is nothing for geometry to be pinned to, and that
+        // one case keeps the screen-space snapline: the direction is the whole
+        // message, so its end is pushed out to the edge of the screen rather than
+        // to a projected point a thousand pixels out -- and never past it, which
+        // is what would hand the launcher coordinates it rejects the batch for.
+        setMobBox({-3.3f, 0.0f, -10.3f}, {-2.7f, 1.8f, -9.7f}); // behind the camera
+        renderFrame();
+        std::vector<pl::modmenu::DrawCommand> lines = lineCommands();
+        check(lines.size() == 1, "an entity over the shoulder falls back to the snapline");
+        check(lineBatchCount() == 1,
+              "and the mesh gets no segment that could not be seen anyway");
         if (lines.size() == 1) {
             const float dx = lines[0].x + lines[0].w - 500.0f;
             const float dy = lines[0].y + lines[0].h - 500.0f;
-            check(lines[0].x + lines[0].w < 500.0f,
-                  "which points east, i.e. left of a south-facing camera");
-            check(std::sqrt(dx * dx + dy * dy) <= 708.0f,
+            check(near(lines[0].x, 500.0f) && near(lines[0].y, 500.0f),
+                  "which still starts on the middle of the surface");
+            check(dx * dx + dy * dy <= 708.0f * 708.0f,
                   "and stops at the edge of the screen, not at infinity");
         }
-        check(textCommandCount() == 0 && quadBatchCount() == 1,
-              "while its HUD furniture is culled, the readout still clips in-world");
         esp.tracer = false;
     }
 
     // --- Nametag sits above the head --------------------------------------
-    // The name is centered on the projected head point (top-center of the
-    // entity's own box), not on the 2D box's top-middle, which perspective
-    // shifts away from the head -- see the geometry test. The off-axis box
-    // from the tracer test makes the two anchors disagree by tens of pixels,
-    // so this fails if the name ever goes back to the 2D average.
+    // The name hangs off the world top-center of the entity's own box, measured
+    // on the cell widths of the face that spells it. The 2D box's top-middle is
+    // what the HUD path centers on -- an average of eight projected corners that
+    // perspective slides away from the head, by tens of pixels on the off-axis
+    // box below -- and it is also what an FOV the module has not been told about
+    // used to move. Neither applies to a billboard: the numbers here are the
+    // entity's own, so they are all the test has to say about them.
     {
         setCameraRotation(0.0f, 0.0f);
         setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
-        auto* nameField = new (mob.data() + Player::mName) std::string("Steve");
-        fake::g_actorIsPlayer = true;
+        PlayerNameGuard name(mob.data(), "Steve");
         renderFrame();
 
-        // Head anchor (3, 1.8, 5) through the first-person camera at
-        // (0, 1.62, 0) on the 1000x1000, 90-degree surface: ndc (-0.6, 0.036).
-        // The 14px name sits 4px above it, centered on its own glyph width
-        // ("Steve" is S+e+v+e at 0.6 and a thin t at 0.32 em, so 2.72 em =
-        // 38.08px): x = 200 - 38.08 / 2.
-        const pl::modmenu::DrawCommand* nameCmd = nullptr;
-        for (const auto& cmd : g_commands) {
-            if (cmd.type == pl::modmenu::DrawCommandType::Text && cmd.text == "Steve") {
-                nameCmd = &cmd;
-            }
-        }
-        check(nameCmd != nullptr && near(nameCmd->x, 180.96f, 0.5f) &&
-                  near(nameCmd->y, 464.0f, 1.0f),
-              "the nametag is centered above the head, not the 2D box");
-        check(nameCmd != nullptr && near(nameCmd->w, 38.08f, 0.5f),
-              "and its own measured width is what centers it");
-
-        fake::g_actorIsPlayer = false;
-        std::destroy_at(nameField);
-        renderFrame();
+        const MeshBatch* labels = labelBatch();
+        check(labels != nullptr, "the name is spelled into the label batch");
         check(textCommandCount() == 0,
-              "without a player name no HUD text is left (the distance is geometry)");
+              "and that is all of it: no HUD text is left to drift");
+
+        // The readout shares the batch (one color, one flush), and what
+        // separates the two is the head itself: the rows above it are the name's.
+        std::vector<std::array<float, 3>> ink;
+        for (const auto& vertex : labels->vertices) {
+            if (vertex[1] + cameraPosition.y > 1.8f) ink.push_back(vertex);
+        }
+        check(ink.size() == billboardVertsFor("Steve"),
+              "the whole name, one quad per merged glyph rectangle");
+
+        // Head (3, 1.8, 5) at depth 5 on the 1000x1000, 90-degree surface: one
+        // pixel is 2*tan(45)*5/1000 = 0.01 blocks, and a row of the 14px em is an
+        // eighth of that cell -- the only two numbers the projection has left.
+        const float px = 0.01f;
+        const float em = 14.0f / static_cast<float>(esp::world::kPixelEm) * px;
+        const auto advance = billboardInkFor("Steve");
+        float minX = 1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f, minZ = 1e30f,
+              maxZ = -1e30f;
+        for (const auto& vertex : ink) {
+            minX = std::min(minX, vertex[0]);
+            maxX = std::max(maxX, vertex[0]);
+            minY = std::min(minY, vertex[1]);
+            maxY = std::max(maxY, vertex[1]);
+            minZ = std::min(minZ, vertex[2]);
+            maxZ = std::max(maxZ, vertex[2]);
+        }
+        check(near((minX + maxX) * 0.5f + cameraPosition.x, 3.0f, 0.02f) &&
+                  near((minZ + maxZ) * 0.5f + cameraPosition.z, 5.0f, 0.02f),
+              "centered on the head of the hitbox, which no projection can move");
+        check(minY + cameraPosition.y > 1.8f &&
+                  maxY + cameraPosition.y < 1.8f + (14.0f + 4.0f) * px + em,
+              "a line's height above the head, under the gap the column is stacked on");
+        check(near(maxX - minX, (advance[1] - advance[0]) * em, 0.001f),
+              "and as wide as the face measures itself, so the center means something");
     }
 
     // --- The label is measured in the font that draws it -------------------
@@ -859,11 +1052,18 @@ int main() {
     // row of replacement boxes, which is the other half of the "extra characters
     // beside the nametag" report, and the launcher's font is also the only one
     // that shapes right-to-left names.
+    //
+    // Since the label column went to the mesh, this is the face the *fallback*
+    // is measured with: a name the pixel cells cannot spell, or a build whose
+    // Tessellator did not resolve. The second is what the ASCII case below runs
+    // with, because an ASCII name the mesh can spell never reaches the HUD.
     {
         setCameraRotation(0.0f, 0.0f);
         setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
         auto* nameField = new (mob.data() + Player::mName) std::string("Steve");
         fake::g_actorIsPlayer = true;
+        auto savedBegin = s_mesh.begin;
+        s_mesh.begin = nullptr;
 
         // No font registered (the state on a host with no package to read it
         // from): the launcher's own face draws the label and the estimate that
@@ -891,6 +1091,18 @@ int main() {
 
         // A name the pixel font cannot draw does not get it anyway, and neither
         // does a name that only partly fits: the whole label switches face.
+        // With the mesh back, the same ASCII name is geometry and the question
+        // of which font the launcher would have drawn it with does not arise.
+        s_mesh.begin = savedBegin;
+        renderFrame();
+        // The mob is 5.83 blocks from the player's feet here, so its own batch is
+        // the readout plus the name -- and the HUD has neither.
+        check(textCommandCount() == 0 && labelBatch() != nullptr &&
+                  labelBatch()->vertices.size() ==
+                      billboardVertsFor("5.8m") + billboardVertsFor("Steve"),
+              "with a mesh to draw on, the spellable name is not text at all");
+        s_mesh.begin = nullptr;
+
         std::string arabic;
         arabic += "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8"; // "لاعب"
         std::destroy_at(nameField);
@@ -901,6 +1113,18 @@ int main() {
               "a name outside the pixel font keeps the launcher's font");
         check(nameCmd != nullptr && near(nameCmd->w, (4.0f * 0.6f + 0.3f + 0.6f) * 14.0f, 0.5f),
               "and is measured in code points on that font's estimate");
+
+        // That Arabic name is the case the mesh pass refuses on its own, with a
+        // mesh to spend: it stays on the launcher's font while a Latin one next to
+        // it goes into the level.
+        s_mesh.begin = savedBegin;
+        renderFrame();
+        check(findText(arabic + " X") != nullptr,
+              "and it is the HUD path even with a working mesh pass");
+        check(quadBatchCount() == 1 &&
+                  labelBatch()->vertices.size() == billboardVertsFor("5.8m"),
+              "while the readout next to it stays pinned, and the bar and the value "
+              "came up onto the HUD with the name rather than being split in two");
 
         s_pixelFontReady = false;
         fake::g_actorIsPlayer = false;
@@ -972,7 +1196,7 @@ int main() {
     // screen -- which is what made the labels blink out around corrupted or
     // half-loaded actors. Bad data now loses its own overlay instead.
     {
-        PlayerNameGuard name(mob.data(), "Steve");
+        PlayerNameGuard name(mob.data(), kHudName);
         const float kNan = std::nanf("");
         setMobBox({kNan, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
         renderFrame();
@@ -986,31 +1210,27 @@ int main() {
     }
 
     // --- Handendness of the label anchor ----------------------------------
-    // The HUD labels are still a projection, so the camera basis has to stay
-    // right-handed: a mob east of a south-facing camera belongs on the LEFT.
+    // The HUD fallback is still a projection, so the camera basis has to stay
+    // right-handed: a mob east of a south-facing camera belongs on the LEFT. (The
+    // pinned column has no screen side to get wrong -- the game places it.)
     {
-        PlayerNameGuard name(mob.data(), "Steve");
+        PlayerNameGuard name(mob.data(), kHudName);
         setCameraRotation(0.0f, 0.0f);
         setMobBox({2.7f, 0.0f, 9.7f}, {3.3f, 1.8f, 10.3f});
         renderFrame();
-        const pl::modmenu::DrawCommand* nameCmd = nullptr;
-        for (const auto& cmd : g_commands) {
-            if (cmd.type == pl::modmenu::DrawCommandType::Text && cmd.text == "Steve") {
-                nameCmd = &cmd;
-            }
-        }
+        const pl::modmenu::DrawCommand* nameCmd = findText(kHudName);
         check(nameCmd != nullptr && nameCmd->x < centerX,
               "a mob to the east gets its labels left of center");
+        // Copied, not kept as a pointer: renderFrame() below rebuilds the command
+        // list the pointer looks into.
+        const float xAhead = nameCmd != nullptr ? nameCmd->x : centerX;
 
-        setCameraRotation(0.0f, 30.0f); // turn right
+        // Turned right, but not so far that the label leaves the surface: past
+        // that the early-out drops it, which is a different assertion.
+        setCameraRotation(0.0f, 15.0f);
         renderFrame();
-        nameCmd = nullptr;
-        for (const auto& cmd : g_commands) {
-            if (cmd.type == pl::modmenu::DrawCommandType::Text && cmd.text == "Steve") {
-                nameCmd = &cmd;
-            }
-        }
-        check(nameCmd != nullptr && nameCmd->x < centerX,
+        const pl::modmenu::DrawCommand* turnedCmd = findText(kHudName);
+        check(turnedCmd != nullptr && turnedCmd->x < xAhead,
               "turning right keeps sweeping the label further left");
     }
 
@@ -1033,7 +1253,7 @@ int main() {
         // Show Mobs off: the same mob is not drawn at all.
         setMobBox({0.7f, 0.0f, 9.7f}, {1.3f, 1.8f, 10.3f});
         renderFrame();
-        check(allVertices().size() == kWireVertsPerActor + kReadoutVertsForTenMeters,
+        check(allVertices().size() == kWireVertsPerActor + readoutVertsForTenMeters(),
               "an on-screen mob is drawn before the filter test");
 
         esp.showMobs = false;
@@ -1063,11 +1283,11 @@ int main() {
         // mob here is ten blocks away, so 120 text vertices per actor).
         check(vertices.size() ==
                   static_cast<std::size_t>(kMaxDrawnActors) *
-                      (kWireVertsPerActor + kReadoutVertsForTenMeters),
+                      (kWireVertsPerActor + readoutVertsForTenMeters()),
               "only the nearest kMaxDrawnActors overlays are emitted");
         fake::g_fetchedCount = 1;
         renderFrame();
-        check(allVertices().size() == kWireVertsPerActor + kReadoutVertsForTenMeters,
+        check(allVertices().size() == kWireVertsPerActor + readoutVertsForTenMeters(),
               "and the cap leaves a normal crowd alone");
     }
 
@@ -1104,7 +1324,7 @@ int main() {
     // frame as the geometry); onFrame only has to clear them once the world
     // stops rendering, and must not touch them while it is being drawn.
     {
-        PlayerNameGuard name(mob.data(), "Steve");
+        PlayerNameGuard name(mob.data(), kHudName);
         setMobBox({0.7f, 0.0f, 9.7f}, {1.3f, 1.8f, 10.3f});
         renderFrame();
         const int before = textCommandCount();
@@ -1125,7 +1345,7 @@ int main() {
 
     // --- Disabling the module clears it -------------------------------------
     {
-        PlayerNameGuard name(mob.data(), "Steve");
+        PlayerNameGuard name(mob.data(), kHudName);
         renderFrame();
         check(!g_commands.empty(), "the overlay is up before the disable test");
         esp.setMasterEnabled(false);
