@@ -1,21 +1,10 @@
 #pragma once
 
-// Geometry for the Esp overlay, in its two halves:
-//
-//   * esp::world builds the box outline and fill as *world-space* primitives,
-//     which the game then transforms with the matrices it rendered the level
-//     with (see overlay_mesh.hpp). Nothing can drift, because the module never
-//     has to model the camera for them.
-//   * esp::computeCamera / makeProjection / project / projectBox are the
-//     camera basis + perspective projection for the launcher HUD layer, which
-//     is where text (nametags, distance, health) and tracers have to live
-//     because the HUD owns the font. That projection is only ever as good as
-//     the module's model of the camera, which is exactly why the geometry that
-//     has to sit *on* an entity is no longer part of it.
+// Camera basis + perspective projection for the Esp overlay.
 //
 // Pure functions with no game or preloader dependencies so host tests can
-// cover both halves (see tests/esp_geometry_test.cpp) without bringing in the
-// signature table or the HUD overlay.
+// cover the projection math (see tests/esp_geometry_test.cpp) without
+// bringing in the signature table or the HUD overlay.
 //
 // Conventions, matching the game:
 //   * Bedrock's world is right-handed: +X east, +Y up, +Z south.
@@ -35,12 +24,9 @@
 // The vertical FOV is passed in explicitly so the caller can source it from
 // wherever it likes (the Esp module uses a menu slider).
 
-#include "overlay_mesh.hpp"
-
 #include <bedrocktools/sdk/Types.hpp>
 #include <algorithm>
 #include <cmath>
-#include <vector>
 
 namespace esp {
 
@@ -223,86 +209,5 @@ inline ScreenBox projectBox(const Camera& cam, const SurfaceProjection& proj,
     out.visible = true;
     return out;
 }
-
-// ---------------------------------------------------------------------------
-// World-space geometry (the half that must never drift).
-// ---------------------------------------------------------------------------
-namespace world {
-
-using bedrocktools::sdk::Vec3;
-using overlay::Quad;
-using overlay::Segment;
-
-// Corner indices of an AABB, bit 0 = +X, bit 1 = +Y, bit 2 = +Z.
-inline Vec3 cornerOf(const bedrocktools::sdk::AABB& box, int index) {
-    return {(index & 1) ? box.max.x : box.min.x,
-            (index & 2) ? box.max.y : box.min.y,
-            (index & 4) ? box.max.z : box.min.z};
-}
-
-// Corner pairs of the twelve box edges (each pair differs in exactly one bit).
-inline constexpr int kBoxEdges[12][2] = {
-    {0, 1}, {0, 2}, {0, 4}, {1, 3}, {1, 5}, {2, 3},
-    {2, 6}, {3, 7}, {4, 5}, {4, 6}, {5, 7}, {6, 7},
-};
-
-// The twelve edges of an axis-aligned box, i.e. the 3D wireframe the Hitbox
-// module draws.
-inline void addBoxEdges(std::vector<Segment>& out, const bedrocktools::sdk::AABB& box) {
-    for (const auto& edge : kBoxEdges) {
-        out.push_back({cornerOf(box, edge[0]), cornerOf(box, edge[1])});
-    }
-}
-
-// The same twelve edges trimmed to corner brackets: every edge keeps a piece
-// of the same world length at both ends, so the brackets look even on a tall
-// player box instead of turning into two long stubs.
-inline void addBoxCorners(std::vector<Segment>& out,
-                          const bedrocktools::sdk::AABB& box,
-                          float fraction) {
-    const float extentX = box.max.x - box.min.x;
-    const float extentY = box.max.y - box.min.y;
-    const float extentZ = box.max.z - box.min.z;
-    const float shortest = std::min(std::min(extentX, extentY), extentZ);
-    const float requested = shortest * std::clamp(fraction, 0.02f, 0.5f);
-
-    for (const auto& edge : kBoxEdges) {
-        const Vec3 from = cornerOf(box, edge[0]);
-        const Vec3 to = cornerOf(box, edge[1]);
-        const float dx = to.x - from.x;
-        const float dy = to.y - from.y;
-        const float dz = to.z - from.z;
-        const float length = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (length < 1e-5f) continue;
-
-        const float trim = std::min(requested, length * 0.5f);
-        const float ux = dx / length * trim;
-        const float uy = dy / length * trim;
-        const float uz = dz / length * trim;
-
-        out.push_back({from, {from.x + ux, from.y + uy, from.z + uz}});
-        out.push_back({{to.x - ux, to.y - uy, to.z - uz}, to});
-    }
-}
-
-// The six faces of the box, for a translucent fill. Each quad is emitted with
-// both windings downstream, so the faces read from either side.
-inline void addBoxFaces(std::vector<Quad>& out, const bedrocktools::sdk::AABB& box) {
-    static constexpr int kFaces[6][4] = {
-        {0, 1, 3, 2}, // -Z
-        {4, 6, 7, 5}, // +Z
-        {0, 2, 6, 4}, // -X
-        {1, 5, 7, 3}, // +X
-        {0, 4, 5, 1}, // -Y
-        {2, 3, 7, 6}, // +Y
-    };
-    for (const auto& face : kFaces) {
-        Quad quad{};
-        for (int i = 0; i < 4; ++i) quad.corners[i] = cornerOf(box, face[i]);
-        out.push_back(quad);
-    }
-}
-
-} // namespace world
 
 } // namespace esp
