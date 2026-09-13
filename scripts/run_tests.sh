@@ -28,20 +28,7 @@ entt_inc="${ENTT_INCLUDE:-$(echo "${HOME}"/.xmake/packages/e/entt/*/include 2>/d
 
 mkdir -p "${outdir}"
 
-# --- generated data ---------------------------------------------------------
-# Some committed headers are generated from data in this repo (the packaged
-# font, in this case) rather than written by hand, and a test that reads the
-# numbers out of one would happily read stale ones. Regenerating is cheap, so
-# the check runs before the tests instead of after a confusing failure.
 status=0
-if command -v python3 >/dev/null 2>&1 && [ -f "${root}/resources/minecraft.ttf" ]; then
-    printf '\n=== generated data ===\n'
-    if ! python3 "${root}/scripts/gen_esp_pixel_font.py" --check; then
-        echo "  FAIL generated ESP font header is stale"
-        echo "       fix it with: python3 scripts/gen_esp_pixel_font.py"
-        status=1
-    fi
-fi
 for source in "${root}"/tests/*_test.cpp; do
     name="$(basename "${source}" .cpp)"
     printf '\n=== %s ===\n' "${name}"

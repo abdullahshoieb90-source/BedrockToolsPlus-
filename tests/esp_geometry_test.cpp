@@ -542,106 +542,14 @@ int main() {
               "the six faces together are the box surface area");
     }
 
-    // --- the face the labels are spelled with ------------------------------
-    //
-    // Text in the level render pass has to be quads, so the module carries the
-    // game's own pixel face as generated tables (esp_pixel_font.hpp). What the
-    // label layout depends on is that the table says what the font says: the
-    // range it covers (which decides which pass a name goes to), the cells that
-    // make a label's height, and the advances that make its width.
-    {
-        std::printf("esp pixel face\n");
-
-        int covered = 0;
-        for (std::uint32_t cp = 0x20; cp <= 0x7E; ++cp) {
-            if (esp::world::pixelGlyphHas(cp)) ++covered;
-        }
-        check(covered == static_cast<int>(esp::world::kPixelGlyphCount),
-              "the face covers exactly the table it ships");
-        check(covered == 95, "which is every printable ASCII character");
-        check(esp::world::pixelGlyph(0x1F) == nullptr &&
-                  esp::world::pixelGlyph(0x7F) == nullptr,
-              "and nothing outside that range");
-        check(esp::world::pixelGlyph(0x0644) == nullptr,
-              "an Arabic letter has no cell, so it is not the mesh pass's to spell");
-        check(esp::world::pixelGlyphHas('A') && esp::world::pixelGlyphHas('_'),
-              "while the Latin range the game itself can carry is");
-
-        // The cell: a cap box of seven rows inside a nine-row cell, so a 'g' can
-        // hang below the baseline without crossing the line the next label in the
-        // column is stacked on.
-        check(esp::world::kPixelCapHeight == 7 && esp::world::kPixelAscent == 8 &&
-                  esp::world::kPixelDescent == 1 &&
-                  esp::world::kPixelRows == esp::world::kPixelAscent + esp::world::kPixelDescent,
-              "the cell rows add up to the ascent plus the descender");
-
-        auto usesRow = [](char c, int row) {
-            const esp::world::PixelGlyph* glyph = esp::world::pixelGlyph(c);
-            if (!glyph) return false;
-            for (std::size_t i = 0; i < glyph->rectCount; ++i) {
-                const esp::world::PixelRect& rect = esp::world::kPixelRects[glyph->firstRect + i];
-                if (rect.y <= row && row < rect.y + rect.height) return true;
-            }
-            return false;
-        };
-        check(usesRow('g', esp::world::kPixelRows - 1),
-              "a descender reaches the row below the baseline");
-        check(!usesRow('a', esp::world::kPixelRows - 1) && !usesRow('A', 0),
-              "and a short letter neither dips there nor climbs into the accent row");
-        check(usesRow('A', esp::world::kPixelAscent - 1),
-              "the caps do stand on the baseline");
-
-        // The advances are the font's own, which is what a centered label is
-        // measured on: 'i' is a third of the cell an 'M' is billed.
-        const esp::world::PixelGlyph* wide = esp::world::pixelGlyph('M');
-        const esp::world::PixelGlyph* thin = esp::world::pixelGlyph('i');
-        const esp::world::PixelGlyph* gap = esp::world::pixelGlyph(' ');
-        check(wide && thin && gap && wide->advance == 6 && thin->advance == 2 &&
-                  gap->advance == 2,
-              "advances come from the font, not from a fixed square");
-        check(gap && gap->rectCount == 0,
-              "a space costs its advance and draws nothing");
-        bool inTable = true;
-        for (std::size_t i = 0; i < esp::world::kPixelGlyphCount; ++i) {
-            const esp::world::PixelGlyph& glyph = esp::world::kPixelGlyphs[i];
-            if (glyph.firstRect + glyph.rectCount > esp::world::kPixelRectCount) inTable = false;
-            for (std::size_t r = 0; r < glyph.rectCount; ++r) {
-                const esp::world::PixelRect& rect = esp::world::kPixelRects[glyph.firstRect + r];
-                if (rect.width == 0 || rect.height == 0) inTable = false;
-                if (rect.x + rect.width > esp::world::kPixelColumns) inTable = false;
-                if (rect.y + rect.height > esp::world::kPixelRows) inTable = false;
-            }
-        }
-        check(inTable, "every glyph indexes a real run of the flat rectangle table");
-        const esp::world::PixelGlyph& last =
-            esp::world::kPixelGlyphs[esp::world::kPixelGlyphCount - 1];
-        check(last.firstRect + last.rectCount == esp::world::kPixelRectCount,
-              "and the last of them ends where the table does");
-
-        // kMaxBillboardGlyphs is the module's own bound on the vertex cost of a
-        // label, and billboardTextFits is the whole decision about which pass a
-        // piece of text belongs to.
-        check(esp::world::billboardTextFits("Steve"), "a username is spellable here");
-        check(!esp::world::billboardTextFits(""), "an empty label is nobody's");
-        check(!esp::world::billboardTextFits("\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8"),
-              "an Arabic one is the launcher's");
-        check(!esp::world::billboardTextFits("Steve \xC2\xA7"),
-              "so is a name with a markup sign left in it");
-        check(esp::world::billboardTextFits(std::string(esp::world::kMaxBillboardGlyphs, 'a')),
-              "a name up to the vertex budget still fits");
-        check(!esp::world::billboardTextFits(std::string(esp::world::kMaxBillboardGlyphs + 1, 'a')),
-              "and one past it goes to the HUD instead of eating the mesh");
-    }
-
     // --- world-space billboard text -----------------------------------------
     //
-    // The distance readout, the nametag and the health value are world geometry:
-    // quads anchored on the entity, so the game pins them to the hitbox the way
-    // it pins the wireframe. The properties that keep them "on the hitbox" are
-    // pinned here: the anchor never consults the projection (only the size
-    // does), the block hangs below its anchor, faces the camera, keeps a
-    // constant apparent height at any range, and can be stacked by pixel offsets
-    // without ever becoming a screen coordinate.
+    // The distance readout is world geometry now: quads anchored under the
+    // entity's feet, so the game pins them to the hitbox the way it pins the
+    // wireframe. The properties that keep it "on the hitbox" are pinned here:
+    // the anchor position never consults the projection (only the size does),
+    // the block hangs below its anchor, faces the camera, and keeps a
+    // constant apparent height at any range.
     {
         std::printf("esp world billboard text\n");
 
@@ -649,38 +557,15 @@ int main() {
         const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
         const Vec3 anchor{3.0f, -0.1f, 10.0f}; // under an entity's feet
 
-        esp::world::Billboard billboard;
-        check(esp::world::makeBillboard(billboard, cam, proj, anchor),
-              "an anchor ahead of the camera gets a frame to lay a label out on");
-        check(near(billboard.anchor.x, anchor.x) && near(billboard.anchor.y, anchor.y) &&
-                  near(billboard.anchor.z, anchor.z),
-              "and the frame hangs on the world point itself, not on a projected one");
-
-        // One surface pixel at this depth: 2*tan(45)*10/1000 = 0.02 blocks. The
-        // whole label column is measured in those, which is the only thing the
-        // projection is still asked for.
-        check(near(billboard.scale, 0.02f), "the frame carries the pixel scale at the anchor");
-
-        // "10.0m" is spelled out of the face: one quad per merged rectangle of
-        // every glyph, so the count is the table's own, and the whole point of
-        // carrying the table is that this is knowable.
-        auto rectsFor = [](const std::string& text) {
-            int rects = 0;
-            for (const char c : text) {
-                const esp::world::PixelGlyph* glyph = esp::world::pixelGlyph(c);
-                if (glyph) rects += glyph->rectCount;
-            }
-            return rects;
-        };
         std::vector<overlay::Quad> text;
-        check(esp::world::addBillboardText(text, billboard, "10.0m", 12.0f),
+        check(esp::world::addBillboardText(text, cam, proj, anchor, "10.0m", 12.0f),
               "a distance ahead of the camera produces quads");
-        check(text.size() == static_cast<std::size_t>(rectsFor("10.0m")),
-              "one per glyph rectangle, no more and no less");
-        check(rectsFor("10.0m") > 0, "which is a real number for a real readout");
 
-        // Every corner lies in the camera-facing plane through the anchor: that
-        // is what makes the text readable instead of edge-on.
+        // "10.0m" = 2 + 4 + 1 + 4 + 4 merged glyph rectangles.
+        check(text.size() == 15, "the blocky readout is fifteen glyph rectangles");
+
+        // Every corner lies in the camera-facing plane through the anchor:
+        // that is what makes the text readable instead of edge-on.
         bool planar = true;
         for (const auto& quad : text) {
             for (const Vec3& corner : quad.corners) {
@@ -691,9 +576,9 @@ int main() {
         }
         check(planar, "every quad corner faces the camera plane");
 
-        // The block hangs below the anchor (never above it) and is centered on it
-        // along the camera's right vector, so the digits sit under the entity's
-        // feet, not next to them.
+        // The block hangs below the anchor (never above it) and is centered
+        // on it along the camera's right vector, so the digits sit under the
+        // entity's feet, not next to them.
         bool below = true;
         float minRight = 1e30f, maxRight = -1e30f;
         for (const auto& quad : text) {
@@ -707,51 +592,15 @@ int main() {
             }
         }
         check(below, "the whole text block hangs below the anchor");
+        check(near(minRight, -maxRight, 0.0001f),
+              "the text block is centered on the anchor");
 
-        // And that centering is the *font's* width rather than a guess at it. The
-        // ink is measured here from the same cells -- the point is that the label
-        // comes out neither wider (which is what a byte count did to a multi-byte
-        // name, half a label off the head) nor narrower, and that its middle is on
-        // the anchor and not pushed aside by the line's own slack.
-        auto inkOf = [](const std::string& line) {
-            float pen = 0.0f, left = 1e30f, right = -1e30f;
-            for (const char c : line) {
-                const esp::world::PixelGlyph* glyph = esp::world::pixelGlyph(c);
-                if (!glyph) continue;
-                for (std::size_t i = 0; i < glyph->rectCount; ++i) {
-                    const esp::world::PixelRect& rect =
-                        esp::world::kPixelRects[glyph->firstRect + i];
-                    left = std::min(left, pen + static_cast<float>(rect.x));
-                    right = std::max(right, pen + static_cast<float>(rect.x + rect.width));
-                }
-                pen += static_cast<float>(glyph->advance);
-            }
-            return std::array<float, 3>{left, right, pen};
-        };
-        const float em = 12.0f / static_cast<float>(esp::world::kPixelEm) * billboard.scale;
-        const auto ink = inkOf("10.0m");
-        check(near(maxRight - minRight, (ink[1] - ink[0]) * em, 0.0001f),
-              "the line spans exactly the cells of the glyphs that were drawn");
-        check(std::fabs((minRight + maxRight) * 0.5f) < em,
-              "and its ink is centered on the anchor, not beside it");
-
-        // Which is a real centering, not "roughly in the middle of the box": the
-        // line is laid out left-to-right from the middle of its own advance box,
-        // so the whole block is inside it and symmetric about the anchor up to the
-        // sidebearings the font put on the first and last glyph.
-        check(minRight >= -ink[2] * 0.5f * em - 0.0001f &&
-                  maxRight <= ink[2] * 0.5f * em + 0.0001f,
-              "the text block spans its advance box, centered on the anchor");
-
-        // Constant apparent size: doubling the depth doubles the world height of
-        // the glyphs (the projection scales the size, never the anchor), and the
-        // height that survives is the cell the face was generated with.
-        auto glyphHeightAt = [&](float depth) {
+        // Constant apparent size: doubling the depth doubles the world height
+        // of the glyphs (the projection scales the size, never the anchor).
+        auto worldHeightAt = [&](float depth) {
             const Vec3 a{0.0f, 1.62f, depth};
-            esp::world::Billboard b;
-            if (!esp::world::makeBillboard(b, cam, proj, a)) return -1.0f;
             std::vector<overlay::Quad> quads;
-            if (!esp::world::addBillboardText(quads, b, "8", 12.0f)) return -1.0f;
+            if (!esp::world::addBillboardText(quads, cam, proj, a, "8", 12.0f)) return -1.0f;
             float low = 1e30f, high = -1e30f;
             for (const auto& quad : quads) {
                 for (const Vec3& corner : quad.corners) {
@@ -763,155 +612,38 @@ int main() {
             }
             return high - low;
         };
-        const float nearHeight = glyphHeightAt(10.0f);
-        const float farHeight = glyphHeightAt(20.0f);
+        const float nearHeight = worldHeightAt(10.0f);
+        const float farHeight = worldHeightAt(20.0f);
         check(near(nearHeight, farHeight * 0.5f, 0.0001f),
               "twice the depth, twice the world size: the apparent height is constant");
-        const float expectedNear =
-            12.0f * static_cast<float>(esp::world::kPixelCapHeight) /
-            static_cast<float>(esp::world::kPixelEm) * 2.0f * proj.tanHalfFov * 10.0f /
-            proj.height;
+
+        // The wanted height in pixels actually survives the round trip: at
+        // depth d the world height is pixelHeight * 2*tan(fov/2)*d/height.
+        const float expectedNear = 12.0f * 2.0f * proj.tanHalfFov * 10.0f / proj.height;
         check(near(nearHeight, expectedNear, 0.0001f),
-              "and the requested pixel height is honored, on the face's cap height");
+              "the requested pixel height is honored");
 
-        // A wrong FOV is the failure the HUD projection used to make visible: it
-        // moved labels. Here it can only resize one -- so a label stays on its
-        // anchor however badly the module has been told about the camera.
-        {
-            const esp::SurfaceProjection narrow = esp::makeProjection(1000.0f, 1000.0f, 30.0f);
-            esp::world::Billboard wide;
-            esp::world::Billboard tight;
-            check(esp::world::makeBillboard(wide, cam, proj, anchor) &&
-                      esp::world::makeBillboard(tight, cam, narrow, anchor),
-                  "the frame resolves at any FOV");
-            std::vector<overlay::Quad> a;
-            std::vector<overlay::Quad> b;
-            check(esp::world::addBillboardText(a, wide, "10.0m", 12.0f) &&
-                      esp::world::addBillboardText(b, tight, "10.0m", 12.0f) &&
-                      a.size() == b.size(),
-                  "the same label is spelled at both, one quad per rectangle");
-            float wideLow = 1e30f, wideHigh = -1e30f;
-            float tightLow = 1e30f, tightHigh = -1e30f;
-            for (std::size_t i = 0; i < a.size(); ++i) {
-                for (int c = 0; c < 4; ++c) {
-                    const Vec3 da{a[i].corners[c].x - anchor.x, a[i].corners[c].y - anchor.y,
-                                  a[i].corners[c].z - anchor.z};
-                    const Vec3 db{b[i].corners[c].x - anchor.x, b[i].corners[c].y - anchor.y,
-                                  b[i].corners[c].z - anchor.z};
-                    wideLow = std::min(wideLow, esp::dot(da, cam.up));
-                    wideHigh = std::max(wideHigh, esp::dot(da, cam.up));
-                    tightLow = std::min(tightLow, esp::dot(db, cam.up));
-                    tightHigh = std::max(tightHigh, esp::dot(db, cam.up));
-                }
-            }
-            check(!near(wideHigh - wideLow, tightHigh - tightLow, 0.001f),
-                  "an FOV the module did not scale for changes the label's size");
-            bool samePixels = true;
-            for (std::size_t i = 0; i < a.size() && samePixels; ++i) {
-                for (int c = 0; c < 4; ++c) {
-                    const Vec3 da{a[i].corners[c].x - anchor.x, a[i].corners[c].y - anchor.y,
-                                  a[i].corners[c].z - anchor.z};
-                    const Vec3 db{b[i].corners[c].x - anchor.x, b[i].corners[c].y - anchor.y,
-                                  b[i].corners[c].z - anchor.z};
-                    if (!near(esp::dot(da, cam.right) / wide.scale,
-                              esp::dot(db, cam.right) / tight.scale, 0.0001f) ||
-                        !near(esp::dot(da, cam.up) / wide.scale,
-                              esp::dot(db, cam.up) / tight.scale, 0.0001f)) {
-                        samePixels = false;
-                    }
-                }
-            }
-            check(samePixels,
-                  "and only the size of a pixel moved: the label occupies the same "
-                  "pixels around the same anchor");
-        }
-
-        // Left alignment, which is how the health value sits over the left end of
-        // its bar instead of floating on the head column: the same line, moved
-        // right by half of its own measured width.
-        auto leftEdge = [&](const std::vector<overlay::Quad>& quads) {
-            float minR = 1e30f;
-            for (const auto& quad : quads) {
-                for (const Vec3& corner : quad.corners) {
-                    minR = std::min(minR, esp::dot({corner.x - anchor.x, corner.y - anchor.y,
-                                                    corner.z - anchor.z}, cam.right));
-                }
-            }
-            return minR;
-        };
-        {
-            std::vector<overlay::Quad> centered;
-            std::vector<overlay::Quad> left;
-            check(esp::world::addBillboardText(centered, billboard, "20", 12.0f) &&
-                      esp::world::addBillboardText(left, billboard, "20", 12.0f,
-                                                   esp::world::TextAlignment::Left),
-                  "the same line is drawn centered and left-aligned");
-            const auto line = inkOf("20");
-            check(near(leftEdge(left) - leftEdge(centered), line[2] * 0.5f * em, 0.0001f),
-                  "and left means it starts on the anchor instead of spanning it");
-        }
-
-        // A box of the label plane, which is what a health bar is: a filled rect
-        // in pixels, at pixel offsets around the same anchor.
-        {
-            std::vector<overlay::Quad> bar;
-            billboard.addBox(bar, -10.0f, -2.0f, 20.0f, 4.0f);
-            check(bar.size() == 1, "one quad for the bar");
-            const Vec3& corner = bar[0].corners[1];
-            check(near(esp::dot({corner.x - anchor.x, corner.y - anchor.y, corner.z - anchor.z},
-                                cam.right),
-                       10.0f * billboard.scale),
-                  "whose right edge is the requested ten pixels off the column");
-
-            const esp::world::Billboard line = billboard.shifted(0.0f, -20.0f);
-            check(near(esp::dot({line.anchor.x - anchor.x, line.anchor.y - anchor.y,
-                                 line.anchor.z - anchor.z}, cam.up),
-                       20.0f * billboard.scale) &&
-                      near(line.scale, billboard.scale),
-                  "and a shifted line moves by pixels in that same plane, at its scale");
-        }
-
-        // The hitbox's own width, in pixels: the number a bar is sized from, so
-        // it matches the wireframe however the entity is turned. Facing south with
-        // the camera looking south, the box's east-west extent is what shows.
-        {
-            const bedrocktools::sdk::AABB box{{2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f}};
-            check(near(esp::world::boxPixelWidth(cam, box, billboard.scale), 2.0f / 0.02f),
-                  "a box side-on to the view is its own width in pixels");
-            const esp::Camera turned = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 45.0f});
-            const float turnedScale = 2.0f * proj.tanHalfFov * 10.0f / proj.height;
-            check(near(esp::world::boxPixelWidth(turned, box, turnedScale),
-                       2.0f * 1.4142135f / turnedScale, 0.05f),
-                  "turned forty-five degrees, the diagonal is what the bar spans");
-            check(near(esp::world::boxPixelWidth(cam, box, 0.0f), 0.0f),
-                  "and no scale means no width, rather than a division by it");
-        }
-
-        // Nothing to draw: no frame, empty text, not one spellable character.
+        // Nothing to draw: empty text, no representable glyph, or an anchor
+        // at/behind the camera.
         {
             std::vector<overlay::Quad> quads;
-            esp::world::Billboard behind;
-            check(!esp::world::makeBillboard(behind, cam, proj, {0.0f, 1.62f, -10.0f}),
-                  "an anchor behind the camera gets no frame");
-            check(!behind.valid(), "and the frame says so instead of drawing at zero scale");
-            check(!esp::world::addBillboardText(quads, billboard, "", 12.0f),
+            check(!esp::world::addBillboardText(quads, cam, proj, anchor, "", 12.0f),
                   "empty text draws nothing");
-            check(!esp::world::addBillboardText(quads, billboard, "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8",
-                                                12.0f),
-                  "text this face has no cells for draws nothing, not gaps");
+            check(!esp::world::addBillboardText(quads, cam, proj, anchor, "xyz", 12.0f),
+                  "text without a representable glyph draws nothing");
+            check(!esp::world::addBillboardText(quads, cam, proj, {0.0f, 1.62f, -10.0f},
+                                                "10.0m", 12.0f),
+                  "an anchor behind the camera draws nothing");
             check(quads.empty(), "and no partial quads are left behind");
         }
     }
 
-    // --- Why the eye cannot be a vertex, and why the axis can --------------
-    // A world-space segment that starts *at the camera* lies on a single view
+    // --- Why the Crosshair origin cannot be geometry ----------------------
+    // A world-space segment that starts at the camera lies on a single view
     // ray, so the game's projection collapses the whole of it onto one pixel.
-    // That -- not the menu -- is what made the tracer "disappear" when Crosshair
-    // was selected. What the projection cannot do is the reason the fix is a
-    // different vertex rather than a better line: every point of the view axis
-    // lands on the middle of the screen at any depth, so a segment that starts
-    // there and ends at the entity is a real line that still reads as one drawn
-    // from the crosshair.
+    // That -- not the menu -- is what made the tracer "disappear" when
+    // Crosshair was selected, and no amount of fixing on the geometry side
+    // helps, so the crosshair line is placed on the screen instead.
     {
         const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
         const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
@@ -931,86 +663,13 @@ int main() {
         float cx = 0.0f, cy = 0.0f;
         check(!esp::project(cam, proj, cam.pos, cx, cy),
               "and the camera's own position is not projectable at all");
-
-        // The axis, on the other hand: any point of it projects to the center,
-        // which is the whole trick, and the two depths land on the same pixel
-        // only because that pixel *is* the crosshair.
-        auto axis = [&](const esp::Camera& which, float depth) {
-            return Vec3{which.pos.x + which.forward.x * depth,
-                        which.pos.y + which.forward.y * depth,
-                        which.pos.z + which.forward.z * depth};
-        };
-        const esp::Camera pitched = esp::computeCamera({0.0f, 1.62f, 0.0f}, {-30.0f, 20.0f});
-        float ax = 0.0f, ay = 0.0f, bx = 0.0f, by = 0.0f, px = 0.0f, py = 0.0f;
-        check(esp::project(cam, proj, axis(cam, 0.5f), ax, ay) &&
-                  esp::project(cam, proj, axis(cam, 9.0f), bx, by) &&
-                  esp::project(pitched, proj, axis(pitched, 3.0f), px, py),
-              "an axis point in front of the eye projects");
-        check(near(ax, 500.0f) && near(ay, 500.0f) && near(bx, 500.0f) && near(by, 500.0f),
-              "onto the exact middle of the surface, at any depth");
-        check(near(px, 500.0f) && near(py, 500.0f),
-              "and onto it even while the view is pitched and turned");
-        float tx = 0.0f, ty = 0.0f;
-        check(esp::project(cam, proj, target, tx, ty) && !near(tx, ax, 1.0f),
-              "while the entity it is joined to is somewhere else, so there is a line");
     }
 
-    // --- The Crosshair tracer, as geometry --------------------------------
-    // The line this builds is placed by the game: it ends inside the hitbox, so
-    // it cannot slide off it while the view moves or while the Fov slider
-    // disagrees with the camera. The snapline below is what is left for the one
-    // case geometry cannot reach.
-    {
-        const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
-        const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
-
-        std::vector<overlay::Segment> segments;
-        const Vec3 ahead{3.0f, 0.9f, 5.0f};
-        check(esp::world::addCrosshairTracer(segments, cam, proj, ahead),
-              "an entity in front of the camera gets a segment");
-        check(segments.size() == 1 && near(segments[0].to.x, ahead.x) &&
-                  near(segments[0].to.y, ahead.y) && near(segments[0].to.z, ahead.z),
-              "which ends on the world point itself, not on where it was projected");
-        const Vec3 from{segments[0].from.x - cam.pos.x, segments[0].from.y - cam.pos.y,
-                        segments[0].from.z - cam.pos.z};
-        check(near(esp::dot(from, cam.right), 0.0f) && near(esp::dot(from, cam.up), 0.0f) &&
-                  esp::dot(from, cam.forward) > esp::kNearPlane,
-              "and starts on the view axis, in front of the near plane");
-        float startX = 0.0f, startY = 0.0f;
-        check(esp::project(cam, proj, segments[0].from, startX, startY) &&
-                  near(startX, 500.0f, 0.01f) && near(startY, 500.0f, 0.01f),
-              "so on screen it does start at the crosshair");
-
-        segments.clear();
-        const Vec3 side{40.5f, 0.9f, 4.5f}; // far to the east: off the surface
-        check(esp::world::addCrosshairTracer(segments, cam, proj, side) &&
-                  segments.size() == 1 && near(segments[0].to.x, side.x),
-              "an off-screen entity gets the same treatment: its own point, unclamped");
-
-        segments.clear();
-        check(!esp::world::addCrosshairTracer(segments, cam, proj, {-20.0f, 1.0f, -5.0f}) &&
-                  segments.empty(),
-              "an entity over the shoulder gets nothing (the snapline is its line)");
-        check(!esp::world::addCrosshairTracer(segments, cam, proj, {0.0f, 1.62f, 8.0f}) &&
-                  segments.empty(),
-              "and so does one dead ahead, whose line would be a dot");
-        check(!esp::world::addCrosshairTracer(segments, cam, proj, {0.0f, 1.62f, 0.3f}) &&
-                  segments.empty(),
-              "or one so close that no segment fits in front of the eye");
-
-        const float kNan = std::nanf("");
-        check(!esp::world::addCrosshairTracer(segments, cam, proj, {kNan, 1.0f, 5.0f}) &&
-                  segments.empty(),
-              "a non-finite target is refused, so no bad number reaches the mesh");
-    }
-
-    // --- Crosshair snapline ------------------------------------------------
-    // The screen-space line the module falls back to for that one case: out of
-    // the exact middle of the surface, along the direction the entity lies in,
-    // and -- because the direction is the whole message when there are no
-    // pixels to point at -- pushed out to the edge of the surface, never past
-    // it, which is what would hand the launcher coordinates it rejects the
-    // whole batch for.
+    // --- Crosshair tracer --------------------------------------------------
+    // The screen-space line the module draws in its place: out of the exact
+    // middle of the surface, onto the projected hitbox, and -- for a target
+    // that is not on the surface at all -- out to the edge along the same
+    // direction, which is the only place its coordinates may be clipped.
     {
         const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
         const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);

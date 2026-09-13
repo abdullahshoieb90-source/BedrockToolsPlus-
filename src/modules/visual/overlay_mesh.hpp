@@ -251,53 +251,6 @@ struct Mesh {
         render(screenContext, tessellator, material, pad);
     }
 
-    // One color's worth of a grouped flush: the [begin, end) range of the
-    // caller's quad vector that shares `colorRgba` and `alpha`.
-    struct QuadGroup {
-        std::uint32_t colorRgba = 0xFFFFFFFFu;
-        float alpha = 1.0f;
-        std::size_t begin = 0;
-        std::size_t end = 0;
-    };
-
-    // Filled faces in several colors, as one mesh. The Tessellator stamps the
-    // color it was last handed onto every vertex that follows, so a group only
-    // has to set its own before its vertices -- which is what lets a label
-    // column (a translucent black track under a green, yellow or red fill) cost
-    // a single flush instead of one per color. Groups are emitted in order, so a
-    // caller that wants the fill on top of the track appends it after it.
-    void drawQuadsGrouped(void* screenContext, void* material, const Vec3& camera,
-                          const std::vector<Quad>& quads,
-                          const std::vector<QuadGroup>& groups) const {
-        if (quads.empty() || groups.empty() || !ready() || !material) return;
-
-        int vertices = 0;
-        for (const QuadGroup& group : groups) {
-            const std::size_t begin = std::min(group.begin, quads.size());
-            const std::size_t end = std::clamp(group.end, begin, quads.size());
-            if (end <= begin) continue;
-            vertices += static_cast<int>((end - begin) * 8);
-        }
-        if (vertices <= 0) return;
-
-        begin(tessellator, nullptr, 1 /* GL_QUADS */, vertices, 0);
-        for (const QuadGroup& group : groups) {
-            const std::size_t beginIndex = std::min(group.begin, quads.size());
-            const std::size_t endIndex = std::clamp(group.end, beginIndex, quads.size());
-            if (endIndex <= beginIndex) continue;
-            setColor(group.colorRgba, group.alpha);
-            for (std::size_t i = beginIndex; i < endIndex; ++i) {
-                const Quad& quad = quads[i];
-                for (const Vec3& corner : quad.corners) emit(corner, camera);
-                for (int c = 3; c >= 0; --c) emit(quad.corners[c], camera);
-            }
-        }
-
-        char pad[0x58];
-        std::memset(pad, 0, sizeof(pad));
-        render(screenContext, tessellator, material, pad);
-    }
-
     // Wire edges. halfWidth <= 0 keeps the crisp native line list; above it
     // every edge also becomes a camera-facing beam of that world-space half
     // width, because GLES line width is ignored by nearly every mobile driver.
