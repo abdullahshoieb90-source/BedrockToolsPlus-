@@ -104,10 +104,6 @@ std::atomic<bool> s_overlayLabelsVisible{false};
 // box's shortest side, matching what the old 2D corner box looked like).
 constexpr float kCornerBracketFraction = 0.33f;
 
-// How far below an entity's feet the world-space distance readout hangs
-// (blocks), so the digits sit just under the box instead of inside it.
-constexpr float kDistanceAnchorGap = 0.1f;
-
 // Maximum number of actors drawn per frame. fetchNearbyActorsSorted hands the
 // list back nearest-first, so a cap keeps the worst case bounded on a busy
 // server (a 256-block Range with a mob farm in it would otherwise push tens of
@@ -346,6 +342,19 @@ static_assert(sizeof(kTracerOriginNames) / sizeof(kTracerOriginNames[0]) ==
 // ---------------------------------------------------------------------------
 namespace {
 
+void addLine(std::vector<PLModMenu_DrawCommand>& cmds, float x1, float y1,
+             float x2, float y2, float thickness, uint32_t color) {
+    PLModMenu_DrawCommand cmd{};
+    cmd.type = PL_DRAW_LINE;
+    cmd.x = x1;
+    cmd.y = y1;
+    cmd.w = x2 - x1; // launcher treats w/h as the end-point delta
+    cmd.h = y2 - y1;
+    cmd.size = thickness;
+    cmd.color = color;
+    cmds.push_back(cmd);
+}
+
 void addRect(std::vector<PLModMenu_DrawCommand>& cmds, float x, float y,
              float w, float h, uint32_t color) {
     PLModMenu_DrawCommand cmd{};
@@ -516,6 +525,7 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
     const float thickness = std::clamp(options.boxThickness, 1.0f, 20.0f);
     const float beamHalfWidth =
         (thickness > 1.05f && meshReady) ? thickness * 0.01f * 0.5f : 0.0f;
+    const float labelThickness = std::clamp(options.boxThickness, 0.5f, 20.0f);
 
     const float nametagSize = std::clamp(options.nametagScale, 0.5f, 2.0f) * 14.0f;
     const float subSize = nametagSize * 0.8f;
@@ -532,15 +542,6 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         const std::size_t expected = static_cast<std::size_t>(kMaxDrawnActors);
         boxSegments.reserve(expected * 12);
         if (options.boxFilled) fillQuads.reserve(expected * 6);
-    }
-    // World-space tracers (one segment per entity) and the world-space
-    // distance readouts (a blocky billboard per entity; the longest value,
-    // "256.0m", is six glyphs of at most five rectangles each).
-    std::vector<overlay::Segment> tracerSegments;
-    std::vector<overlay::Quad> textQuads;
-    if (options.tracer) tracerSegments.reserve(kMaxDrawnActors);
-    if (options.distance) {
-        textQuads.reserve(static_cast<std::size_t>(kMaxDrawnActors) * 30);
     }
 
     int drawn = 0;
@@ -568,50 +569,6 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
             }
         }
 
-        // ---- Tracer: world-space, ending inside the hitbox ------------------
-        // The segment is handed to the game exactly like the box edges are,
-        // so the game pins its far end to the very center of the hitbox the
-        // wireframe surrounds -- no projection is involved, so nothing can
-        // disagree with the camera while the view moves. The near end is the
-        // render camera (Crosshair origin: the line leaves from the middle
-        // of the screen) or the local player's own feet (Bottom origin),
-        // falling back to the camera while the local box is unavailable.
-        // The local player never gets a tracer to itself, and the line stays
-        // hairline: a thickness beam would fill the screen where it starts
-        // at (or passes right by) the camera.
-        if (meshReady && options.tracer && !isSelf) {
-            const bool crosshair =
-                options.tracerOrigin == EspModule::TracerOrigin::Crosshair;
-            const Vec3 from = (crosshair || !selfFeetValid) ? camPos : selfFeet;
-            tracerSegments.push_back({from, esp::boxCenter(aabb.min, aabb.max)});
-        }
-
-        // ---- Distance: world-space, pinned under the entity's feet ----------
-        // A HUD-projected readout slides off the box whenever the module's
-        // camera model disagrees with the game's (sprint FOV, view bob, a
-        // frame of look latency), so the value is drawn as billboarded world
-        // quads anchored just below the entity's feet instead. The projection
-        // only sizes the digits (a constant apparent height at any range); it
-        // never positions them, so an FOV mismatch cannot detach the readout.
-        // The measurement itself stays feet-to-feet between the two collision
-        // boxes -- identical in first and third person -- and stays hidden
-        // while the local anchor is unavailable rather than switching to a
-        // camera-based number.
-        if (meshReady && faceMaterial && options.distance && selfFeetValid) {
-            const float entFeetX = (aabb.min.x + aabb.max.x) * 0.5f;
-            const float entFeetZ = (aabb.min.z + aabb.max.z) * 0.5f;
-            const float dx = selfFeet.x - entFeetX;
-            const float dy = selfFeet.y - aabb.min.y;
-            const float dz = selfFeet.z - entFeetZ;
-            const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-
-            char buffer[24];
-            std::snprintf(buffer, sizeof(buffer), "%.1fm", dist);
-            const Vec3 anchor{entFeetX, aabb.min.y - kDistanceAnchorGap, entFeetZ};
-            esp::world::addBillboardText(textQuads, camera, proj, anchor, buffer,
-                                         subSize);
-        }
-
         // ---- everything below is HUD furniture, anchored on the box ---------
         const esp::ScreenBox screen =
             esp::projectBox(camera, proj, aabb.min, aabb.max, boxLimit);
@@ -626,15 +583,59 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         const float boxLeft = screen.minX;
         const float boxRight = screen.maxX;
         const float boxTop = screen.minY;
+        const float boxBottom = screen.maxY;
         const float boxW = boxRight - boxLeft;
         const float centerX = (boxLeft + boxRight) * 0.5f;
 
+        // One distance only, measured feet-to-feet (bottom-centers of the two
+        // collision boxes), in blocks. Both anchors come from the actors
+        // rather than the render camera, so the readout is identical in first
+        // and third person: ten blocks away reads 10.0m from either
+        // perspective. There is deliberately no second, camera-based
+        // measurement: while the local anchor is unavailable the readout is
+        // hidden (see below) instead of showing another number.
+        const float entFeetX = (aabb.min.x + aabb.max.x) * 0.5f;
+        const float entFeetZ = (aabb.min.z + aabb.max.z) * 0.5f;
+        float dist = 0.0f;
+        if (selfFeetValid) {
+            const float dx = selfFeet.x - entFeetX;
+            const float dy = selfFeet.y - aabb.min.y;
+            const float dz = selfFeet.z - entFeetZ;
+            dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        // ---- Tracer --------------------------------------------------------
+        // The line ends on the projected center of the entity's own box, so
+        // it lands in the middle of the hitbox the game drew. Ending it on
+        // the 2D box's middle instead leaves it visibly detached: the
+        // projected box is asymmetric, so its screen-space middle is not
+        // where the hitbox's middle lands (see esp::projectBoxCenter). When
+        // the anchor itself is behind the near plane -- an entity straddling
+        // the camera -- the 2D box middle is kept as the fallback so the line
+        // still draws.
+        if (options.tracer) {
+            const float originX = proj.width * 0.5f;
+            const float originY = (options.tracerOrigin == EspModule::TracerOrigin::Crosshair)
+                                      ? proj.height * 0.5f
+                                      : proj.height;
+            float endX = centerX;
+            float endY = (boxTop + boxBottom) * 0.5f;
+            float anchorX = 0.0f, anchorY = 0.0f;
+            if (esp::projectBoxCenter(camera, proj, aabb.min, aabb.max, anchorX, anchorY)) {
+                endX = std::clamp(anchorX, -boxLimit, proj.width + boxLimit);
+                endY = std::clamp(anchorY, -boxLimit, proj.height + boxLimit);
+            }
+            addLine(labels, originX, originY, endX, endY,
+                    labelThickness * 0.75f, forceOpaqueColor(options.tracerColor));
+        }
+
         // ---- Text stack above the box -------------------------------------
-        // The label column (nametag, health) is centered on the projected
-        // head point -- the top-center of the entity's own box -- instead of
-        // the 2D box's middle, which perspective shifts away from the head
-        // (see esp::projectBoxTopCenter). When the head itself is behind the
-        // near plane, the 2D box is kept as the fallback.
+        // The whole label column (nametag, health, distance) is centered on
+        // the projected head point -- the top-center of the entity's own box
+        // -- instead of the 2D box's middle, which perspective shifts away
+        // from the head (the same drift the tracer anchor fixes, see
+        // esp::projectBoxTopCenter). When the head itself is behind the near
+        // plane, the 2D box is kept as the fallback.
         float headX = centerX;
         float headY = boxTop;
         float topX = 0.0f, topY = 0.0f;
@@ -684,6 +685,18 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
                 textY = barY - subSize - 4.0f;
             }
         }
+
+        // Distance, drawn just under the hitbox (below the projected box
+        // bottom) instead of floating in the stack above it, so the readout
+        // always sits next to the entity it belongs to. Hidden while the
+        // local anchor is unavailable, so the overlay never shows a second,
+        // differently-measured number.
+        if (options.distance && selfFeetValid) {
+            char buffer[24];
+            std::snprintf(buffer, sizeof(buffer), "%.1fm", dist);
+            addText(labels, buffer, headX - 16.0f, boxBottom + 4.0f, subSize,
+                    forceOpaqueColor(options.nametagColor));
+        }
     };
 
     // Local player (third person only).
@@ -729,19 +742,6 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
             mesh.drawSegments(screenContext, lineMaterial, camPos, boxRgb, 1.0f,
                               boxSegments, beamHalfWidth);
         }
-        // Tracers after the wireframe, hairline only (see renderActor): the
-        // same material as the box edges, so Through Walls governs them too.
-        if (!tracerSegments.empty()) {
-            mesh.drawSegments(screenContext, lineMaterial, camPos,
-                              forceOpaqueColor(options.tracerColor), 1.0f,
-                              tracerSegments, 0.0f);
-        }
-        // The distance billboards last, on top of everything else, so the
-        // readout stays readable where it overlaps its own tracer.
-        if (!textQuads.empty() && faceMaterial) {
-            mesh.drawQuads(screenContext, faceMaterial, camPos,
-                           forceOpaqueColor(options.nametagColor), 1.0f, textQuads);
-        }
     }
 
     // Only the mesh pass touched the color holder; restoring it unconditionally
@@ -776,9 +776,8 @@ void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParam
 // ---------------------------------------------------------------------------
 EspModule::EspModule()
     : Module("Esp",
-             "Draws entity boxes, tracers and distance readouts as world-space geometry in "
-             "the game's own render pass, so they stay locked to their target, and keeps "
-             "them visible through walls.") {
+             "Draws entity boxes as world-space geometry in the game's own render pass, so they "
+             "stay locked to their target, and keeps them visible through walls.") {
     showInMenu = true;
     hideInHudEditor = true; // world overlay, not a draggable HUD element
     g_espMod = this;
