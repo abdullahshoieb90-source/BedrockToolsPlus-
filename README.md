@@ -9,7 +9,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 56 configurable modules
+- 55 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -17,7 +17,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Block Outline, ESP, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings
+**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Block Outline, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings
 
 **HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair, ArmorHUD, Armor, Hotbar Slots, Inventory HUD, World Time, Arrow Counter, Totem Counter
 
@@ -66,20 +66,6 @@ Configs saved while armor was still an Inventory HUD option are migrated automat
 Every shape shares the same controls: **Scale** and **Thickness** set the size and the line weight, **Color** plus **Opacity** style it, and **Outline** adds a dark back-pass so bright skies and sand stay readable. **Rgb** animates the hue through the whole wheel with **Rgb Speed** controlling the cycle. **Indicator** recolors the crosshair (with **Indicator Color**) while you are aiming at a mob or another player — the hit test lives in this module, so it works without enabling Hitbox. **Show Third Person** also draws the overlay while the camera is behind or in front of you; it is off by default, like vanilla.
 
 Selecting **Vanilla** gives the crosshair back to the game: the module then only tints the game's own crosshair when the indicator fires (and, on builds that cannot be tinted in place, briefly swaps it for a same-shaped overlay), so exactly one crosshair is ever on screen. New styles are always appended to the picker, so configs saved by an older version keep drawing the same shape.
-
-## ESP
-
-**ESP** draws a screen-space overlay over nearby entities: 2D boxes, tracers, nametags, health bars and distance readouts, all projected from world space every frame using the camera the game actually rendered with. Everything is client-side and read-only.
-
-- **Show Players**, **Show Mobs** and **Show Items** control which actor categories are drawn. Invisible actors are always skipped, and **Show Local Player** adds your own ESP while the camera is in third person (it is off by default, matching the Hitbox behavior).
-- **Range** sets how far out actors are fetched (8–256 blocks), and **Through Walls** switches off the wall-occlusion cull so hidden actors are drawn too. With it off (the default), actors fully hidden behind solid blocks are culled with the same voxel raycast the Hitbox module uses — a tall mob whose head pokes over a wall stays visible.
-- **Box** draws the outline, with **Box Style** switching between a full **2D** rectangle and **Corner** brackets, **Box Thickness** setting the line weight, and **Box Color** styling it. **Rgb** (with **Rgb Speed**) animates the outline through the whole color wheel instead.
-- **Filled Box** paints a translucent fill inside the outline, styled independently by **Filled Box Color** and **Filled Box Opacity**.
-- **Tracers** draws a snapline to each entity. **Tracer Origin** anchors the lines at the bottom of the screen (**Bottom**) or at the crosshair (**Crosshair**), and **Tracer Color** styles them.
-- **Nametag** prints the player's name above the box, with **Nametag Color** and **Nametag Scale** styling it. **Health** adds a health value and a colored bar (green → yellow → red), and **Distance** prints the range from the camera in meters.
-- **Fov** matches the projection to your in-game field of view (default 60). If boxes drift off their targets, adjust it to your FOV setting.
-
-The projection, camera basis and occlusion test are plain math in `esp_geometry.hpp` and covered by `tests/esp_geometry_test.cpp`, so the rendering math stays verifiable on the host.
 
 ## Wings
 
