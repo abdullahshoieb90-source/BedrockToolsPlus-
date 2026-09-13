@@ -2,36 +2,32 @@
 
 // Geometry for the Esp overlay, in its two halves:
 //
-//   * esp::world builds everything that has to sit *on* an entity as
-//     *world-space* primitives, which the game then transforms with the
-//     matrices it rendered the level with (see overlay_mesh.hpp): the box
-//     outline, both tracers, and the label column -- the nametag, the health
-//     value and bar and the distance readout, spelled out as billboarded quads
-//     from the packaged pixel face (see esp_pixel_font.hpp). Nothing in that
-//     half can drift, because the module never has to model the camera for it:
-//     a tracer ends inside the hitbox, and a label's size -- never its position
-//     -- is all the projection is asked for.
+//   * esp::world builds the box outline, the tracer and the distance readout
+//     as *world-space* primitives, which the game then transforms with the
+//     matrices it rendered the level with (see overlay_mesh.hpp). Nothing can
+//     drift, because the module never has to model the camera for them: the
+//     tracer ends inside the hitbox, and the distance is a billboard anchored
+//     to the entity's feet whose size -- never its position -- follows the
+//     projection.
 //   * esp::computeCamera / makeProjection / project / projectBox are the
-//     camera basis + perspective projection for the launcher HUD layer. That
-//     projection is only ever as good as the module's model of the camera, which
-//     is exactly why nothing that has to sit on an entity is positioned by it
-//     any more; what is left on it is the labels this pass cannot build (a name
-//     written in a script the pixel face has no cells for) and the Crosshair
-//     snapline for an entity behind the camera, which has no pixels for
-//     geometry to be pinned to (see esp::crosshairTracer).
+//     camera basis + perspective projection for the launcher HUD layer, which
+//     is where the nametag and the health readout have to live because the
+//     HUD owns the font. That projection is only ever as good as the module's
+//     model of the camera, which is exactly why everything that has to sit
+//     *on* an entity is no longer part of it. The one exception is the
+//     Crosshair tracer (esp::crosshairTracer): a line that leaves the camera
+//     cannot be geometry at all, because the game projects it onto a single
+//     pixel -- see the comment on that function.
 //   * esp::sanitizeName / measureTextWidth prepare the nametag string for the
-//     label paths: the raw name field holds the markup codes and invisible
-//     format characters the game's own font swallows (which a plain HUD font
-//     paints as extra characters), and the label is centered on a width measured
-//     in glyphs, never in bytes -- a UTF-8 name is two to four bytes per
+//     HUD: the raw name field holds the markup codes and invisible format
+//     characters the game's own font swallows (which a plain HUD font paints
+//     as extra characters), and the label is centered on a width measured in
+//     glyphs, never in bytes -- a UTF-8 name is two to four bytes per
 //     character, which is what used to shove Arabic names off the head. The
-//     cleanup feeds both paths -- the mesh spells the same cleaned name out of
-//     the generated face -- while the measurement is HUD-specific, because that
-//     pass has a font to measure against and the mesh one is its own font.
-//     A width only means something for the font that draws the text,
-//     so esp::labelFontFor also decides which one that is: the packaged pixel
-//     font for the names it carries (its metrics are known exactly), the
-//     launcher's default for the scripts it does not have.
+//     width only means something for the font that draws the text, so
+//     esp::labelFontFor also decides which one that is: the packaged pixel font
+//     for the names it carries (its metrics are known exactly), the launcher's
+//     default for the scripts it does not have.
 //
 // Pure functions with no game or preloader dependencies so host tests can
 // cover both halves (see tests/esp_geometry_test.cpp) without bringing in the
@@ -55,7 +51,6 @@
 // The vertical FOV is passed in explicitly so the caller can source it from
 // wherever it likes (the Esp module uses a menu slider).
 
-#include "esp_pixel_font.hpp"
 #include "overlay_mesh.hpp"
 
 #include <bedrocktools/sdk/Types.hpp>
@@ -289,20 +284,21 @@ inline bool projectBoxTopCenter(const Camera& cam, const SurfaceProjection& proj
 }
 
 // ---------------------------------------------------------------------------
-// The Crosshair snapline: the screen-space half of that origin, for the one
-// case the geometry half cannot reach.
+// The Crosshair tracer.
 //
-// esp::world::addCrosshairTracer draws the line from the crosshair to an entity
-// in front of the camera as geometry, so the game pins its far end to the
-// hitbox. What is left for this half is the case geometry cannot reach: an
-// entity at or behind the eye has no pixels for anything to be pinned to, and a
-// line on the surface is the only way to still point at the way to turn. It
-// starts at the middle of the surface (a screen coordinate, so the module's
-// camera model cannot move it) and heads for where the entity would project.
+// A line that starts at the camera cannot be world-space geometry: every one
+// of its points sits on the same view ray, so the game's projection collapses
+// the whole segment onto a single pixel and the tracer simply disappears when
+// Crosshair is selected (and the vertex at the eye sits behind the near plane,
+// so a driver is free to clip the line away entirely). The
+// origin is what makes it screen furniture, so it is placed on the surface
+// like the nametags: from the exact middle of the screen to where the entity
+// projects.
 //
-// The direction is the whole message here, so the far end is pushed out to the
-// surface's circumscribed radius -- never beyond it, which both keeps the
-// coordinates finite for the launcher and keeps the direction untouched.
+// Off-screen entities keep a snapline: the direction is what carries the
+// information there, so the far end is pushed out to the surface's
+// circumscribed radius -- never beyond it, which both keeps the coordinates
+// finite for the launcher and keeps the direction untouched.
 // ---------------------------------------------------------------------------
 struct ScreenSegment {
     float x0 = 0.0f;
@@ -793,264 +789,149 @@ inline void addBoxFaces(std::vector<Quad>& out, const bedrocktools::sdk::AABB& b
 }
 
 // ---------------------------------------------------------------------------
-// World-space billboarded labels: the nametag, the health value, the health bar
-// and the distance readout.
+// World-space billboard text (the distance readout).
 //
-// The HUD layer can only place a label through the module's own projection of
-// the world, and that projection disagrees with the game's real camera whenever
-// the view is moving (sprint FOV, view bob, a frame of look latency, aspect
-// handling) -- which reads as the label sliding off the hitbox. Emitting the
-// label as quads instead anchors it to the entity in the very pass the hitbox is
-// drawn in, so it cannot move relative to the box: the only thing the projection
-// still decides is the label's *size*, and an FOV that is off by ten percent
-// then makes it ten percent too large rather than ten percent off the head.
-//
-// Text in this pass has to be geometry, so the glyphs are filled rectangles from
-// the game's own pixel face -- generated out of the packaged TTF, for both
-// reasons that matter: the overlay spells a name the way the game does, and the
-// module can *center* it, which is only possible for a font whose cells it knows
-// (see esp_pixel_font.hpp). A name that face cannot spell (Arabic, CJK, a
-// leftover markup sign) has no geometry to be built from, and the caller keeps
-// that label on the launcher's font, where it is at least the right characters.
+// The HUD layer can only place text through the module's own projection of
+// the world, and that projection disagrees with the game's real camera
+// whenever the view is moving (sprint FOV, view bob, a frame of look
+// latency, aspect handling) -- which reads as the readout sliding off the
+// hitbox. Drawing the readout as world-space quads instead anchors it to the
+// entity's feet in the very pass the hitbox is drawn in, so it cannot move
+// relative to the box. The projection is still consulted, but only for the
+// text's *size*: an FOV that is off by ten percent makes the digits ten
+// percent too large, never ten percent off the hitbox.
 // ---------------------------------------------------------------------------
+
+// One filled rectangle of a glyph, in a 5-row cell with y pointing down.
+struct GlyphRect {
+    float x, y, w, h;
+};
+
+// A glyph: merged rectangles plus the width of its cell. The digits live in a
+// 3x5 cell, 'm' in a 5x5 one and '.' occupies a 1-wide strip, all on the same
+// five-row baseline. Rectangles deliberately overlap at the corners, which
+// keeps every glyph at three to five quads.
+struct Glyph {
+    const GlyphRect* rects;
+    int rectCount;
+    float width;
+};
+
+inline constexpr GlyphRect kGlyph0[] = {{0, 0, 3, 1}, {0, 4, 3, 1}, {0, 0, 1, 5}, {2, 0, 1, 5}};
+inline constexpr GlyphRect kGlyph1[] = {{1, 0, 1, 5}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph2[] = {{0, 0, 3, 1}, {2, 1, 1, 1}, {0, 2, 3, 1}, {0, 3, 1, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph3[] = {{0, 0, 3, 1}, {2, 0, 1, 5}, {0, 2, 3, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph4[] = {{0, 0, 1, 3}, {2, 0, 1, 5}, {0, 2, 3, 1}};
+inline constexpr GlyphRect kGlyph5[] = {{0, 0, 3, 1}, {0, 1, 1, 1}, {0, 2, 3, 1}, {2, 3, 1, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph6[] = {{0, 0, 3, 1}, {0, 0, 1, 5}, {0, 2, 3, 1}, {2, 3, 1, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyph7[] = {{0, 0, 3, 1}, {2, 1, 1, 4}};
+inline constexpr GlyphRect kGlyph8[] = {{0, 0, 3, 1}, {0, 4, 3, 1}, {0, 0, 1, 5}, {2, 0, 1, 5}, {0, 2, 3, 1}};
+inline constexpr GlyphRect kGlyph9[] = {{0, 0, 3, 1}, {0, 0, 1, 3}, {2, 0, 1, 5}, {0, 2, 3, 1}, {0, 4, 3, 1}};
+inline constexpr GlyphRect kGlyphDot[] = {{0, 3, 1, 2}};
+inline constexpr GlyphRect kGlyphM[] = {{0, 1, 1, 4}, {2, 1, 1, 4}, {4, 1, 1, 4}, {0, 1, 5, 1}};
+
+// The characters "%.1fm" can produce. Anything else (a '-' cannot appear: the
+// distance is non-negative) is skipped together with its spacing.
+inline bool glyphFor(char c, Glyph& out) {
+    switch (c) {
+        case '0': out = {kGlyph0, 4, 3.0f}; return true;
+        case '1': out = {kGlyph1, 2, 3.0f}; return true;
+        case '2': out = {kGlyph2, 5, 3.0f}; return true;
+        case '3': out = {kGlyph3, 4, 3.0f}; return true;
+        case '4': out = {kGlyph4, 3, 3.0f}; return true;
+        case '5': out = {kGlyph5, 5, 3.0f}; return true;
+        case '6': out = {kGlyph6, 5, 3.0f}; return true;
+        case '7': out = {kGlyph7, 2, 3.0f}; return true;
+        case '8': out = {kGlyph8, 5, 3.0f}; return true;
+        case '9': out = {kGlyph9, 5, 3.0f}; return true;
+        case '.': out = {kGlyphDot, 1, 1.0f}; return true;
+        case 'm': out = {kGlyphM, 4, 5.0f}; return true;
+        default: return false;
+    }
+}
 
 // Minimum camera-space depth a billboard is still drawn at. Closer than this
 // the anchor is at (or nearly at) the near plane and the entity fills the
 // view anyway.
 inline constexpr float kBillboardMinDepth = 0.25f;
 
-// A line longer than this is not worth spelling out as quads: the vertex count
-// of a label is what this pass pays for, and a name that long is either a
-// renamed player (Bedrock's own usernames stop at 16) or a server's idea of
-// art, neither of which is worth more wire than the hitbox it labels. The HUD
-// path has no such cost, so that is where a longer name goes.
-inline constexpr std::size_t kMaxBillboardGlyphs = 24;
+// Builds the quads of one line of billboarded text.
+//
+//   * `anchor` is the *top-center* of the text block: the block hangs below
+//     and spreads left/right of it, so a caller can place it just under an
+//     entity's feet.
+//   * `pixelHeight` is the wanted on-screen height in HUD surface pixels.
+//     The camera-space depth of the anchor converts it to a world size, so
+//     the text keeps its apparent size at any range; only this size consults
+//     the projection -- the anchor itself never does.
+//   * The quads face the camera (they live in the camera's right/up plane),
+//     so the game's own transform puts them flat on the screen.
+//
+// Returns false when there is nothing to draw: empty text, no representable
+// glyph, or an anchor at/behind the camera.
+inline bool addBillboardText(std::vector<Quad>& out, const Camera& cam,
+                             const SurfaceProjection& proj, const Vec3& anchor,
+                             const char* text, float pixelHeight) {
+    if (!text || text[0] == '\0') return false;
 
-// True when this face can draw every character of `text` and the line fits the
-// budget above. Deliberately the same coverage test the HUD path uses to pick
-// the pixel font, so a label is only ever in one of the two passes.
-inline bool billboardTextFits(std::string_view text) {
-    // Coverage first: what survives it is ASCII, and an ASCII name is one byte
-    // per glyph, so the length below can be counted in bytes.
-    return !text.empty() && pixelFontCovers(text) &&
-           text.size() <= kMaxBillboardGlyphs;
-}
-
-// The world size of one HUD surface pixel at `depth`: the conversion every
-// billboard is sized by, which is what keeps a label at a constant apparent
-// size while its anchor stays a world point.
-inline float worldPerPixelAtDepth(const SurfaceProjection& proj, float depth) {
-    return 2.0f * proj.tanHalfFov * depth / proj.height;
-}
-
-// One label's worth of a plane: the world point everything hangs on, and the
-// pixel scale at its depth. Every element of the column is then placed in
-// *surface* pixels through `point`, which is what lets the nametag, the health
-// value and the bar keep the layout the HUD column has while none of them is
-// positioned by the projection: the offsets are pixel arithmetic around an
-// anchor the game placed.
-struct Billboard {
-    Vec3 anchor;
-    Vec3 right;
-    Vec3 up;
-    // World units per surface pixel, or 0 for a frame nothing can be drawn on.
-    float scale = 0.0f;
-
-    bool valid() const noexcept { return scale > 0.0f && std::isfinite(scale); }
-
-    // The world point `rightPx` to the right and `downPx` below the anchor.
-    // y grows downwards, exactly as it does in the HUD surface, so a caller can
-    // reuse the pixel numbers it already has.
-    Vec3 point(float rightPx, float downPx) const {
-        const float rx = rightPx * scale;
-        const float ry = downPx * scale;
-        return {anchor.x + right.x * rx - up.x * ry,
-                anchor.y + right.y * rx - up.y * ry,
-                anchor.z + right.z * rx - up.z * ry};
-    }
-
-    // One filled rectangle of the plane: `leftPx`/`topPx` is its top-left corner
-    // relative to the anchor and the box grows right and down. Emitted with the
-    // label's own color only in the sense that the batch decides that -- see the
-    // grouped flush in overlay::Mesh, which is how one mesh carries a black bar
-    // and a green, yellow or red fill.
-    void addBox(std::vector<Quad>& out, float leftPx, float topPx, float widthPx,
-                float heightPx) const {
-        if (!valid() || widthPx <= 0.0f || heightPx <= 0.0f) return;
-        Quad box{};
-        box.corners[0] = point(leftPx, topPx);
-        box.corners[1] = point(leftPx + widthPx, topPx);
-        box.corners[2] = point(leftPx + widthPx, topPx + heightPx);
-        box.corners[3] = point(leftPx, topPx + heightPx);
-        out.push_back(box);
-    }
-
-    // The same plane with its anchor moved by a pixel offset: what a line that has
-    // to start at another line's edge (a health value over the left end of its
-    // bar) is positioned on, so the column stays one frame's arithmetic instead
-    // of becoming a second set of coordinates that can disagree.
-    Billboard shifted(float rightPx, float downPx) const {
-        Billboard out = *this;
-        out.anchor = point(rightPx, downPx);
-        return out;
-    }
-};
-
-// Resolves the frame for `anchor`. Returns false -- and leaves `out` unusable --
-// when the anchor sits at or behind the camera, which is the caller's cue to put
-// that entity's labels on the HUD instead of drawing half a column.
-inline bool makeBillboard(Billboard& out, const Camera& cam, const SurfaceProjection& proj,
-                          const Vec3& anchor) {
-    out = Billboard{anchor, cam.right, cam.up, 0.0f};
     const Vec3 toAnchor{anchor.x - cam.pos.x, anchor.y - cam.pos.y,
                         anchor.z - cam.pos.z};
     const float depth = dot(toAnchor, cam.forward);
-    if (!(depth > kBillboardMinDepth)) return false;
-    out.scale = worldPerPixelAtDepth(proj, depth);
-    return out.valid();
-}
+    if (depth <= kBillboardMinDepth) return false;
 
-// Where a line sits on the anchor's column: centered on it, which is what a name
-// over a head wants, or starting at it and growing to the right, which is how the
-// health value sits over the left end of its bar.
-enum class TextAlignment {
-    Center,
-    Left,
-};
+    // World size of one HUD pixel at the anchor's depth, then of one font
+    // cell unit (the glyphs are five units tall).
+    const float wantedHeight = std::clamp(pixelHeight, 4.0f, 64.0f);
+    const float worldPerPixel = 2.0f * proj.tanHalfFov * depth / proj.height;
+    const float unit = wantedHeight * 0.2f * worldPerPixel;
 
-// Builds one line of billboarded text.
-//
-//   * the line is centered on the anchor's column (see TextAlignment) and its
-//     *top* row sits at the anchor, hanging down from it -- so the caller puts it
-//     just under an entity's feet (the readout) or a whole label height above its
-//     head (a nametag, whose anchor is the head point minus that height);
-//   * `pixelHeight` is the em in surface pixels, the unit the HUD text commands
-//     are quoted in, and the face's cap height is kPixelCapHeight of its
-//     kPixelEm rows -- which is what makes the two paths look like one font;
-//   * advances come from the font, so an 'i' costs a third of an 'M' here just
-//     as it does in the game's own nameplate.
-//
-// Returns false when there is nothing to draw: no valid frame, empty text, or
-// not one character this face can spell.
-inline bool addBillboardText(std::vector<Quad>& out, const Billboard& billboard,
-                             std::string_view text, float pixelHeight,
-                             TextAlignment align = TextAlignment::Center) {
-    if (!billboard.valid() || text.empty()) return false;
-
-    const float em = std::clamp(pixelHeight, 4.0f, 64.0f) / static_cast<float>(kPixelEm);
-    if (!(em > 0.0f)) return false;
-
-    // Measure first: the block has to be centered, and a center is only
-    // knowable from the advances of the glyphs that will actually be drawn.
+    // Measure the line in font units (one unit of spacing between glyphs).
     float advance = 0.0f;
     int glyphs = 0;
-    for (const char c : text) {
-        const PixelGlyph* glyph = pixelGlyph(static_cast<unsigned char>(c));
-        if (!glyph) continue;
-        advance += static_cast<float>(glyph->advance);
+    for (const char* p = text; *p != '\0'; ++p) {
+        Glyph glyph{};
+        if (!glyphFor(*p, glyph)) continue;
+        advance += glyph.width + 1.0f;
         ++glyphs;
     }
     if (glyphs == 0) return false;
+    advance -= 1.0f; // the last glyph does not need trailing spacing
 
-    const float penStart = align == TextAlignment::Center ? -advance * 0.5f * em : 0.0f;
-    float pen = penStart;
-    for (const char c : text) {
-        const PixelGlyph* glyph = pixelGlyph(static_cast<unsigned char>(c));
-        if (!glyph) continue;
-        for (std::size_t i = 0; i < glyph->rectCount; ++i) {
-            const PixelRect& rect = kPixelRects[glyph->firstRect + i];
-            billboard.addBox(out,
-                             pen + static_cast<float>(rect.x) * em,
-                             static_cast<float>(rect.y) * em,
-                             static_cast<float>(rect.width) * em,
-                             static_cast<float>(rect.height) * em);
+    // Top-left corner of the block, in world space: centered on the anchor
+    // along the camera's right vector, top edge at the anchor itself.
+    const float halfWidth = advance * unit * 0.5f;
+    const Vec3 origin{anchor.x - cam.right.x * halfWidth,
+                      anchor.y - cam.right.y * halfWidth,
+                      anchor.z - cam.right.z * halfWidth};
+
+    float pen = 0.0f;
+    for (const char* p = text; *p != '\0'; ++p) {
+        Glyph glyph{};
+        if (!glyphFor(*p, glyph)) continue;
+        for (int i = 0; i < glyph.rectCount; ++i) {
+            const GlyphRect& r = glyph.rects[i];
+            const float x0 = (pen + r.x) * unit;
+            const float x1 = (pen + r.x + r.w) * unit;
+            const float y0 = r.y * unit;
+            const float y1 = (r.y + r.h) * unit;
+
+            Quad quad{};
+            quad.corners[0] = {origin.x + cam.right.x * x0 - cam.up.x * y0,
+                               origin.y + cam.right.y * x0 - cam.up.y * y0,
+                               origin.z + cam.right.z * x0 - cam.up.z * y0};
+            quad.corners[1] = {origin.x + cam.right.x * x1 - cam.up.x * y0,
+                               origin.y + cam.right.y * x1 - cam.up.y * y0,
+                               origin.z + cam.right.z * x1 - cam.up.z * y0};
+            quad.corners[2] = {origin.x + cam.right.x * x1 - cam.up.x * y1,
+                               origin.y + cam.right.y * x1 - cam.up.y * y1,
+                               origin.z + cam.right.z * x1 - cam.up.z * y1};
+            quad.corners[3] = {origin.x + cam.right.x * x0 - cam.up.x * y1,
+                               origin.y + cam.right.y * x0 - cam.up.y * y1,
+                               origin.z + cam.right.z * x0 - cam.up.z * y1};
+            out.push_back(quad);
         }
-        pen += static_cast<float>(glyph->advance) * em;
+        pen += glyph.width + 1.0f;
     }
-    return true;
-}
-
-// The hitbox's own extent along the camera's right axis, in surface pixels: the
-// width a health bar has to be to match the wireframe it sits on, whatever way
-// the entity is turned. The projected 2D box says the same thing, but only at
-// the moment the module's camera model agrees with the game's -- and that is the
-// disagreement this whole half exists to avoid.
-inline float boxPixelWidth(const Camera& cam, const bedrocktools::sdk::AABB& box,
-                           float scale) {
-    if (!(scale > 0.0f)) return 0.0f;
-    float lo = 1e30f;
-    float hi = -1e30f;
-    for (int i = 0; i < 4; ++i) {
-        // The right axis is horizontal by construction (see computeCamera), so
-        // the four side corners are all the box has to offer this axis.
-        const float x = (i & 1) ? box.max.x : box.min.x;
-        const float z = (i & 2) ? box.max.z : box.min.z;
-        const float along = x * cam.right.x + z * cam.right.z;
-        lo = std::min(lo, along);
-        hi = std::max(hi, along);
-    }
-    return (hi - lo) / scale;
-}
-
-// ---------------------------------------------------------------------------
-// The Crosshair tracer, as geometry.
-//
-// A line that *starts at the eye* is not something the game can draw: all of it
-// lies on one view ray, so the projection collapses it onto a single pixel --
-// which is the "selecting Crosshair removes the tracer" this module used to
-// have. A line that starts on the view *axis*, a short way in front of the eye,
-// is: every point of the axis projects to the middle of the screen, so the
-// segment from an axis point to the entity lands on screen exactly as the line
-// from the crosshair to that entity -- and both of its ends are then placed by
-// the matrices the game rendered the level with. That is the difference that
-// matters: the HUD version's far end sat where the module's model of the camera
-// said the hitbox was, and it is that model -- the Fov slider, sprint FOV, a
-// frame of look latency -- that moved.
-//
-// The start depth is free (a point on the axis projects to the screen center at
-// any depth), so it is pushed out only as far as it has to be: past the game's
-// near-plane clip, and close enough to the eye to leave the entity's own depth
-// for the rest of the segment. `minPixels` keeps the rule the snapline has, from
-// the same arithmetic, so an entity already under the crosshair never gets a
-// one-pixel stub and the two paths never both draw the same line.
-//
-// Returns false when there is nothing to hand the game -- the entity is at or
-// behind the camera, or it is dead ahead, or its box is so close that no segment
-// fits in front of it -- and the caller keeps the screen-space snapline for the
-// first case (see esp::crosshairTracer), which is the only one where a line on
-// the surface carries information the geometry cannot: an entity over your
-// shoulder has no pixels to be pinned to.
-// ---------------------------------------------------------------------------
-
-// How far in front of the eye the axis vertex goes, and how much of the segment
-// has to be left over for it to be a line rather than a rounding error.
-inline constexpr float kCrosshairTracerStartDepth = 0.5f;
-inline constexpr float kCrosshairTracerMinSpan = 0.25f;
-
-inline bool addCrosshairTracer(std::vector<Segment>& out, const Camera& cam,
-                               const SurfaceProjection& proj, const Vec3& target,
-                               float minPixels = 1.5f) {
-    const Vec3 d{target.x - cam.pos.x, target.y - cam.pos.y, target.z - cam.pos.z};
-    const float depth = dot(d, cam.forward);
-    if (!(depth > kNearPlane)) return false; // at or behind the eye: snapline territory
-
-    // The same "tan space" measure esp::crosshairTracer divides by, so the two
-    // agree about what counts as dead ahead.
-    const float offX = (dot(d, cam.right) / depth) / (proj.tanHalfFov * proj.aspect) *
-                       0.5f * proj.width;
-    const float offY = -(dot(d, cam.up) / depth) / proj.tanHalfFov * 0.5f * proj.height;
-    if (!std::isfinite(offX) || !std::isfinite(offY)) return false;
-    if (!(std::sqrt(offX * offX + offY * offY) > minPixels)) return false;
-
-    const float start = std::min(kCrosshairTracerStartDepth, depth - kCrosshairTracerMinSpan);
-    if (!(start > kNearPlane)) return false;
-
-    Vec3 from{cam.pos.x + cam.forward.x * start, cam.pos.y + cam.forward.y * start,
-              cam.pos.z + cam.forward.z * start};
-    if (!std::isfinite(from.x) || !std::isfinite(from.y) || !std::isfinite(from.z)) {
-        return false;
-    }
-    out.push_back({from, target});
     return true;
 }
 

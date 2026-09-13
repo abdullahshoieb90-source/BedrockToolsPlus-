@@ -21,25 +21,20 @@ extern EspModule* g_espMod;
 // keep drawing through walls (the Hitbox module culls them on purpose; Esp
 // turns that into the Through Walls toggle, on by default).
 //
-// Everything that has to sit *on* an entity is geometry: the box, both
-// tracers, and the label column -- the distance readout, the nametag and the
-// health value and bar -- spelled out of the game's own pixel face as
-// billboarded quads (esp_pixel_font.hpp) and hung on the entity's AABB. The
-// projection in esp_geometry.hpp only ever *sizes* those, never places them, so
-// what used to slide off the hitbox while the view moved (sprint FOV, view bob,
-// a frame of look latency, an Fov slider that has not been told about a sprint)
-// now cannot.
+// The elements that are screen furniture rather than geometry -- nametags
+// and the health value and bar -- stay on the launcher HUD layer, because
+// that is where the font lives. They are anchored with the projection in
+// esp_geometry.hpp and are therefore tuned by Fov. The distance readout and
+// the feet-origin tracer used to live there too, but a HUD projection can
+// only approximate the game's camera (sprint FOV, view bob, a frame of look
+// latency), which made them slide off the hitbox while the view moved -- so
+// both are world-space geometry now, drawn (and pinned) by the game.
 //
-// Two cases stay on the launcher HUD layer, both because geometry cannot reach
-// them. A name the pixel face has no cells for -- Arabic, Hebrew, CJK, emoji --
-// is drawn in the launcher's own font, and its column comes with it rather than
-// being split in two: right characters a little adrift beat a pinned label with
-// holes in it. And an entity at or behind the eye has no pixels for anything to
-// be pinned to, which is what the Crosshair tracer's snapline is for: a
-// world-space segment that *starts at the camera* lies on a single view ray, so
-// the game collapses it onto one pixel; the line the game draws for an entity
-// in front of the eye therefore starts on the view axis instead, and only that
-// degenerate case is left on the screen (see esp::crosshairTracer).
+// The Crosshair tracer is the one line that cannot make that trip: a
+// world-space segment that starts at the camera lies on a single view ray, so
+// the game projects all of it onto one pixel and the tracer disappears when
+// Crosshair is picked. It stays on the HUD layer, drawn from the exact middle
+// of the screen to the projected hitbox (see esp::crosshairTracer).
 //
 // Entity selection mirrors Hitbox: players, mobs and items are toggled
 // independently, invisible actors are skipped, and Show Local Player adds the
@@ -104,23 +99,20 @@ public:
 
     // ---- Tracers -----------------------------------------------------------
     // A line that ends inside the entity's hitbox (its AABB center), so it
-    // cannot detach from the wireframe while the view moves. The origin is the
-    // local player's own feet (Bottom) or the crosshair (Crosshair), and both
-    // are world-space geometry handed to the game next to the box edges: the
-    // crosshair line starts on the view axis rather than at the eye, because a
-    // segment from the eye projects to a single pixel and vanishes, while any
-    // point of the axis lands on the middle of the screen. Only an entity at or
-    // behind the eye is left as a screen-space snapline, whose direction is the
-    // whole message. Hairline either way, and the same Through Walls material as
-    // the box edges.
+    // cannot detach from the wireframe while the view moves. The origin is
+    // the local player's own feet (Bottom) or the screen center (Crosshair),
+    // and the two take different render paths for a geometric reason: Bottom
+    // is world-space geometry handed to the game next to the box edges, while
+    // a line through the camera projects to a single pixel and therefore has
+    // to be a screen-space HUD line. Hairline either way, and the same Through
+    // Walls material as the box edges for the world-space half.
     bool tracer = false;
     TracerOrigin tracerOrigin = TracerOrigin::Bottom;
     uint32_t tracerColor = 0xFFFFFFFF;
 
     // ---- Nametag -----------------------------------------------------------
-    // Centered above the head point (the top-center of the player's AABB, in
-    // the world) together with the health stack, as billboarded geometry that
-    // the game pins to the entity the same way it pins the box. The name is cleaned of the
+    // Centered above the projected head point (top-center of the player's
+    // AABB), together with the health stack. The name is cleaned of the
     // markup codes and invisible format characters the game's own font
     // swallows before it reaches the HUD, and it is centered on a width
     // measured in glyphs rather than bytes, so a multi-byte (Arabic, CJK)
@@ -132,9 +124,8 @@ public:
     // whose cell widths are known here, and its own glyphs stop at Basic Latin,
     // so a name in a script it cannot draw -- Arabic, Hebrew, CJK, emoji -- is
     // left to the launcher's default font, which has them and shapes them
-    // instead of drawing a row of replacement boxes -- and that one label, and
-    // its column, goes back to the launcher's HUD layer and the module's
-    // projection (see Fov below).
+    // instead of drawing a row of replacement boxes. HUD furniture either way,
+    // so the placement follows the module's projection (see Fov below).
     bool nametag = true;
     uint32_t nametagColor = 0xFFFFFFFF;
     float nametagScale = 1.0f; // 0.5 .. 2 (multiplier on the base 14px text)
@@ -146,24 +137,22 @@ public:
     // rather than the render camera, so it is identical in first and third
     // person. Hidden while the local box is unavailable; there is no second,
     // camera-based measurement. Drawn as world-space billboarded digits just
-    // under the entity's feet, so it is pinned to the hitbox like the box and
-    // both tracers are; the projection only sizes the digits, never positions
+    // under the entity's feet, so it is pinned to the hitbox like the box
+    // and tracer are; the projection only sizes the digits, never positions
     // them.
     bool distance = true;
 
-    // ---- Label projection ---------------------------------------------------
-    // What the projection is still asked for: the apparent size of a billboarded
-    // label (how big a surface pixel is at that depth), the position of the
-    // labels this pass cannot build (an unspellable name and its column), and the
-    // Crosshair snapline. Boxes, tracers and every label the pixel face can spell
-    // are placed by the game and ignore it entirely.
+    // ---- HUD label projection ----------------------------------------------
+    // Only the screen-space half (the nametag and health labels, the apparent
+    // size of the world-space distance digits, and the Crosshair tracer's far
+    // end) needs it; the box, the feet-origin tracer and the distance anchors
+    // are placed by the game.
     //
-    // Which is a far smaller job than it used to be: a wrong value can now only
-    // resize a pinned label, never slide it off the entity. It still matters for
-    // the fallback -- assuming a narrower field of view than the game renders with
-    // used to push every off-axis label radially away from the crosshair. The
-    // default is Bedrock's own FOV (the game's gfx_fov option is 70), which is
-    // what the level is rendered with as long as the slider was not touched.
+    // The default is Bedrock's own FOV (the game's gfx_fov option is 70 by
+    // default), which is what the level is rendered with as long as the player
+    // did not touch the slider: assuming a narrower field of view used to push
+    // every off-axis label radially away from the crosshair, and the nametag
+    // landed above and beside the head instead of on it.
     float fov = 70.0f; // vertical field of view in degrees (30 .. 120)
 
 private:

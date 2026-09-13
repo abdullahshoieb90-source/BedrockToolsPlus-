@@ -120,22 +120,9 @@ constexpr float kCornerBracketFraction = 0.33f;
 // (blocks), so the digits sit just under the box instead of inside it.
 constexpr float kDistanceAnchorGap = 0.1f;
 
-// How the label column above an entity's head is stacked: how far its first line
-// starts above the head, how far apart two lines sit, how tall the health bar is
-// and how narrow it may get, all in surface pixels, and how much of the bar's
-// track shows through. Both label paths use them -- the pinned geometry and the
-// HUD fallback -- so switching between them never moves a line relative to the
-// head it belongs to.
-constexpr float kLabelGap = 4.0f;
-constexpr float kLabelLineGap = 2.0f;
-constexpr float kLabelBarHeight = 4.0f;
-constexpr float kLabelMinBarWidth = 20.0f;
-constexpr float kLabelBarTrackAlpha = 0.5f;
-
-// Weight of the Crosshair snapline in HUD pixels -- the one tracer that stays on
-// the surface, for an entity at or behind the eye. It is the only line this
-// module draws itself, so it is the only one that needs a stroke the launcher
-// can actually paint: zero would not be drawn at all.
+// Weight of the screen-space (Crosshair origin) tracer in HUD pixels. The
+// world-space half is hairline because the game draws it; a HUD line at zero
+// would not be drawn at all, so the tracer keeps a thin but real stroke.
 constexpr float kTracerLineWidth = 1.5f;
 
 // Maximum number of actors drawn per frame. fetchNearbyActorsSorted hands the
@@ -695,26 +682,14 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         boxSegments.reserve(expected * 12);
         if (options.boxFilled) fillQuads.reserve(expected * 6);
     }
-    // Both tracers are one world-space segment per entity now -- the feet line
-    // from the local player's own feet, the crosshair line from a point on the
-    // view axis (see the tracer block in renderActor) -- and so is the label
-    // column: one text batch for every billboarded line (the distance readout,
-    // the nametag, the health value), because they are all one color, and one
-    // grouped batch for the bars, whose track and fill are not.
+    // The feet-origin tracers (one world-space segment per entity; the
+    // crosshair half rides on the labels instead) and the world-space distance
+    // readouts (a blocky billboard per entity; the longest value, "256.0m", is
+    // six glyphs of at most five rectangles each).
     std::vector<overlay::Segment> tracerSegments;
     std::vector<overlay::Quad> textQuads;
-    std::vector<overlay::Quad> barQuads;
-    std::vector<overlay::Mesh::QuadGroup> barGroups;
     if (options.tracer) tracerSegments.reserve(kMaxDrawnActors);
-    // A reserve, not a budget: the readout is six glyphs of at most five
-    // rectangles, a label column up to 24 glyphs of at most ten merged ones, and
-    // most actors are drawn with a far shorter label -- growing the vector is
-    // cheaper than the alternative.
-    if (options.nametag || options.health) {
-        textQuads.reserve(static_cast<std::size_t>(kMaxDrawnActors) * 48);
-        barQuads.reserve(static_cast<std::size_t>(kMaxDrawnActors) * 2);
-        barGroups.reserve(static_cast<std::size_t>(kMaxDrawnActors) * 2);
-    } else if (options.distance) {
+    if (options.distance) {
         textQuads.reserve(static_cast<std::size_t>(kMaxDrawnActors) * 30);
     }
 
@@ -743,30 +718,25 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
             }
         }
 
-        // ---- Tracer: a line that ends inside the hitbox -------------------
-        // Both origins aim at the same world point -- the center of the entity's
-        // own box -- and both are geometry now, because geometry is the only way
-        // the far end stays *on* the hitbox: a projected end sits where the
-        // module's model of the camera said the box was, and that model is what
-        // moves (the Fov slider, sprint FOV, a frame of look latency). What
-        // differs is where the line starts:
+        // ---- Tracer: a snapline that ends inside the hitbox ----------------
+        // Both origins aim at the same world point -- the center of the
+        // entity's own box -- but they cannot share a render path, because the
+        // origin decides whether the line exists as geometry at all:
         //
-        //   * Bottom starts at the local player's own feet. Without a usable
-        //     local box the line is skipped: falling back to the camera would
-        //     put it in the degenerate case below and draw nothing at all.
-        //   * Crosshair starts on the view axis, a short way in front of the eye.
-        //     Every point of that axis projects to the middle of the screen at any
-        //     depth, which is what makes a crosshair line drawable as geometry in
-        //     the first place -- a line that *starts at the eye* lies on one
-        //     single view ray, the game collapses all of it onto one pixel, and
-        //     the tracer disappeared with it. That was the "Crosshair removes the
-        //     tracer" this module used to have, and the reason the origin was
-        //     never as steady as Bottom (see esp::world::addCrosshairTracer).
-        //
-        // Two cases stay on the surface, both because there is nothing for the
-        // game to be given: an entity at or behind the eye has no pixels for a
-        // segment to end on, only a direction worth showing (the snapline), and
-        // without a mesh at all there is no world pass to draw in.
+        //   * Bottom starts at the local player's own feet, so it is handed to
+        //     the game next to the box edges and pinned to the wireframe by the
+        //     very matrices that drew it. Without a usable local box the line
+        //     is skipped: falling back to the camera would move it into the
+        //     degenerate case below and draw nothing at all.
+        //   * Crosshair has to leave the middle of the screen, and a
+        //     world-space segment through the camera lies on a single view ray:
+        //     the game's projection collapses the whole line onto one pixel --
+        //     and puts its near vertex at the eye, where a driver may clip it
+        //     away -- which is exactly the "selecting Crosshair removes the
+        //     tracer" this used to be. It is screen furniture instead: a HUD
+        //     line from the surface center to the projected hitbox (see
+        //     esp::crosshairTracer), so an entity off the edge of the screen
+        //     still gets a line pointing the way.
         //
         // The local player never gets a tracer to itself, and the line stays
         // hairline either way: a thickness beam would fill the screen where it
@@ -774,16 +744,11 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         if (options.tracer && !isSelf) {
             const Vec3 target = esp::boxCenter(aabb.min, aabb.max);
             if (options.tracerOrigin == EspModule::TracerOrigin::Crosshair) {
-                const bool pinned =
-                    meshReady && lineMaterial &&
-                    esp::world::addCrosshairTracer(tracerSegments, camera, proj, target);
-                if (!pinned) {
-                    const esp::ScreenSegment line =
-                        esp::crosshairTracer(camera, proj, target);
-                    if (line.visible) {
-                        addLine(labels, line.x0, line.y0, line.x1, line.y1,
-                                forceOpaqueColor(options.tracerColor));
-                    }
+                const esp::ScreenSegment line =
+                    esp::crosshairTracer(camera, proj, target);
+                if (line.visible) {
+                    addLine(labels, line.x0, line.y0, line.x1, line.y1,
+                            forceOpaqueColor(options.tracerColor));
                 }
             } else if (meshReady && selfFeetValid) {
                 tracerSegments.push_back({selfFeet, target});
@@ -812,181 +777,90 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
             char buffer[24];
             std::snprintf(buffer, sizeof(buffer), "%.1fm", dist);
             const Vec3 anchor{entFeetX, aabb.min.y - kDistanceAnchorGap, entFeetZ};
-            esp::world::Billboard billboard;
-            if (esp::world::makeBillboard(billboard, camera, proj, anchor)) {
-                esp::world::addBillboardText(textQuads, billboard, buffer, subSize);
-            }
+            esp::world::addBillboardText(textQuads, camera, proj, anchor, buffer,
+                                         subSize);
         }
 
-        // ---- The label column above the head: nametag + health --------------
-        // The same trick as the readout, for the two labels that used to be HUD
-        // furniture: they hang off the *world* head point -- the top-center of the
-        // entity's own box -- and are laid out in surface pixels around it. Only
-        // the pixel scale consults the projection, so a name and its health bar sit
-        // on the head in the same pass that drew the wireframe around it, at any
-        // FOV, sprinting or not. The 2D box's top-middle, which the HUD path below
-        // still centers on, is a screen-space average of eight projected corners
-        // that perspective shifts away from the head -- and an FOV the module has
-        // not been told shifts the whole column with it.
-        //
-        // The name is read straight out of the game's Player, and the raw field is
-        // not what the game draws: it is cleaned on the way in, because the
-        // section-sign markup codes a server or a nick add-on pads it with and the
-        // invisible format characters a right-to-left name arrives wrapped in would
-        // otherwise be painted literally (see esp::sanitizeName).
+        // ---- everything below is HUD furniture, anchored on the box ---------
+        const esp::ScreenBox screen =
+            esp::projectBox(camera, proj, aabb.min, aabb.max, boxLimit);
+        if (!screen.visible) return;
+
+        // Nothing to draw once the box has slid completely off the surface.
+        if (screen.maxX < 0.0f || screen.minX > proj.width ||
+            screen.maxY < 0.0f || screen.minY > proj.height) {
+            return;
+        }
+
+        const float boxLeft = screen.minX;
+        const float boxRight = screen.maxX;
+        const float boxTop = screen.minY;
+        const float boxW = boxRight - boxLeft;
+        const float centerX = (boxLeft + boxRight) * 0.5f;
+
+        // ---- Text stack above the box -------------------------------------
+        // The label column (nametag, health) is centered on the projected
+        // head point -- the top-center of the entity's own box -- instead of
+        // the 2D box's middle, which perspective shifts away from the head
+        // (see esp::projectBoxTopCenter). When the head itself is behind the
+        // near plane, the 2D box is kept as the fallback.
+        float headX = centerX;
+        float headY = boxTop;
+        float topX = 0.0f, topY = 0.0f;
+        if (esp::projectBoxTopCenter(camera, proj, aabb.min, aabb.max, topX, topY)) {
+            headX = std::clamp(topX, -boxLimit, proj.width + boxLimit);
+            headY = std::clamp(topY, -boxLimit, proj.height + boxLimit);
+        }
+        float textY = headY - nametagSize - 4.0f;
+
+        // Nametag (players only; the name field is only valid for Player). The
+        // raw field is whatever the game's own font has to make sense of, so it
+        // is cleaned on the way in: the section-sign markup codes and the
+        // invisible format characters a server, a nick add-on or a
+        // right-to-left name bring with them would otherwise be painted
+        // literally, which is what reads as extra characters beside the label
+        // (see esp::sanitizeName).
         std::string name;
         if (options.nametag && s_actorIsPlayer && s_actorIsPlayer(ent)) {
             name = esp::sanitizeName(
                 reinterpret_cast<bedrocktools::sdk::Player*>(ent)->name());
         }
+        if (options.nametag && !name.empty()) {
+            // Centered on the head column, on the width the chosen font
+            // measures the cleaned name to (both halves of that are addText's
+            // decision; a byte count used to over-count every multi-byte
+            // character and pull the label off the player it belongs to).
+            addText(labels, name, headX, textY, nametagSize,
+                    forceOpaqueColor(options.nametagColor), /*centered=*/true);
+            textY -= nametagSize + 2.0f;
+        }
 
-        // Living entities only: players and mobs own a health attribute. The value
-        // and the fraction are resolved once, because both label paths draw them.
-        float healthValue = -1.0f;
-        float healthFraction = 0.0f;
+        // Health (living entities only: players + mobs own a health attribute).
         const bool living = (s_actorIsPlayer && s_actorIsPlayer(ent)) ||
                             hasCategory(ent, offsets::ActorCategories::IsMob);
         if (options.health && living) {
             float maxHealth = 0.0f;
             const float current = readHealth(ent, maxHealth);
             if (current >= 0.0f && std::isfinite(current)) {
-                healthValue = current;
-                healthFraction =
-                    std::clamp(current / (maxHealth > 0.0f ? maxHealth : current), 0.0f, 1.0f);
-            }
-        }
+                const float fraction = std::clamp(current / (maxHealth > 0.0f ? maxHealth : current),
+                                                   0.0f, 1.0f);
 
-        // The face this column is spelled with is the game's own, and it has no
-        // cells outside printable ASCII. A name it cannot write -- Arabic, CJK, a
-        // stray markup sign, a server's forty-character art -- therefore keeps the
-        // launcher's font for that entity, whole column and all: right characters
-        // a little adrift beat a pinned label with holes in it. The same test the
-        // HUD path uses to decide it may measure itself in the pixel font, so a
-        // name is only ever in one of the two.
-        esp::world::Billboard billboard;
-        const bool pinnedColumn =
-            (options.nametag || options.health) && meshReady && lineMaterial &&
-            faceMaterial &&
-            (name.empty() || esp::world::billboardTextFits(name)) &&
-            esp::world::makeBillboard(billboard, camera, proj,
-                                      esp::boxTopCenter(aabb.min, aabb.max));
+                const float barW = std::max(boxW, 20.0f);
+                const float barH = 4.0f;
+                const float barY = textY + subSize - barH; // place bar under the label
 
-        if (pinnedColumn) {
-            // Top down, as surface pixels above the head: the nametag line, then
-            // the health value with its bar under it. The numbers are the HUD
-            // column's, with the y axis flipped (a billboard's `downPx` grows
-            // downwards, exactly like the surface's), so the two paths stack a
-            // label the same way and only differ in what pins it.
-            float lineTop = -(nametagSize + kLabelGap);
-
-            // Centered on the head column, on the cell widths of the face that
-            // draws it -- which is the whole reason this pass can center a name at
-            // all, and why a byte-counted label used to land beside the head.
-            if (options.nametag && !name.empty()) {
-                // shifted() first, because a billboard hangs down from its anchor
-                // and the anchor is the head itself: without the lift the whole
-                // name would be written into the box.
-                esp::world::addBillboardText(textQuads, billboard.shifted(0.0f, lineTop),
-                                             name, nametagSize);
-                lineTop -= nametagSize + kLabelLineGap;
-            }
-
-            if (healthValue >= 0.0f) {
-                // As wide as the hitbox it sits on, however that box is turned --
-                // the same number the wireframe gives the screen, without waiting
-                // for the projection to agree about it.
-                const float barW = std::max(
-                    esp::world::boxPixelWidth(camera, aabb, billboard.scale),
-                    kLabelMinBarWidth);
-                const float barTop = lineTop + subSize - kLabelBarHeight;
-
-                // Track first, then the fill: the groups are emitted in order, so
-                // this is what puts the fill on top of the track. Both stay in one
-                // mesh even though they are not the same color, because the
-                // Tessellator stamps the color it was last handed.
-                const std::size_t trackBegin = barQuads.size();
-                billboard.addBox(barQuads, -barW * 0.5f, barTop, barW, kLabelBarHeight);
-                barGroups.push_back({0xFF000000u, kLabelBarTrackAlpha, trackBegin,
-                                     barQuads.size()});
-
-                const uint32_t fillColor = healthFraction > 0.5f   ? 0xFF22C55Eu
-                                           : healthFraction > 0.25f ? 0xFFEAB308u
-                                                                    : 0xFFEF4444u;
-                const std::size_t fillBegin = barQuads.size();
-                billboard.addBox(barQuads, -barW * 0.5f, barTop, barW * healthFraction,
-                                 kLabelBarHeight);
-                barGroups.push_back({forceOpaqueColor(fillColor), 1.0f, fillBegin,
-                                     barQuads.size()});
-
-                // The value starts at the left end of its bar rather than on the
-                // head column, exactly where the HUD path puts it -- so a shifted
-                // anchor, not a second measurement to disagree about.
-                char buffer[24];
-                std::snprintf(buffer, sizeof(buffer), "%.0f", healthValue);
-                const esp::world::Billboard valueLine =
-                    billboard.shifted(-barW * 0.5f, barTop - subSize - kLabelLineGap);
-                esp::world::addBillboardText(textQuads, valueLine, buffer, subSize,
-                                             esp::world::TextAlignment::Left);
-            }
-        } else if (options.nametag || options.health) {
-            // ---- the HUD column: the fallback the launcher font is kept for ----
-            // Positioned by the module's projection, which is the older half of
-            // this module and the driftier one; it stays here for the names the
-            // pixel face cannot spell and for a frame with no mesh to draw on.
-            const esp::ScreenBox screen =
-                esp::projectBox(camera, proj, aabb.min, aabb.max, boxLimit);
-            if (!screen.visible) return;
-
-            // Nothing to draw once the box has slid completely off the surface:
-            // a label at a coordinate that far out is only worth submitting as a
-            // number the launcher has to be guarded against.
-            if (screen.maxX < 0.0f || screen.minX > proj.width ||
-                screen.maxY < 0.0f || screen.minY > proj.height) {
-                return;
-            }
-
-            const float boxLeft = screen.minX;
-            const float boxRight = screen.maxX;
-            const float boxTop = screen.minY;
-            const float boxW = boxRight - boxLeft;
-            const float centerX = (boxLeft + boxRight) * 0.5f;
-
-            // Centered on the projected head point -- the top-center of the
-            // entity's own box -- rather than the 2D box's top-middle, which
-            // perspective shifts away from the head (see esp::projectBoxTopCenter).
-            // When the head itself is behind the near plane, the 2D box is the
-            // fallback.
-            float headX = centerX;
-            float headY = boxTop;
-            float topX = 0.0f, topY = 0.0f;
-            if (esp::projectBoxTopCenter(camera, proj, aabb.min, aabb.max, topX, topY)) {
-                headX = std::clamp(topX, -boxLimit, proj.width + boxLimit);
-                headY = std::clamp(topY, -boxLimit, proj.height + boxLimit);
-            }
-            float textY = headY - nametagSize - kLabelGap;
-
-            if (options.nametag && !name.empty()) {
-                addText(labels, name, headX, textY, nametagSize,
-                        forceOpaqueColor(options.nametagColor), /*centered=*/true);
-                textY -= nametagSize + kLabelLineGap;
-            }
-
-            if (healthValue >= 0.0f) {
-                const float barW = std::max(boxW, kLabelMinBarWidth);
-                const float barY = textY + subSize - kLabelBarHeight; // under the label
-
-                addRect(labels, headX - barW * 0.5f, barY, barW, kLabelBarHeight,
-                        0x80000000u);
-                const uint32_t fillColor = healthFraction > 0.5f   ? 0xFF22C55Eu
-                                           : healthFraction > 0.25f ? 0xFFEAB308u
-                                                                    : 0xFFEF4444u;
-                addRect(labels, headX - barW * 0.5f, barY, barW * healthFraction,
-                        kLabelBarHeight, fillColor);
+                // Track + fill.
+                addRect(labels, headX - barW * 0.5f, barY, barW, barH, 0x80000000u);
+                const uint32_t fillColor = fraction > 0.5f   ? 0xFF22C55Eu
+                                           : fraction > 0.25f ? 0xFFEAB308u
+                                                              : 0xFFEF4444u;
+                addRect(labels, headX - barW * 0.5f, barY, barW * fraction, barH, fillColor);
 
                 char buffer[24];
-                std::snprintf(buffer, sizeof(buffer), "%.0f", healthValue);
-                addText(labels, buffer, headX - barW * 0.5f, barY - subSize - kLabelLineGap,
+                std::snprintf(buffer, sizeof(buffer), "%.0f", current);
+                addText(labels, buffer, headX - barW * 0.5f, barY - subSize - 2.0f,
                         subSize, forceOpaqueColor(options.nametagColor));
+                textY = barY - subSize - 4.0f;
             }
         }
     };
@@ -1034,27 +908,17 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
             mesh.drawSegments(screenContext, lineMaterial, camPos, boxRgb, 1.0f,
                               boxSegments, beamHalfWidth);
         }
-        // Both tracers after the wireframe, hairline only (see renderActor): the
-        // same material as the box edges, so Through Walls governs them too, and
-        // both origins are geometry for the same reason -- a line the game places
-        // cannot come off the hitbox it ends in. The only line that is *not* here
-        // is the snapline for an entity behind the camera, whose far end has no
-        // pixels to be pinned to.
+        // The feet-origin tracers after the wireframe, hairline only (see
+        // renderActor): the same material as the box edges, so Through Walls
+        // governs them too. The Crosshair origin is not here at all, because a
+        // line through the camera is not something the game can draw.
         if (!tracerSegments.empty()) {
             mesh.drawSegments(screenContext, lineMaterial, camPos,
                               forceOpaqueColor(options.tracerColor), 1.0f,
                               tracerSegments, 0.0f);
         }
-        // The health bars before the text, and the text last, so a name stays
-        // readable over the wireframe, the tracer and its own bar. The bars group
-        // their colors in one mesh -- a track is black at half alpha and a fill is
-        // green, yellow or red, and the Tessellator colors from the call onwards
-        // rather than per draw (see overlay::Mesh::drawQuadsGrouped); the text is
-        // one batch because every line this pass spells shares the nametag color.
-        if (!barQuads.empty() && faceMaterial) {
-            mesh.drawQuadsGrouped(screenContext, faceMaterial, camPos, barQuads,
-                                  barGroups);
-        }
+        // The distance billboards last, on top of everything else, so the
+        // readout stays readable where it overlaps its own tracer.
         if (!textQuads.empty() && faceMaterial) {
             mesh.drawQuads(screenContext, faceMaterial, camPos,
                            forceOpaqueColor(options.nametagColor), 1.0f, textQuads);
