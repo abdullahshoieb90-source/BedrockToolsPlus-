@@ -70,12 +70,6 @@ for source in "${root}"/tests/*_test.cpp; do
                 skip="preloader/nlohmann_json/entt headers (set PRE_LOADER_INCLUDE, JSON_INCLUDE and ENTT_INCLUDE)"
             fi
             ;;
-        esp_render_test)
-            # Drives the real Esp render path; the pl::modmenu entry points it
-            # needs (surface size + draw command capture) come from the
-            # test-owned fake, and nlohmann/json from the host fake.
-            extra+=(-I "${root}/tests/esp_fakepl" -I "${root}/tests/fakejson")
-            ;;
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
