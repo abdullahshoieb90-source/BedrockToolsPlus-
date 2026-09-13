@@ -21,14 +21,10 @@ extern EspModule* g_espMod;
 // keep drawing through walls (the Hitbox module culls them on purpose; Esp
 // turns that into the Through Walls toggle, on by default).
 //
-// The elements that are screen furniture rather than geometry -- nametags
-// and the health value and bar -- stay on the launcher HUD layer, because
-// that is where the font lives. They are anchored with the projection in
-// esp_geometry.hpp and are therefore tuned by Fov. The tracer and the
-// distance readout used to live there too, but a HUD projection can only
-// approximate the game's camera (sprint FOV, view bob, a frame of look
-// latency), which made them slide off the hitbox while the view moved --
-// so both are world-space geometry now, drawn (and pinned) by the game.
+// The elements that are screen furniture rather than geometry -- nametags,
+// the health value and bar, the distance readout and tracers -- stay on the
+// launcher HUD layer, because that is where the font lives. They are anchored
+// with the projection in esp_geometry.hpp and are therefore tuned by Fov.
 //
 // Entity selection mirrors Hitbox: players, mobs and items are toggled
 // independently, invisible actors are skipped, and Show Local Player adds the
@@ -92,20 +88,17 @@ public:
     float rgbSpeed = 0.3f; // full hue cycles per second (0.05 .. 1)
 
     // ---- Tracers -----------------------------------------------------------
-    // A world-space line handed to the game's renderer together with the
-    // boxes: it ends inside the entity's hitbox (its AABB center), so it
-    // cannot detach from the wireframe while the view moves. The origin is
-    // the local player's own feet (Bottom) or the render camera, i.e. the
-    // screen center (Crosshair). Hairline only, and the same Through Walls
-    // material as the box edges.
+    // The line ends on the projected center of the entity's own hitbox (the
+    // middle of its AABB), so it lands in the middle of the wireframe the
+    // game drew instead of floating next to it.
     bool tracer = false;
     TracerOrigin tracerOrigin = TracerOrigin::Bottom;
     uint32_t tracerColor = 0xFFFFFFFF;
 
     // ---- Nametag -----------------------------------------------------------
     // Centered above the projected head point (top-center of the player's
-    // AABB), together with the health stack. HUD furniture, so its placement
-    // follows the module's projection (see Fov below).
+    // AABB), together with the health stack; the distance readout hangs
+    // under the box on the same head column.
     bool nametag = true;
     uint32_t nametagColor = 0xFFFFFFFF;
     float nametagScale = 1.0f; // 0.5 .. 2 (multiplier on the base 14px text)
@@ -116,16 +109,12 @@ public:
     // the entity (in blocks), measured from the actors' collision boxes
     // rather than the render camera, so it is identical in first and third
     // person. Hidden while the local box is unavailable; there is no second,
-    // camera-based measurement. Drawn as world-space billboarded digits just
-    // under the entity's feet, so it is pinned to the hitbox like the box
-    // and tracer are; the projection only sizes the digits, never positions
-    // them.
+    // camera-based measurement.
     bool distance = true;
 
     // ---- HUD label projection ----------------------------------------------
-    // Only the screen-space half (the nametag and health labels, plus the
-    // apparent size of the world-space distance digits) needs it; the box,
-    // tracer and distance anchors are placed by the game.
+    // Only the screen-space half (labels, tracers) needs it; the box geometry
+    // is placed by the game.
     float fov = 60.0f; // vertical field of view in degrees (30 .. 120)
 
 private:

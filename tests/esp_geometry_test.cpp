@@ -341,43 +341,69 @@ int main() {
     }
 
     // --- Tracer anchor ------------------------------------------------------
-    // The world-space tracer ends on the center (middle) of the entity's own
-    // box -- the same world point the wireframe surrounds, which is why the
-    // game pins the line to the hitbox. These cases pin the anchor itself.
+    // The tracer has to end on the projected center (middle) of the entity's
+    // own box. Ending it on the 2D box's middle instead leaves it visibly
+    // detached from the hitbox, which is what these cases pin down: the 2D
+    // average and the true anchor disagree by design.
     {
         const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
         const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
 
-        // Dead ahead, the anchor is the box's world center: the screen-space
-        // middle of the projected box is NOT it (the near face wins the
-        // min/max), which is the drift a HUD tracer used to show.
+        // The anchor is exactly the projection of the box's center.
         {
             const Vec3 mn{-0.3f, 0.0f, 4.7f};
             const Vec3 mx{0.3f, 1.8f, 5.3f};
-            const Vec3 anchor = esp::boxCenter(mn, mx);
             float ax = 0.0f, ay = 0.0f;
-            check(esp::project(cam, proj, anchor, ax, ay),
+            check(esp::projectBoxCenter(cam, proj, mn, mx, ax, ay),
                   "the center anchor of a box ahead projects");
+            float px = 0.0f, py = 0.0f;
+            check(esp::project(cam, proj, {0.0f, 0.9f, 5.0f}, px, py) &&
+                      near(ax, px) && near(ay, py),
+                  "the anchor is the projection of the box center");
             check(near(ax, 500.0f, 0.5f) && near(ay, 572.0f, 0.5f),
                   "a dead-ahead anchor lands mid-hitbox");
+        }
+
+        // Dead ahead, the 2D box's middle sits off the true center: the near
+        // face wins the min/max over the anchor's depth, so the screen-space
+        // average is not where the hitbox middle lands.
+        {
+            const Vec3 mn{-0.3f, 0.0f, 4.7f};
+            const Vec3 mx{0.3f, 1.8f, 5.3f};
+            float ax = 0.0f, ay = 0.0f;
+            esp::projectBoxCenter(cam, proj, mn, mx, ax, ay);
             const esp::ScreenBox box = esp::projectBox(cam, proj, mn, mx, 0.0f);
             const float boxCenterY = (box.minY + box.maxY) * 0.5f;
             check(box.visible && std::fabs(boxCenterY - ay) > 1.0f,
                   "dead ahead, the 2D box middle drifts off the center anchor");
         }
 
-        // Off-axis, the world-space anchor keeps its meaning: the same middle
-        // the wireframe surrounds, wherever the projection would put it.
+        // Off-axis, the 2D box's middle is shifted sideways as well: the
+        // projected box is asymmetric, so its screen-space middle is not
+        // where the hitbox's middle lands.
         {
             const Vec3 mn{2.0f, 0.0f, 4.0f};
             const Vec3 mx{4.0f, 1.8f, 6.0f};
-            const Vec3 anchor = esp::boxCenter(mn, mx);
-            check(near(anchor.x, 3.0f) && near(anchor.y, 0.9f) && near(anchor.z, 5.0f),
-                  "the off-axis anchor is the box's middle");
             float ax = 0.0f, ay = 0.0f;
-            check(esp::project(cam, proj, anchor, ax, ay) &&
-                      near(ax, 200.0f, 0.5f) && near(ay, 572.0f, 0.5f),
-                  "which projects mid-hitbox from any camera");
+            check(esp::projectBoxCenter(cam, proj, mn, mx, ax, ay),
+                  "the center anchor of an off-axis box projects");
+            check(near(ax, 200.0f, 0.5f) && near(ay, 572.0f, 0.5f),
+                  "the off-axis anchor lands mid-hitbox");
+            const esp::ScreenBox box = esp::projectBox(cam, proj, mn, mx, 0.0f);
+            const float boxCenterX = (box.minX + box.maxX) * 0.5f;
+            const float boxCenterY = (box.minY + box.maxY) * 0.5f;
+            check(box.visible && std::fabs(boxCenterX - ax) > 5.0f &&
+                      std::fabs(boxCenterY - ay) > 5.0f,
+                  "off-axis, the 2D box middle drifts off the anchor");
+        }
+
+        // An anchor behind the camera is rejected, so the caller can fall
+        // back to the 2D box instead of mirroring the line across the screen.
+        {
+            float ax = 0.0f, ay = 0.0f;
+            check(!esp::projectBoxCenter(cam, proj, {-0.3f, 0.0f, -10.0f},
+                                         {0.3f, 1.8f, -9.0f}, ax, ay),
+                  "an anchor behind the camera is rejected");
         }
     }
 
@@ -540,102 +566,6 @@ int main() {
         check(facesOnBox, "every face corner sits on the box shell");
         check(near(area, 2.0f * (1.0f * 2.0f + 2.0f * 4.0f + 1.0f * 4.0f)),
               "the six faces together are the box surface area");
-    }
-
-    // --- world-space billboard text -----------------------------------------
-    //
-    // The distance readout is world geometry now: quads anchored under the
-    // entity's feet, so the game pins them to the hitbox the way it pins the
-    // wireframe. The properties that keep it "on the hitbox" are pinned here:
-    // the anchor position never consults the projection (only the size does),
-    // the block hangs below its anchor, faces the camera, and keeps a
-    // constant apparent height at any range.
-    {
-        std::printf("esp world billboard text\n");
-
-        const esp::Camera cam = esp::computeCamera({0.0f, 1.62f, 0.0f}, {0.0f, 0.0f});
-        const esp::SurfaceProjection proj = esp::makeProjection(1000.0f, 1000.0f, 90.0f);
-        const Vec3 anchor{3.0f, -0.1f, 10.0f}; // under an entity's feet
-
-        std::vector<overlay::Quad> text;
-        check(esp::world::addBillboardText(text, cam, proj, anchor, "10.0m", 12.0f),
-              "a distance ahead of the camera produces quads");
-
-        // "10.0m" = 2 + 4 + 1 + 4 + 4 merged glyph rectangles.
-        check(text.size() == 15, "the blocky readout is fifteen glyph rectangles");
-
-        // Every corner lies in the camera-facing plane through the anchor:
-        // that is what makes the text readable instead of edge-on.
-        bool planar = true;
-        for (const auto& quad : text) {
-            for (const Vec3& corner : quad.corners) {
-                const Vec3 delta{corner.x - anchor.x, corner.y - anchor.y,
-                                 corner.z - anchor.z};
-                if (std::fabs(esp::dot(delta, cam.forward)) > 0.0001f) planar = false;
-            }
-        }
-        check(planar, "every quad corner faces the camera plane");
-
-        // The block hangs below the anchor (never above it) and is centered
-        // on it along the camera's right vector, so the digits sit under the
-        // entity's feet, not next to them.
-        bool below = true;
-        float minRight = 1e30f, maxRight = -1e30f;
-        for (const auto& quad : text) {
-            for (const Vec3& corner : quad.corners) {
-                const Vec3 delta{corner.x - anchor.x, corner.y - anchor.y,
-                                 corner.z - anchor.z};
-                if (esp::dot(delta, cam.up) > 0.0001f) below = false;
-                const float alongRight = esp::dot(delta, cam.right);
-                minRight = std::min(minRight, alongRight);
-                maxRight = std::max(maxRight, alongRight);
-            }
-        }
-        check(below, "the whole text block hangs below the anchor");
-        check(near(minRight, -maxRight, 0.0001f),
-              "the text block is centered on the anchor");
-
-        // Constant apparent size: doubling the depth doubles the world height
-        // of the glyphs (the projection scales the size, never the anchor).
-        auto worldHeightAt = [&](float depth) {
-            const Vec3 a{0.0f, 1.62f, depth};
-            std::vector<overlay::Quad> quads;
-            if (!esp::world::addBillboardText(quads, cam, proj, a, "8", 12.0f)) return -1.0f;
-            float low = 1e30f, high = -1e30f;
-            for (const auto& quad : quads) {
-                for (const Vec3& corner : quad.corners) {
-                    const float up = esp::dot({corner.x - a.x, corner.y - a.y,
-                                               corner.z - a.z}, cam.up);
-                    low = std::min(low, up);
-                    high = std::max(high, up);
-                }
-            }
-            return high - low;
-        };
-        const float nearHeight = worldHeightAt(10.0f);
-        const float farHeight = worldHeightAt(20.0f);
-        check(near(nearHeight, farHeight * 0.5f, 0.0001f),
-              "twice the depth, twice the world size: the apparent height is constant");
-
-        // The wanted height in pixels actually survives the round trip: at
-        // depth d the world height is pixelHeight * 2*tan(fov/2)*d/height.
-        const float expectedNear = 12.0f * 2.0f * proj.tanHalfFov * 10.0f / proj.height;
-        check(near(nearHeight, expectedNear, 0.0001f),
-              "the requested pixel height is honored");
-
-        // Nothing to draw: empty text, no representable glyph, or an anchor
-        // at/behind the camera.
-        {
-            std::vector<overlay::Quad> quads;
-            check(!esp::world::addBillboardText(quads, cam, proj, anchor, "", 12.0f),
-                  "empty text draws nothing");
-            check(!esp::world::addBillboardText(quads, cam, proj, anchor, "xyz", 12.0f),
-                  "text without a representable glyph draws nothing");
-            check(!esp::world::addBillboardText(quads, cam, proj, {0.0f, 1.62f, -10.0f},
-                                                "10.0m", 12.0f),
-                  "an anchor behind the camera draws nothing");
-            check(quads.empty(), "and no partial quads are left behind");
-        }
     }
 
     std::printf("\n%d failure(s)\n", g_failures);
