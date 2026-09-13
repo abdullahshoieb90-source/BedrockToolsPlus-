@@ -2,7 +2,6 @@
 
 #include "../ModuleRegistry.hpp"
 #include "esp_geometry.hpp"
-#include "core/PixelFont.hpp"
 #include "core/memory/Hooks.hpp"
 #include "overlay_mesh.hpp"
 #include <bedrocktools/events/EventBus.hpp>
@@ -19,7 +18,6 @@
 #include <cstring>
 #include <iterator>
 #include <string>
-#include <string_view>
 #include <vector>
 
 // Defined here at global scope to satisfy the `extern` declaration in
@@ -93,16 +91,6 @@ std::atomic<int> s_perspective{0};
 std::atomic<bool> s_perspectiveKnown{false};
 bool s_perspectiveHooked = false;
 
-// Whether the launcher has the packaged pixel font (see core/PixelFont.hpp).
-// Sampled once, at onInit: an unregistered font does not fail loudly, it just
-// draws something else, so the module may only ask for it when it really is
-// there -- and the nametag is centered on a width measured in that font, which
-// is the whole reason the module cares. Queried here rather than at draw time
-// because the query opens a file on the first attempt, and the render pass must
-// not do that. Being written during init -- i.e. before applyPatch() has handed
-// the render thread the hook that reads it -- it needs no atomic of its own.
-bool s_pixelFontReady = false;
-
 // The overlay is published from the render hook, which also runs on the render
 // thread (before the frame is swapped), so these two flags are only ever read
 // and written in order: renderLevel first, then the swap that drives onFrame.
@@ -119,11 +107,6 @@ constexpr float kCornerBracketFraction = 0.33f;
 // How far below an entity's feet the world-space distance readout hangs
 // (blocks), so the digits sit just under the box instead of inside it.
 constexpr float kDistanceAnchorGap = 0.1f;
-
-// Weight of the screen-space (Crosshair origin) tracer in HUD pixels. The
-// world-space half is hairline because the game draws it; a HUD line at zero
-// would not be drawn at all, so the tracer keeps a thin but real stroke.
-constexpr float kTracerLineWidth = 1.5f;
 
 // Maximum number of actors drawn per frame. fetchNearbyActorsSorted hands the
 // list back nearest-first, so a cap keeps the worst case bounded on a busy
@@ -180,19 +163,6 @@ AABB getActorAABB(void* actor) {
 bool isDegenerateBox(const AABB& aabb) {
     return aabb.min.x == 0.0f && aabb.min.y == 0.0f && aabb.min.z == 0.0f &&
            aabb.max.x == 0.0f && aabb.max.y == 0.0f && aabb.max.z == 0.0f;
-}
-
-// A collision box the overlay can be built from. The all-zero box is the
-// game's "no box yet" state (a freshly spawned or unloaded actor) and has
-// nothing to outline, and a bound that is not a number would propagate into
-// both the geometry and the labels -- where a single non-finite draw command
-// makes the launcher reject the whole frame's batch, taking every other
-// entity's nametag with it.
-bool isUsableBox(const AABB& aabb) {
-    const bool finite = std::isfinite(aabb.min.x) && std::isfinite(aabb.min.y) &&
-                        std::isfinite(aabb.min.z) && std::isfinite(aabb.max.x) &&
-                        std::isfinite(aabb.max.y) && std::isfinite(aabb.max.z);
-    return finite && !isDegenerateBox(aabb);
 }
 
 Vec2 getActorRotation(void* actor) {
@@ -369,93 +339,12 @@ static_assert(sizeof(kTracerOriginNames) / sizeof(kTracerOriginNames[0]) ==
                   static_cast<int>(EspModule::TracerOrigin::Count),
               "every TracerOrigin needs exactly one kTracerOriginNames label");
 
-// ---------------------------------------------------------------------------
-// Radio values.
-//
-// A ConfigType::Radio entry is persisted as "<index>,<label>,<label>..." and
-// the launcher reports the plain index when the selection changes (the same
-// contract the Crosshair, Effect Display and Wings pickers use). Reading only
-// that index, though, meant a config that was written by hand -- or a menu that
-// reports the option's text -- was silently ignored and left the module on the
-// option it already had, so the label form is resolved here as well.
-// ---------------------------------------------------------------------------
-inline char asciiLower(char c) {
-    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c;
-}
-
-inline std::string_view trimmed(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
-        text.remove_prefix(1);
-    }
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
-        text.remove_suffix(1);
-    }
-    return text;
-}
-
-bool textEquals(std::string_view a, std::string_view b) {
-    a = trimmed(a);
-    b = trimmed(b);
-    if (a.size() != b.size()) return false;
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        if (asciiLower(a[i]) != asciiLower(b[i])) return false;
-    }
-    return true;
-}
-
-// The index the value selects, or -1 when it selects none -- in which case the
-// caller keeps the option it has, which is the right response to a config (or a
-// menu build) that means something else entirely.
-int radioIndexOf(const nlohmann::json& value, const char* const* labels, int count) {
-    std::string text;
-    if (value.is_string()) {
-        text = value.get<std::string>();
-    } else if (value.is_number_integer()) {
-        text = std::to_string(value.get<int>());
-    } else {
-        return -1;
-    }
-
-    const std::size_t comma = text.find(',');
-    const std::string_view head = trimmed(
-        std::string_view(text).substr(0, comma == std::string::npos ? text.size() : comma));
-
-    std::size_t used = 0;
-    try {
-        const int index = std::stoi(std::string(head), &used);
-        if (used == head.size() && index >= 0 && index < count) return index;
-    } catch (...) {}
-
-    // A lone label. When a comma is present the string is the option list
-    // rather than a selection, and matching its first entry would be wrong.
-    if (comma == std::string::npos) {
-        for (int i = 0; i < count; ++i) {
-            if (textEquals(head, labels[i])) return i;
-        }
-    }
-    return -1;
-}
-
 } // namespace
 
 // ---------------------------------------------------------------------------
 // Draw-command helpers for the HUD layer (operate on the caller's list).
-//
-// The launcher validates a module's whole batch before it draws any of it: one
-// non-finite coordinate (or one text longer than its own limit) makes it reject
-// *every* command of the frame, so a single actor with a broken collision box
-// would blank the nametags of all the others. Commands are checked on the way
-// in, which caps the damage of bad data at the entity that carries it.
 // ---------------------------------------------------------------------------
 namespace {
-
-void pushCommand(std::vector<PLModMenu_DrawCommand>& cmds,
-                 const PLModMenu_DrawCommand& cmd) {
-    const bool finite = std::isfinite(cmd.x) && std::isfinite(cmd.y) &&
-                        std::isfinite(cmd.w) && std::isfinite(cmd.h) &&
-                        std::isfinite(cmd.size);
-    if (finite) cmds.push_back(cmd);
-}
 
 void addRect(std::vector<PLModMenu_DrawCommand>& cmds, float x, float y,
              float w, float h, uint32_t color) {
@@ -466,61 +355,21 @@ void addRect(std::vector<PLModMenu_DrawCommand>& cmds, float x, float y,
     cmd.w = w;
     cmd.h = h;
     cmd.color = color;
-    pushCommand(cmds, cmd);
+    cmds.push_back(cmd);
 }
 
-// The two font ids the launcher's text commands take: the packaged pixel font
-// (registered by core/PixelFont.hpp) and the empty id that means "the
-// launcher's own face", which is the only one with the glyphs and the bidi
-// shaping for a name written outside the pixel font.
-const char* fontIdFor(esp::LabelFont font) {
-    return font == esp::LabelFont::Pixel ? bedrocktools::core::kPixelFontId : "";
-}
-
-// Appends a text label to the batch. The face it is drawn with and the width it
-// comes out at are decided here, in one place, so that the box the launcher lays
-// the text out in and the position it is centered from can never disagree --
-// separately is how a label ends up beside the head instead of above it.
-//
-//   * `x` is the left edge of the label, or -- with `centered` -- the point the
-//     label is centered on, which is what the nametag and the health value use
-//     to sit on the head column;
-//   * the launcher's pixel font is asked for whenever it can draw the text,
-//     because that is the only face whose metrics are known (see
-//     esp::labelFontFor); anything it has no glyphs for goes to the launcher's
-//     default, which shapes it properly instead of drawing boxes for it.
 void addText(std::vector<PLModMenu_DrawCommand>& cmds, const std::string& text,
-             float x, float y, float size, uint32_t color, bool centered = false) {
-    const esp::LabelFont font = esp::labelFontFor(text, s_pixelFontReady);
-    const float width = esp::measureTextWidth(text, size, font);
-
+             float x, float y, float size, uint32_t color) {
     PLModMenu_DrawCommand cmd{};
     cmd.type = PL_DRAW_TEXT;
-    cmd.x = centered ? x - width * 0.5f : x;
+    cmd.x = x;
     cmd.y = y;
-    cmd.w = width;
+    cmd.w = text.size() * size; // approximate width for the overlay hitbox
     cmd.h = size + 3.0f;
     cmd.size = size;
     cmd.color = color;
     cmd.text = text;
-    cmd.fontId = fontIdFor(font);
-    pushCommand(cmds, cmd);
-}
-
-// A HUD line: the launcher reads the start point from x/y and the *delta* to
-// the end point from w/h (the convention the Crosshair module draws its arms
-// with), so this takes both endpoints and converts.
-void addLine(std::vector<PLModMenu_DrawCommand>& cmds, float x0, float y0,
-             float x1, float y1, uint32_t color) {
-    PLModMenu_DrawCommand cmd{};
-    cmd.type = PL_DRAW_LINE;
-    cmd.x = x0;
-    cmd.y = y0;
-    cmd.w = x1 - x0;
-    cmd.h = y1 - y0;
-    cmd.size = kTracerLineWidth;
-    cmd.color = color;
-    pushCommand(cmds, cmd);
+    cmds.push_back(cmd);
 }
 
 // Submits the HUD layer, or drops it when nothing is left to show. Called from
@@ -636,7 +485,9 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
     const AABB selfBox = getActorAABB(localPlayer);
     const Vec3 selfFeet{(selfBox.min.x + selfBox.max.x) * 0.5f, selfBox.min.y,
                         (selfBox.min.z + selfBox.max.z) * 0.5f};
-    const bool selfFeetValid = isUsableBox(selfBox);
+    const bool selfFeetValid =
+        !isDegenerateBox(selfBox) && std::isfinite(selfFeet.x) &&
+        std::isfinite(selfFeet.y) && std::isfinite(selfFeet.z);
 
     // Resolve the dimension's BlockSource once per frame, and only when the
     // occlusion cull is actually wanted (Through Walls off).
@@ -682,10 +533,9 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         boxSegments.reserve(expected * 12);
         if (options.boxFilled) fillQuads.reserve(expected * 6);
     }
-    // The feet-origin tracers (one world-space segment per entity; the
-    // crosshair half rides on the labels instead) and the world-space distance
-    // readouts (a blocky billboard per entity; the longest value, "256.0m", is
-    // six glyphs of at most five rectangles each).
+    // World-space tracers (one segment per entity) and the world-space
+    // distance readouts (a blocky billboard per entity; the longest value,
+    // "256.0m", is six glyphs of at most five rectangles each).
     std::vector<overlay::Segment> tracerSegments;
     std::vector<overlay::Quad> textQuads;
     if (options.tracer) tracerSegments.reserve(kMaxDrawnActors);
@@ -699,7 +549,7 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         ++drawn;
 
         const AABB aabb = getActorAABB(ent);
-        if (!isUsableBox(aabb)) return;
+        if (isDegenerateBox(aabb)) return;
 
         // Occlusion cull (only ever active with Through Walls off, since that
         // is when `region` is resolved, and never for the local player, whose
@@ -718,41 +568,22 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
             }
         }
 
-        // ---- Tracer: a snapline that ends inside the hitbox ----------------
-        // Both origins aim at the same world point -- the center of the
-        // entity's own box -- but they cannot share a render path, because the
-        // origin decides whether the line exists as geometry at all:
-        //
-        //   * Bottom starts at the local player's own feet, so it is handed to
-        //     the game next to the box edges and pinned to the wireframe by the
-        //     very matrices that drew it. Without a usable local box the line
-        //     is skipped: falling back to the camera would move it into the
-        //     degenerate case below and draw nothing at all.
-        //   * Crosshair has to leave the middle of the screen, and a
-        //     world-space segment through the camera lies on a single view ray:
-        //     the game's projection collapses the whole line onto one pixel --
-        //     and puts its near vertex at the eye, where a driver may clip it
-        //     away -- which is exactly the "selecting Crosshair removes the
-        //     tracer" this used to be. It is screen furniture instead: a HUD
-        //     line from the surface center to the projected hitbox (see
-        //     esp::crosshairTracer), so an entity off the edge of the screen
-        //     still gets a line pointing the way.
-        //
+        // ---- Tracer: world-space, ending inside the hitbox ------------------
+        // The segment is handed to the game exactly like the box edges are,
+        // so the game pins its far end to the very center of the hitbox the
+        // wireframe surrounds -- no projection is involved, so nothing can
+        // disagree with the camera while the view moves. The near end is the
+        // render camera (Crosshair origin: the line leaves from the middle
+        // of the screen) or the local player's own feet (Bottom origin),
+        // falling back to the camera while the local box is unavailable.
         // The local player never gets a tracer to itself, and the line stays
-        // hairline either way: a thickness beam would fill the screen where it
-        // starts at (or passes right by) the camera.
-        if (options.tracer && !isSelf) {
-            const Vec3 target = esp::boxCenter(aabb.min, aabb.max);
-            if (options.tracerOrigin == EspModule::TracerOrigin::Crosshair) {
-                const esp::ScreenSegment line =
-                    esp::crosshairTracer(camera, proj, target);
-                if (line.visible) {
-                    addLine(labels, line.x0, line.y0, line.x1, line.y1,
-                            forceOpaqueColor(options.tracerColor));
-                }
-            } else if (meshReady && selfFeetValid) {
-                tracerSegments.push_back({selfFeet, target});
-            }
+        // hairline: a thickness beam would fill the screen where it starts
+        // at (or passes right by) the camera.
+        if (meshReady && options.tracer && !isSelf) {
+            const bool crosshair =
+                options.tracerOrigin == EspModule::TracerOrigin::Crosshair;
+            const Vec3 from = (crosshair || !selfFeetValid) ? camPos : selfFeet;
+            tracerSegments.push_back({from, esp::boxCenter(aabb.min, aabb.max)});
         }
 
         // ---- Distance: world-space, pinned under the entity's feet ----------
@@ -813,25 +644,15 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         }
         float textY = headY - nametagSize - 4.0f;
 
-        // Nametag (players only; the name field is only valid for Player). The
-        // raw field is whatever the game's own font has to make sense of, so it
-        // is cleaned on the way in: the section-sign markup codes and the
-        // invisible format characters a server, a nick add-on or a
-        // right-to-left name bring with them would otherwise be painted
-        // literally, which is what reads as extra characters beside the label
-        // (see esp::sanitizeName).
+        // Nametag (players only; the name field is only valid for Player).
         std::string name;
         if (options.nametag && s_actorIsPlayer && s_actorIsPlayer(ent)) {
-            name = esp::sanitizeName(
-                reinterpret_cast<bedrocktools::sdk::Player*>(ent)->name());
+            name = reinterpret_cast<bedrocktools::sdk::Player*>(ent)->name();
         }
         if (options.nametag && !name.empty()) {
-            // Centered on the head column, on the width the chosen font
-            // measures the cleaned name to (both halves of that are addText's
-            // decision; a byte count used to over-count every multi-byte
-            // character and pull the label off the player it belongs to).
-            addText(labels, name, headX, textY, nametagSize,
-                    forceOpaqueColor(options.nametagColor), /*centered=*/true);
+            const float textW = name.size() * nametagSize * 0.6f;
+            addText(labels, name, headX - textW * 0.5f, textY, nametagSize,
+                    forceOpaqueColor(options.nametagColor));
             textY -= nametagSize + 2.0f;
         }
 
@@ -908,10 +729,8 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
             mesh.drawSegments(screenContext, lineMaterial, camPos, boxRgb, 1.0f,
                               boxSegments, beamHalfWidth);
         }
-        // The feet-origin tracers after the wireframe, hairline only (see
-        // renderActor): the same material as the box edges, so Through Walls
-        // governs them too. The Crosshair origin is not here at all, because a
-        // line through the camera is not something the game can draw.
+        // Tracers after the wireframe, hairline only (see renderActor): the
+        // same material as the box edges, so Through Walls governs them too.
         if (!tracerSegments.empty()) {
             mesh.drawSegments(screenContext, lineMaterial, camPos,
                               forceOpaqueColor(options.tracerColor), 1.0f,
@@ -970,13 +789,6 @@ EspModule::~EspModule() {
 }
 
 void EspModule::onInit() {
-    // The nametag is HUD text, and HUD text is centered on a width the module
-    // has to supply, so the answer only means something for a font whose
-    // metrics are known. The packaged one is the game's own pixel font and is
-    // the only such face, so it is registered here (once per package, shared
-    // with Effect Display) and its availability is what addText consults.
-    s_pixelFontReady = bedrocktools::core::pixelFontAvailable();
-
     const auto resolveFn = [](SignatureId id) { return bedrocktools::memory::resolve(id); };
 
     const uintptr_t aip = resolveFn(SignatureId::ActorIsPlayer);
@@ -1087,18 +899,42 @@ void EspModule::loadConfig(const nlohmann::json& j) {
     box = j.value("box", box);
     boxFilled = j.value("boxFilled", boxFilled);
 
-    // Radio values are read through one helper so a picker that reports the
-    // option's *label* instead of its index still selects it (see radioIndexOf).
     if (j.contains("boxStyle")) {
-        const int style = radioIndexOf(j["boxStyle"], kBoxStyleNames,
-                                        static_cast<int>(BoxStyle::Count));
-        if (style >= 0) boxStyle = static_cast<BoxStyle>(style);
+        const auto& value = j["boxStyle"];
+        if (value.is_string()) {
+            const std::string text = value.get<std::string>();
+            const auto comma = text.find(',');
+            try {
+                const int style = std::stoi(text.substr(0, comma));
+                if (style >= 0 && style < static_cast<int>(BoxStyle::Count)) {
+                    boxStyle = static_cast<BoxStyle>(style);
+                }
+            } catch (...) {}
+        } else if (value.is_number_integer()) {
+            const int style = value.get<int>();
+            if (style >= 0 && style < static_cast<int>(BoxStyle::Count)) {
+                boxStyle = static_cast<BoxStyle>(style);
+            }
+        }
     }
 
     if (j.contains("tracerOrigin")) {
-        const int origin = radioIndexOf(j["tracerOrigin"], kTracerOriginNames,
-                                        static_cast<int>(TracerOrigin::Count));
-        if (origin >= 0) tracerOrigin = static_cast<TracerOrigin>(origin);
+        const auto& value = j["tracerOrigin"];
+        if (value.is_string()) {
+            const std::string text = value.get<std::string>();
+            const auto comma = text.find(',');
+            try {
+                const int origin = std::stoi(text.substr(0, comma));
+                if (origin >= 0 && origin < static_cast<int>(TracerOrigin::Count)) {
+                    tracerOrigin = static_cast<TracerOrigin>(origin);
+                }
+            } catch (...) {}
+        } else if (value.is_number_integer()) {
+            const int origin = value.get<int>();
+            if (origin >= 0 && origin < static_cast<int>(TracerOrigin::Count)) {
+                tracerOrigin = static_cast<TracerOrigin>(origin);
+            }
+        }
     }
 
     tracer = j.value("tracer", tracer);

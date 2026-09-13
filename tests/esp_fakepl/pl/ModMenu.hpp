@@ -52,12 +52,4 @@ HudSurfaceSize getHudSurfaceSize();
 
 void submitDrawCommands(std::string_view moduleId, std::span<const DrawCommand> commands);
 
-// The module registers the packaged pixel font through core/PixelFont.hpp so it
-// can measure the names it centers; the test only needs the call to exist and
-// to report success (what it does with the answer is the point of the check in
-// esp_render_test.cpp).
-inline bool registerFont(std::string_view, std::span<const unsigned char>) {
-    return true;
-}
-
 } // namespace pl::modmenu

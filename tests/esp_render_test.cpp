@@ -29,7 +29,6 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
-#include <filesystem>
 #include <memory>
 #include <new>
 #include <string>
@@ -41,7 +40,6 @@
 #include "bedrocktools/memory/Signatures.hpp"
 #include "bedrocktools/sdk/Offsets.hpp"
 #include "bedrocktools/sdk/Types.hpp"
-#include "core/Runtime.hpp"
 
 namespace {
 
@@ -152,22 +150,6 @@ pl::modmenu::HudSurfaceSize pl::modmenu::getHudSurfaceSize() {
 void pl::modmenu::submitDrawCommands(std::string_view, std::span<const pl::modmenu::DrawCommand> commands) {
     g_commands.assign(commands.begin(), commands.end());
 }
-
-// The module asks the runtime for the package's resource directory, because the
-// nametag font has to be registered before a label may be measured in it (see
-// core/PixelFont.hpp). There is no packaged font on the host, so the answer is
-// the empty path and the module stays on the launcher's own face until a case
-// below switches the module's cached answer by hand.
-namespace bedrocktools::core {
-Runtime& Runtime::get() {
-    static Runtime instance;
-    return instance;
-}
-const std::filesystem::path& Runtime::resourceDirectory() const noexcept {
-    static const std::filesystem::path empty;
-    return empty;
-}
-} // namespace bedrocktools::core
 
 namespace bedrocktools::memory {
 std::uintptr_t resolve(SignatureId id) {
@@ -317,43 +299,12 @@ bool allVerticesBelow(const MeshBatch& batch, float worldY,
                        });
 }
 
-// The HUD lines the module submits (the crosshair-origin tracer). The launcher
-// takes the start point from x/y and the *delta* to the end point from w/h, so
-// the end point of a captured line is (x + w, y + h).
-std::vector<pl::modmenu::DrawCommand> lineCommands() {
-    std::vector<pl::modmenu::DrawCommand> out;
-    for (const auto& cmd : g_commands) {
-        if (cmd.type == pl::modmenu::DrawCommandType::Line) out.push_back(cmd);
-    }
-    return out;
-}
-
-// The HUD text commands, in submission order.
-std::vector<const pl::modmenu::DrawCommand*> textCommands() {
-    std::vector<const pl::modmenu::DrawCommand*> out;
-    for (const auto& cmd : g_commands) {
-        if (cmd.type == pl::modmenu::DrawCommandType::Text) out.push_back(&cmd);
-    }
-    return out;
-}
-
 int textCommandCount() {
     int count = 0;
     for (const auto& cmd : g_commands) {
         if (cmd.type == pl::modmenu::DrawCommandType::Text) ++count;
     }
     return count;
-}
-
-// The HUD text command drawing `text` (the last one wins), or nullptr. Used by
-// the cases that care about how a label was measured rather than that it exists.
-const pl::modmenu::DrawCommand* findText(const std::string& text) {
-    for (auto it = g_commands.rbegin(); it != g_commands.rend(); ++it) {
-        if (it->type == pl::modmenu::DrawCommandType::Text && it->text == text) {
-            return &*it;
-        }
-    }
-    return nullptr;
 }
 
 // The screen-space box is gone; the only 2D rectangle the HUD layer still
@@ -747,12 +698,13 @@ int main() {
     }
 
     // --- Tracers -------------------------------------------------------------
-    // Both origins aim at the world center of the entity's own box, so the
-    // line lands mid-hitbox and cannot slide off while the view moves. Only
-    // the feet origin can be *geometry* though: a world-space segment that
-    // starts at the camera lies on a single view ray, which the game collapses
-    // onto one pixel -- the "selecting Crosshair removes the tracer" this used
-    // to be. The crosshair line is therefore HUD furniture, like the nametags.
+    // The tracer is world-space geometry now, handed to the game with the
+    // box: it ends on the *world* center of the entity's own box, so it
+    // lands mid-hitbox and cannot slide off while the view moves. The near
+    // end is the local player's feet (Bottom) or the camera itself
+    // (Crosshair). The off-axis box below makes a projected anchor disagree
+    // with the world one, so this fails if the line ever goes back to the
+    // HUD projection.
     {
         setCameraRotation(0.0f, 0.0f);
         setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
@@ -760,7 +712,7 @@ int main() {
         esp.tracerOrigin = EspModule::TracerOrigin::Bottom;
         renderFrame();
         check(lineBatchCount() == 2,
-              "the feet-origin tracer is a second line batch the game places");
+              "the tracer is a second line batch the game places (no HUD line)");
         const MeshBatch* tracer = lastLineBatch();
         const Vec3 hitboxCenter{3.0f, 0.9f, 5.0f};
         const Vec3 playerFeet{0.0f, 0.0f, 0.0f};
@@ -768,45 +720,24 @@ int main() {
                   anyVertexCloseTo(tracer->vertices, hitboxCenter, cameraPosition) &&
                   anyVertexCloseTo(tracer->vertices, playerFeet, cameraPosition),
               "the bottom tracer runs from the player's feet to mid-hitbox");
-        check(lineCommands().empty(),
-              "and no HUD line is submitted while the line is geometry");
 
         esp.tracerOrigin = EspModule::TracerOrigin::Crosshair;
         renderFrame();
-        check(lineBatchCount() == 1,
-              "a crosshair tracer is not emitted as a line through the camera");
-        std::vector<pl::modmenu::DrawCommand> lines = lineCommands();
-        check(lines.size() == 1, "the crosshair tracer is a HUD line");
-        if (lines.size() == 1) {
-            const auto& line = lines[0];
-            check(near(line.x, 500.0f) && near(line.y, 500.0f),
-                  "it starts dead on the crosshair, at the middle of the surface");
-            check(near(line.x + line.w, 200.0f, 0.5f) &&
-                      near(line.y + line.h, 572.0f, 0.5f),
-                  "and ends on the hitbox center the projection puts there");
-            check(std::isfinite(line.x) && std::isfinite(line.y) &&
-                      std::isfinite(line.w) && std::isfinite(line.h) &&
-                      line.size > 0.0f,
-                  "with a finite, non-zero stroke the launcher can draw");
-        }
+        tracer = lastLineBatch();
+        check(tracer != nullptr && tracer->vertices.size() == 2 &&
+                  anyVertexCloseTo(tracer->vertices, hitboxCenter, cameraPosition) &&
+                  anyVertexCloseTo(tracer->vertices, cameraPosition, cameraPosition),
+              "the crosshair tracer runs from the camera itself to mid-hitbox");
 
-        // An entity that is already off the surface keeps a snapline pointing
-        // the way: the direction is the information there, so the end is pushed
-        // out to the edge of the screen instead of to a projected point a
-        // thousand pixels out -- and never past it, which is what would hand
-        // the launcher coordinates it rejects the whole batch for.
+        // A snapline keeps pointing at entities that are already off the
+        // surface: the HUD path would have culled them with the labels.
         setMobBox({40.0f, 0.0f, 4.0f}, {41.0f, 1.8f, 5.0f});
         renderFrame();
-        lines = lineCommands();
-        check(lines.size() == 1, "an off-screen entity keeps its crosshair snapline");
-        if (lines.size() == 1) {
-            const float dx = lines[0].x + lines[0].w - 500.0f;
-            const float dy = lines[0].y + lines[0].h - 500.0f;
-            check(lines[0].x + lines[0].w < 500.0f,
-                  "which points east, i.e. left of a south-facing camera");
-            check(std::sqrt(dx * dx + dy * dy) <= 708.0f,
-                  "and stops at the edge of the screen, not at infinity");
-        }
+        tracer = lastLineBatch();
+        check(tracer != nullptr && tracer->vertices.size() == 2 &&
+                  anyVertexCloseTo(tracer->vertices, {40.5f, 0.9f, 4.5f},
+                                   cameraPosition),
+              "an off-screen entity keeps its snapline");
         check(textCommandCount() == 0 && quadBatchCount() == 1,
               "while its HUD furniture is culled, the readout still clips in-world");
         esp.tracer = false;
@@ -827,162 +758,22 @@ int main() {
 
         // Head anchor (3, 1.8, 5) through the first-person camera at
         // (0, 1.62, 0) on the 1000x1000, 90-degree surface: ndc (-0.6, 0.036).
-        // The 14px name sits 4px above it, centered on its own glyph width
-        // ("Steve" is S+e+v+e at 0.6 and a thin t at 0.32 em, so 2.72 em =
-        // 38.08px): x = 200 - 38.08 / 2.
+        // The 14px name sits 4px above it, centered: x = 200 - 42 / 2.
         const pl::modmenu::DrawCommand* nameCmd = nullptr;
         for (const auto& cmd : g_commands) {
             if (cmd.type == pl::modmenu::DrawCommandType::Text && cmd.text == "Steve") {
                 nameCmd = &cmd;
             }
         }
-        check(nameCmd != nullptr && near(nameCmd->x, 180.96f, 0.5f) &&
+        check(nameCmd != nullptr && near(nameCmd->x, 179.0f, 1.0f) &&
                   near(nameCmd->y, 464.0f, 1.0f),
               "the nametag is centered above the head, not the 2D box");
-        check(nameCmd != nullptr && near(nameCmd->w, 38.08f, 0.5f),
-              "and its own measured width is what centers it");
 
         fake::g_actorIsPlayer = false;
         std::destroy_at(nameField);
         renderFrame();
         check(textCommandCount() == 0,
               "without a player name no HUD text is left (the distance is geometry)");
-    }
-
-    // --- The label is measured in the font that draws it -------------------
-    // Centering a nametag means knowing how wide it will come out, and of the
-    // two faces the launcher can draw HUD text with, only one has metrics this
-    // module can know: the packaged pixel font. So the module asks for that face
-    // when it is registered and the name fits inside it, and leaves the text --
-    // and its measurement -- with the launcher's own font otherwise. That is not
-    // only about looks: a script the pixel font has no glyph for is drawn as a
-    // row of replacement boxes, which is the other half of the "extra characters
-    // beside the nametag" report, and the launcher's font is also the only one
-    // that shapes right-to-left names.
-    {
-        setCameraRotation(0.0f, 0.0f);
-        setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
-        auto* nameField = new (mob.data() + Player::mName) std::string("Steve");
-        fake::g_actorIsPlayer = true;
-
-        // No font registered (the state on a host with no package to read it
-        // from): the launcher's own face draws the label and the estimate that
-        // goes with it centers it -- exactly the case above.
-        renderFrame();
-        const pl::modmenu::DrawCommand* nameCmd = findText("Steve");
-        check(nameCmd != nullptr && nameCmd->fontId.empty(),
-              "without the pixel font the label stays on the launcher's own face");
-        check(nameCmd != nullptr && near(nameCmd->w, 38.08f, 0.5f),
-              "measured with the estimate that goes with it");
-
-        // With it, the same name is measured on the font's real cells: 't' is
-        // two thirds of a cell and not the half-ish stroke the estimate charges,
-        // so the 14px name is 39.2 wide. Because the launcher draws the label
-        // with that very font, the centering lands on the head instead of a few
-        // pixels to one side of it.
-        s_pixelFontReady = true;
-        renderFrame();
-        nameCmd = findText("Steve");
-        check(nameCmd != nullptr && nameCmd->fontId == "minecraft",
-              "the pixel font is asked for once the launcher has it");
-        check(nameCmd != nullptr && near(nameCmd->w, 39.2f, 0.01f) &&
-                  near(nameCmd->x, 200.0f - 39.2f * 0.5f, 0.5f),
-              "and the name is centered on the cell widths of that font");
-
-        // A name the pixel font cannot draw does not get it anyway, and neither
-        // does a name that only partly fits: the whole label switches face.
-        std::string arabic;
-        arabic += "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8"; // "لاعب"
-        std::destroy_at(nameField);
-        nameField = new (mob.data() + Player::mName) std::string(arabic + " X");
-        renderFrame();
-        nameCmd = findText(arabic + " X");
-        check(nameCmd != nullptr && nameCmd->fontId.empty(),
-              "a name outside the pixel font keeps the launcher's font");
-        check(nameCmd != nullptr && near(nameCmd->w, (4.0f * 0.6f + 0.3f + 0.6f) * 14.0f, 0.5f),
-              "and is measured in code points on that font's estimate");
-
-        s_pixelFontReady = false;
-        fake::g_actorIsPlayer = false;
-        std::destroy_at(nameField);
-        renderFrame();
-    }
-
-    // --- The nametag shows the name, and only the name ---------------------
-    // The game's own font swallows the section-sign markup a server or a nick
-    // add-on pads a name with, plus the invisible format characters a
-    // right-to-left name arrives wrapped in. A plain HUD font paints them,
-    // which is the "extra characters beside the nametag", and their bytes also
-    // fed the width the label is centered on -- so a two-bytes-per-character
-    // name sat half a label to the left of the head it belongs to.
-    {
-        setCameraRotation(0.0f, 0.0f);
-        setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
-
-        // "§r§a" + the U+200E left-to-right marker + the Arabic name "لاعب".
-        // Every escape ends its own literal: "\xA7a" would swallow the code
-        // character into the escape instead of leaving it to the markup.
-        std::string kRaw;
-        kRaw += "\xC2\xA7";
-        kRaw += "r";
-        kRaw += "\xC2\xA7";
-        kRaw += "a";
-        kRaw += "\xE2\x80\x8E";
-        kRaw += "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8";
-        const std::string kClean = "\xD9\x84\xD8\xA7\xD9\x84\xD8\xA8";
-
-        auto* nameField = new (mob.data() + Player::mName) std::string(kRaw);
-        fake::g_actorIsPlayer = true;
-        renderFrame();
-
-        const pl::modmenu::DrawCommand* nameCmd = nullptr;
-        for (const auto& cmd : g_commands) {
-            if (cmd.type == pl::modmenu::DrawCommandType::Text) nameCmd = &cmd;
-        }
-        check(nameCmd != nullptr && nameCmd->text == kClean,
-              "the markup codes and the bidi marker never reach the label");
-        // Four glyphs of 0.6 em at 14px is 33.6px of name, centered on the head
-        // column at x = 200. Counting the eight bytes instead would have asked
-        // the launcher for a 112px-wide label and drawn it from x = 144.
-        check(nameCmd != nullptr && near(nameCmd->x, 200.0f - 33.6f * 0.5f, 0.5f),
-              "a multi-byte name is centered on its glyphs, not its bytes");
-        check(nameCmd != nullptr && near(nameCmd->w, 33.6f, 0.5f),
-              "and its reported width is the same measurement");
-
-        // A name that is nothing but markup has no label at all -- an empty
-        // string would otherwise reserve a line of the stack above the box.
-        std::destroy_at(nameField);
-        std::string codesOnly;
-        codesOnly += "\xC2\xA7";
-        codesOnly += "r";
-        codesOnly += "\xC2\xA7";
-        codesOnly += "l";
-        codesOnly += "   ";
-        new (mob.data() + Player::mName) std::string(codesOnly);
-        renderFrame();
-        check(textCommandCount() == 0, "a name of nothing but codes draws nothing");
-
-        std::destroy_at(nameField);
-        fake::g_actorIsPlayer = false;
-    }
-
-    // --- One broken actor cannot take the frame's overlay down -------------
-    // The launcher validates a module's whole batch before it draws any of it,
-    // so a non-finite coordinate anywhere in it used to cost every nametag on
-    // screen -- which is what made the labels blink out around corrupted or
-    // half-loaded actors. Bad data now loses its own overlay instead.
-    {
-        PlayerNameGuard name(mob.data(), "Steve");
-        const float kNan = std::nanf("");
-        setMobBox({kNan, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
-        renderFrame();
-        check(g_batches.empty() && g_commands.empty(),
-              "an actor whose collision box is not a number draws nothing");
-
-        setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
-        renderFrame();
-        check(textCommandCount() == 1 && !g_batches.empty(),
-              "and the next frame's nametag is there again");
     }
 
     // --- Handendness of the label anchor ----------------------------------
@@ -1185,38 +976,6 @@ int main() {
         EspModule fresh;
         fresh.loadConfig(empty);
         check(fresh.throughWalls, "a config without Through Walls gets the new default");
-        check(near(fresh.fov, 70.0f),
-              "and the label projection starts at Bedrock's own default FOV");
-
-        // Radio values. The launcher's picker may report the index, the index
-        // with the option list appended (what saveConfig writes), or the label
-        // on its own -- and every one of those has to select the option, or
-        // choosing "Crosshair" silently leaves the module on the old origin.
-        nlohmann::json bareIndex;
-        bareIndex["tracerOrigin"] = "1";
-        bareIndex["boxStyle"] = 1;
-        EspModule byIndex;
-        byIndex.loadConfig(bareIndex);
-        check(byIndex.tracerOrigin == EspModule::TracerOrigin::Crosshair &&
-                  byIndex.boxStyle == EspModule::BoxStyle::Corner,
-              "a bare radio index selects its option, as text or as a number");
-
-        nlohmann::json byLabel;
-        byLabel["tracerOrigin"] = "Crosshair";
-        byLabel["boxStyle"] = "corner";
-        EspModule labelPicked;
-        labelPicked.loadConfig(byLabel);
-        check(labelPicked.tracerOrigin == EspModule::TracerOrigin::Crosshair &&
-                  labelPicked.boxStyle == EspModule::BoxStyle::Corner,
-              "an option picked by its label is selected too, case aside");
-
-        nlohmann::json unknown;
-        unknown["tracerOrigin"] = "Over my shoulder";
-        EspModule keepsCurrent;
-        keepsCurrent.tracerOrigin = EspModule::TracerOrigin::Bottom;
-        keepsCurrent.loadConfig(unknown);
-        check(keepsCurrent.tracerOrigin == EspModule::TracerOrigin::Bottom,
-              "a value that names no option keeps the one the module has");
     }
 
     std::printf("\n%d failure(s)\n", g_failures);
