@@ -3,7 +3,6 @@
 #include "hud/effectdisplay.hpp"
 #include "visual/hitbox.hpp"
 #include "visual/blockoutline.hpp"
-#include "visual/esp.hpp"
 #include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
 #include "misc/commandhotkey.hpp"
@@ -71,7 +70,6 @@ void registerAllModules() {
     registry.emplace<EffectDisplayModule>();
     registry.emplace<HitboxModule>();
     registry.emplace<BlockOutlineModule>();
-    registry.emplace<EspModule>();
     registry.emplace<CustomCapesModule>();
     registry.emplace<CommentKey>();
     registry.emplace<CommandHotkeyModule>();
