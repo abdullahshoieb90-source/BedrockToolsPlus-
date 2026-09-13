@@ -224,49 +224,6 @@ inline ScreenBox projectBox(const Camera& cam, const SurfaceProjection& proj,
     return out;
 }
 
-// Center of a world box: the middle of the hitbox. A tracer line has to end
-// here -- on the entity's own box -- and not on the 2D box's middle, which is
-// a screen-space average of eight projected corners that perspective shifts
-// away from the hitbox (the projected box is asymmetric, so its middle is not
-// where the box's middle lands).
-inline bedrocktools::sdk::Vec3 boxCenter(const bedrocktools::sdk::Vec3& boxMin,
-                                         const bedrocktools::sdk::Vec3& boxMax) {
-    return {(boxMin.x + boxMax.x) * 0.5f, (boxMin.y + boxMax.y) * 0.5f,
-            (boxMin.z + boxMax.z) * 0.5f};
-}
-
-// Projects that center anchor to surface coordinates. Returns false when the
-// anchor is at or behind the near plane (an entity straddling the camera),
-// in which case the caller falls back to the 2D box so the line still draws.
-inline bool projectBoxCenter(const Camera& cam, const SurfaceProjection& proj,
-                             const bedrocktools::sdk::Vec3& boxMin,
-                             const bedrocktools::sdk::Vec3& boxMax,
-                             float& outX, float& outY) {
-    return project(cam, proj, boxCenter(boxMin, boxMax), outX, outY);
-}
-
-// Top-center of a world box: the head point of the hitbox. The nametag -- and
-// the label column above the box -- is centered here instead of on the 2D
-// box's top-middle, which is a screen-space average of eight projected
-// corners that perspective shifts away from the head (sideways once off-axis,
-// and above the head even when dead ahead, because the nearest top corner
-// wins the min/max).
-inline bedrocktools::sdk::Vec3 boxTopCenter(const bedrocktools::sdk::Vec3& boxMin,
-                                            const bedrocktools::sdk::Vec3& boxMax) {
-    return {(boxMin.x + boxMax.x) * 0.5f, boxMax.y,
-            (boxMin.z + boxMax.z) * 0.5f};
-}
-
-// Projects that head anchor to surface coordinates. Returns false when the
-// anchor is at or behind the near plane (an entity straddling the camera),
-// in which case the caller falls back to the 2D box.
-inline bool projectBoxTopCenter(const Camera& cam, const SurfaceProjection& proj,
-                                const bedrocktools::sdk::Vec3& boxMin,
-                                const bedrocktools::sdk::Vec3& boxMax,
-                                float& outX, float& outY) {
-    return project(cam, proj, boxTopCenter(boxMin, boxMax), outX, outY);
-}
-
 // ---------------------------------------------------------------------------
 // World-space geometry (the half that must never drift).
 // ---------------------------------------------------------------------------

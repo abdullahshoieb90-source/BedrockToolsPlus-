@@ -88,28 +88,17 @@ public:
     float rgbSpeed = 0.3f; // full hue cycles per second (0.05 .. 1)
 
     // ---- Tracers -----------------------------------------------------------
-    // The line ends on the projected center of the entity's own hitbox (the
-    // middle of its AABB), so it lands in the middle of the wireframe the
-    // game drew instead of floating next to it.
     bool tracer = false;
     TracerOrigin tracerOrigin = TracerOrigin::Bottom;
     uint32_t tracerColor = 0xFFFFFFFF;
 
     // ---- Nametag -----------------------------------------------------------
-    // Centered above the projected head point (top-center of the player's
-    // AABB), together with the health stack; the distance readout hangs
-    // under the box on the same head column.
     bool nametag = true;
     uint32_t nametagColor = 0xFFFFFFFF;
     float nametagScale = 1.0f; // 0.5 .. 2 (multiplier on the base 14px text)
 
     // ---- Health / Distance ---------------------------------------------------
     bool health = true;
-    // The single distance readout: feet-to-feet between the local player and
-    // the entity (in blocks), measured from the actors' collision boxes
-    // rather than the render camera, so it is identical in first and third
-    // person. Hidden while the local box is unavailable; there is no second,
-    // camera-based measurement.
     bool distance = true;
 
     // ---- HUD label projection ----------------------------------------------
