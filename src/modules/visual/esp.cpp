@@ -2,11 +2,13 @@
 
 #include "../ModuleRegistry.hpp"
 #include "esp_geometry.hpp"
+#include "core/GameHooks.hpp"
 #include "core/memory/Hooks.hpp"
-#include "overlay_mesh.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
+#include <bedrocktools/sdk/client/ClientInstance.hpp>
+#include <bedrocktools/sdk/render/LevelRenderer.hpp>
 #include <bedrocktools/sdk/world/Actor.hpp>
 #include <pl/ModMenu.hpp>
 
@@ -16,7 +18,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <iterator>
 #include <string>
 #include <vector>
 
@@ -28,11 +29,8 @@ EspModule* g_espMod = nullptr;
 namespace {
 
 using bedrocktools::memory::SignatureId;
-using bedrocktools::sdk::AABB;
 using bedrocktools::sdk::Vec2;
 using bedrocktools::sdk::Vec3;
-
-namespace offsets = bedrocktools::sdk::offsets;
 
 // ---------------------------------------------------------------------------
 // Resolved game functions (same calling conventions the Hitbox module uses).
@@ -59,8 +57,6 @@ struct BlockPosI {
 };
 typedef bool (*BlockSource_isSolidBlockingBlock_t)(void* region, const BlockPosI& pos);
 
-using RenderLevelFn = void (*)(void* levelRenderer, void* screenContext, void* renderParams);
-
 // ---------------------------------------------------------------------------
 // Module-wide state (file scope, like Hitbox / Crosshair).
 // ---------------------------------------------------------------------------
@@ -68,16 +64,6 @@ Actor_isPlayer_t s_actorIsPlayer = nullptr;
 Actor_isInvisible_t s_actorIsInvisible = nullptr;
 Actor_fetchNearbyActorsSorted_t s_actorFetchNearby = nullptr;
 BlockSource_isSolidBlockingBlock_t s_isSolidBlockingBlock = nullptr;
-
-// The world-space half of the overlay: the game's Tessellator entry points,
-// filled in once per frame with the ScreenContext's tessellator handle.
-overlay::Mesh s_mesh;
-std::uintptr_t s_renderMaterialGroup = 0;
-overlay::MaterialPtr s_lineMaterial;         // selection_box: crisp wire
-overlay::MaterialPtr s_faceMaterial;         // vertex-color fill for the box faces
-overlay::MaterialPtr s_throughWallsMaterial; // no depth test at all
-
-RenderLevelFn s_renderLevelOriginal = nullptr;
 
 // Local player pointer, handed over from the tick thread (LocalPlayerTickEvent)
 // and read on the render thread. Being a plain pointer handed through an
@@ -90,25 +76,6 @@ int (*_getPerspective_orig)(void*) = nullptr;
 std::atomic<int> s_perspective{0};
 std::atomic<bool> s_perspectiveKnown{false};
 bool s_perspectiveHooked = false;
-
-// The overlay is published from the render hook, which also runs on the render
-// thread (before the frame is swapped), so these two flags are only ever read
-// and written in order: renderLevel first, then the swap that drives onFrame.
-// s_overlayRanThisFrame records "the hook took care of the HUD labels this
-// frame"; s_overlayLabelsVisible remembers whether anything is actually on
-// screen so the clear is submitted once instead of every menu frame.
-std::atomic<bool> s_overlayRanThisFrame{false};
-std::atomic<bool> s_overlayLabelsVisible{false};
-
-// How far the corner-bracket style keeps each box edge (fraction of the
-// box's shortest side, matching what the old 2D corner box looked like).
-constexpr float kCornerBracketFraction = 0.33f;
-
-// Maximum number of actors drawn per frame. fetchNearbyActorsSorted hands the
-// list back nearest-first, so a cap keeps the worst case bounded on a busy
-// server (a 256-block Range with a mob farm in it would otherwise push tens of
-// thousands of box edges through the tessellator every frame).
-constexpr int kMaxDrawnActors = 64;
 
 int getPerspectiveHook(void* _this) {
     int result = 0;
@@ -146,19 +113,23 @@ double nowSeconds() {
     return duration<double>(steady_clock::now().time_since_epoch()).count();
 }
 
+struct AABB {
+    Vec3 min;
+    Vec3 max;
+};
+
 bool hasCategory(void* actor, uint32_t categoryBit) {
     if (!actor) return false;
     return reinterpret_cast<bedrocktools::sdk::Actor*>(actor)->hasCategory(categoryBit);
 }
 
 AABB getActorAABB(void* actor) {
+    AABB aabb = {{0, 0, 0}, {0, 0, 0}};
     auto* sdkActor = reinterpret_cast<bedrocktools::sdk::Actor*>(actor);
-    return sdkActor->bounds();
-}
-
-bool isDegenerateBox(const AABB& aabb) {
-    return aabb.min.x == 0.0f && aabb.min.y == 0.0f && aabb.min.z == 0.0f &&
-           aabb.max.x == 0.0f && aabb.max.y == 0.0f && aabb.max.z == 0.0f;
+    const bedrocktools::sdk::AABB bounds = sdkActor->bounds();
+    aabb.min = bounds.min;
+    aabb.max = bounds.max;
+    return aabb;
 }
 
 Vec2 getActorRotation(void* actor) {
@@ -166,9 +137,8 @@ Vec2 getActorRotation(void* actor) {
 }
 
 // ---------------------------------------------------------------------------
-// Wall occlusion (Amanatides & Woo voxel traversal), mirrored from Hitbox. Only
-// needed while Through Walls is off: with it on, nothing is culled and the
-// overlay material ignores depth, so terrain never hides an actor.
+// Wall occlusion (Amanatides & Woo voxel traversal), mirrored from Hitbox so
+// the ESP honors solid terrain the same way.
 // ---------------------------------------------------------------------------
 bool rayHitsSolid(void* region, float ox, float oy, float oz,
                   float tx, float ty, float tz) {
@@ -220,8 +190,6 @@ bool rayHitsSolid(void* region, float ox, float oy, float oz,
             tMaxZ += tDeltaZ;
         }
 
-        // Reached the voxel holding the target point: the target itself is
-        // never treated as blocking (a mob hugging a wall stays visible).
         if (x == ex && y == ey && z == ez) break;
 
         BlockPosI bp{x, y, z};
@@ -245,17 +213,6 @@ bool isOccluded(void* region, const Vec3& cam, const AABB& aabb) {
     return true;
 }
 
-// The dimension's BlockSource, which the occlusion test walks.
-void* blockSourceFor(void* actor) {
-    if (!s_isSolidBlockingBlock || !actor) return nullptr;
-    const uintptr_t dimension = *reinterpret_cast<uintptr_t*>(
-        reinterpret_cast<uintptr_t>(actor) + offsets::Actor::mDimension);
-    if (dimension < 0x1000) return nullptr;
-    const uintptr_t blockSource = *reinterpret_cast<uintptr_t*>(
-        dimension + offsets::Dimension::mBlockSource);
-    return blockSource >= 0x1000 ? reinterpret_cast<void*>(blockSource) : nullptr;
-}
-
 // ---------------------------------------------------------------------------
 // Health reading. Mob::mHealthAttribute points at an AttributeInstance whose
 // mCurrentValue / mMaxValue floats are read directly; non-living actors have
@@ -265,20 +222,20 @@ float readHealth(void* actor, float& outMax) {
     outMax = 0.0f;
     if (!actor) return -1.0f;
     const uintptr_t base = reinterpret_cast<uintptr_t>(actor);
-    void* attribute = *reinterpret_cast<void**>(base + offsets::Mob::mHealthAttribute);
+    void* attribute = *reinterpret_cast<void**>(base + bedrocktools::sdk::offsets::Mob::mHealthAttribute);
     // Only the Mob class owns a health attribute; callers gate this on the
     // living-entity categories, but keep the pointer range check anyway so a
     // stray non-null field never turns into an out-of-bounds read.
     if (!attribute || reinterpret_cast<uintptr_t>(attribute) < 0x1000) return -1.0f;
 
     const float current = *reinterpret_cast<float*>(
-        reinterpret_cast<uintptr_t>(attribute) + offsets::AttributeInstance::mCurrentValue);
+        reinterpret_cast<uintptr_t>(attribute) + bedrocktools::sdk::offsets::AttributeInstance::mCurrentValue);
     // Best-effort maximum: AttributeInstance stores mCurrentValue, mMinValue
     // and mMaxValue back-to-back, but only mCurrentValue is in the public
     // offsets table. Validate the candidate max and fall back to the current
     // value (full bar) when it reads back degenerate.
     const float maximum = *reinterpret_cast<float*>(
-        reinterpret_cast<uintptr_t>(attribute) + offsets::AttributeInstance::mCurrentValue + 8);
+        reinterpret_cast<uintptr_t>(attribute) + bedrocktools::sdk::offsets::AttributeInstance::mCurrentValue + 8);
     if (std::isfinite(current) && std::isfinite(maximum) && maximum > 0.0f) {
         outMax = (maximum >= current) ? maximum : current;
     } else {
@@ -288,44 +245,9 @@ float readHealth(void* actor, float& outMax) {
 }
 
 // ---------------------------------------------------------------------------
-// Render materials. selection_box is the wire the block highlight uses; a
-// vertex-color fill keeps the filled box solid instead of washing it out; and
-// the through-walls pass needs a material whose shader never looks at the
-// depth buffer, otherwise "through walls" would only be true for the cull and
-// the terrain would still clip the geometry.
-// ---------------------------------------------------------------------------
-void ensureMaterials() {
-    if (!s_renderMaterialGroup) return;
-
-    if (!s_lineMaterial) {
-        s_lineMaterial = overlay::getMaterial(s_renderMaterialGroup, "selection_box");
-    }
-
-    if (!s_faceMaterial) {
-        static const char* const kFillNames[] = {
-            "ui_fill_color",
-            "ui_textured_and_glcolor",
-            "debug_filled_box",
-            "selection_box",
-        };
-        s_faceMaterial = overlay::getFirstMaterial(
-            s_renderMaterialGroup, kFillNames, std::size(kFillNames));
-    }
-
-    if (!s_throughWallsMaterial) {
-        static const char* const kNoDepthNames[] = {
-            "ui_fill_color",
-            "ui_textured_and_glcolor",
-        };
-        s_throughWallsMaterial = overlay::getFirstMaterial(
-            s_renderMaterialGroup, kNoDepthNames, std::size(kNoDepthNames));
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Radio label tables (indices must match the enums in esp.hpp).
 // ---------------------------------------------------------------------------
-const char* const kBoxStyleNames[] = {"Box", "Corner"};
+const char* const kBoxStyleNames[] = {"2D", "Corner"};
 const char* const kTracerOriginNames[] = {"Bottom", "Crosshair"};
 
 static_assert(sizeof(kBoxStyleNames) / sizeof(kBoxStyleNames[0]) ==
@@ -338,7 +260,7 @@ static_assert(sizeof(kTracerOriginNames) / sizeof(kTracerOriginNames[0]) ==
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Draw-command helpers for the HUD layer (operate on the caller's list).
+// Draw-command helpers (operate on the caller's command list).
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -381,346 +303,13 @@ void addText(std::vector<PLModMenu_DrawCommand>& cmds, const std::string& text,
     cmds.push_back(cmd);
 }
 
-// Submits the HUD layer, or drops it when nothing is left to show. Called from
-// the render hook (same frame as the geometry) and from every early-out so a
-// stale overlay never hangs on screen.
-void publishLabels(std::vector<PLModMenu_DrawCommand>& labels) {
-    if (!g_espMod) return;
-    submitDrawCommands(g_espMod->moduleId, labels);
-    s_overlayLabelsVisible.store(!labels.empty(), std::memory_order_relaxed);
-}
-
-void clearLabels() {
-    if (!g_espMod) return;
-    if (s_overlayLabelsVisible.exchange(false, std::memory_order_relaxed)) {
-        submitDrawCommands(g_espMod->moduleId, std::vector<PLModMenu_DrawCommand>{});
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The overlay itself: world-space geometry for the boxes, plus the screen-space
-// labels the HUD layer has to draw. Runs inside LevelRenderer::renderLevel, so
-// camPos is the exact camera the level is being rendered with.
-// ---------------------------------------------------------------------------
-void drawWorldOverlay(void* levelRenderer, void* screenContext,
-                      std::vector<PLModMenu_DrawCommand>& labels) {
-    if (!g_espMod || !g_espMod->enabled) return;
-    const EspModule& options = *g_espMod;
-
-    void* localPlayer = g_localPlayer.load(std::memory_order_acquire);
-    if (!localPlayer || !s_actorFetchNearby) return;
-    if (!levelRenderer || reinterpret_cast<uintptr_t>(levelRenderer) < 0x1000) return;
-    if (!screenContext || reinterpret_cast<uintptr_t>(screenContext) < 0x1000) return;
-
-    const uintptr_t rendererAddress = reinterpret_cast<uintptr_t>(levelRenderer);
-    const uintptr_t playerRenderer = *reinterpret_cast<uintptr_t*>(
-        rendererAddress + offsets::LevelRenderer::mLevelRendererPlayer);
-    if (playerRenderer < 0x1000) return;
-
-    // Camera position from the renderer the game is filling in right now.
-    const Vec3 camPos = *reinterpret_cast<const Vec3*>(
-        playerRenderer + offsets::LevelRendererPlayer::mCamPos);
-    if (!std::isfinite(camPos.x) || !std::isfinite(camPos.y) || !std::isfinite(camPos.z)) return;
-
-    // ---- world-space half: tessellator + materials ------------------------
-    const uintptr_t tessellatorAddress = *reinterpret_cast<uintptr_t*>(
-        reinterpret_cast<uintptr_t>(screenContext) + offsets::ScreenContext::mTessellator);
-    overlay::Mesh mesh = s_mesh;
-    mesh.tessellator =
-        tessellatorAddress >= 0x1000 ? reinterpret_cast<void*>(tessellatorAddress) : nullptr;
-
-    ensureMaterials();
-    void* const embeddedOverlayMaterial = reinterpret_cast<void*>(
-        playerRenderer + offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
-
-    void* lineMaterial = nullptr;
-    void* faceMaterial = nullptr;
-    if (options.throughWalls) {
-        // Same material for the wire and the faces so their occlusion agrees,
-        // and no depth test means walls never clip either of them.
-        void* const noDepth =
-            s_throughWallsMaterial ? static_cast<void*>(&s_throughWallsMaterial)
-                                   : embeddedOverlayMaterial;
-        lineMaterial = noDepth;
-        faceMaterial = noDepth;
-    } else {
-        lineMaterial = s_lineMaterial ? static_cast<void*>(&s_lineMaterial)
-                                      : embeddedOverlayMaterial;
-        faceMaterial = embeddedOverlayMaterial;
-    }
-
-    // The renderer multiplies the vertex colors by ScreenContext::mColorHolder,
-    // so the overlay has to override it for its own draws and restore it
-    // afterwards (exactly what Hitbox and Block Outline do). Without a color
-    // holder the world-space half is skipped rather than drawn in the wrong
-    // tint; the labels do not depend on it and stay up.
-    float* colorHolder = nullptr;
-    const uintptr_t colorHolderAddress = *reinterpret_cast<uintptr_t*>(
-        reinterpret_cast<uintptr_t>(screenContext) + offsets::ScreenContext::mColorHolder);
-    if (colorHolderAddress >= 0x1000) {
-        colorHolder = reinterpret_cast<float*>(colorHolderAddress);
-    }
-    bool meshReady = mesh.ready() && colorHolder != nullptr;
-    float savedColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    if (meshReady) {
-        savedColor[0] = colorHolder[0];
-        savedColor[1] = colorHolder[1];
-        savedColor[2] = colorHolder[2];
-        savedColor[3] = colorHolder[3];
-        colorHolder[0] = 1.0f;
-        colorHolder[1] = 1.0f;
-        colorHolder[2] = 1.0f;
-        colorHolder[3] = 1.0f;
-    }
-
-    // ---- screen-space half: the HUD layer's projection --------------------
-    const Vec2 camRot = getActorRotation(localPlayer);
-    const esp::Camera camera = esp::computeCamera(camPos, camRot);
-    const pl::modmenu::HudSurfaceSize surface = pl::modmenu::getHudSurfaceSize();
-    const esp::SurfaceProjection proj =
-        esp::makeProjection(surface.width, surface.height, options.fov);
-    // Off-screen clamp for projections: an entity straddling the camera plane
-    // projects far outside the surface, and keeping the coordinates to a few
-    // screen sizes keeps the launcher's draw commands finite.
-    const float boxLimit = std::max(proj.width, proj.height) * 4.0f;
-
-    // Resolve the dimension's BlockSource once per frame, and only when the
-    // occlusion cull is actually wanted (Through Walls off).
-    void* region = options.throughWalls ? nullptr : blockSourceFor(localPlayer);
-
-    // Fetch nearby actors (radius = configured range).
-    const float radius = std::clamp(options.range, 8.0f, 256.0f);
-    Vec3 extent = {radius, radius, radius};
-    const ActorVec actors = s_actorFetchNearby(localPlayer, &extent, 1);
-
-    // Resolve the box color once per frame (RGB animation wins over boxColor).
-    uint32_t boxRgb;
-    if (options.rgb) {
-        const float speed = std::clamp(options.rgbSpeed, 0.05f, 1.0f);
-        float hue = std::fmod(static_cast<float>(nowSeconds()) * speed * 360.0f, 360.0f);
-        if (hue < 0.0f) hue += 360.0f;
-        boxRgb = hsvToRgb(hue) | 0xFF000000u;
-    } else {
-        boxRgb = forceOpaqueColor(options.boxColor);
-    }
-
-    // Menu thickness slider -> world-space half width. 1.0 (or lower) keeps the
-    // game's hairline edges; above that every edge becomes a real beam, because
-    // GL line width is ignored by nearly every mobile GLES driver. Same mapping
-    // and scale as the Hitbox module, so the two sliders agree.
-    const float thickness = std::clamp(options.boxThickness, 1.0f, 20.0f);
-    const float beamHalfWidth =
-        (thickness > 1.05f && meshReady) ? thickness * 0.01f * 0.5f : 0.0f;
-    const float labelThickness = std::clamp(options.boxThickness, 0.5f, 20.0f);
-
-    const float nametagSize = std::clamp(options.nametagScale, 0.5f, 2.0f) * 14.0f;
-    const float subSize = nametagSize * 0.8f;
-
-    // First-person camera check for the local-player ESP. Until the game has
-    // reported a perspective value, stay conservative and hide the self ESP
-    // (the camera is almost always first person right after launch).
-    const bool thirdPerson = s_perspectiveKnown.load(std::memory_order_relaxed) &&
-                             s_perspective.load(std::memory_order_relaxed) != 0;
-
-    std::vector<overlay::Segment> boxSegments;
-    std::vector<overlay::Quad> fillQuads;
-    if (options.box) {
-        const std::size_t expected = static_cast<std::size_t>(kMaxDrawnActors);
-        boxSegments.reserve(expected * 12);
-        if (options.boxFilled) fillQuads.reserve(expected * 6);
-    }
-
-    int drawn = 0;
-    auto renderActor = [&](void* ent, bool isSelf) {
-        if (!ent) return;
-        ++drawn;
-
-        const AABB aabb = getActorAABB(ent);
-        if (isDegenerateBox(aabb)) return;
-
-        // Occlusion cull (only ever active with Through Walls off, since that
-        // is when `region` is resolved, and never for the local player, whose
-        // camera often sits inside geometry in third person).
-        if (!isSelf && region && isOccluded(region, camPos, aabb)) return;
-
-        // ---- the box: world-space geometry, placed by the game --------------
-        if (meshReady && options.box && lineMaterial) {
-            if (options.boxStyle == EspModule::BoxStyle::Corner) {
-                esp::world::addBoxCorners(boxSegments, aabb, kCornerBracketFraction);
-            } else {
-                esp::world::addBoxEdges(boxSegments, aabb);
-            }
-            if (options.boxFilled && faceMaterial) {
-                esp::world::addBoxFaces(fillQuads, aabb);
-            }
-        }
-
-        // ---- everything below is HUD furniture, anchored on the box ---------
-        const esp::ScreenBox screen =
-            esp::projectBox(camera, proj, aabb.min, aabb.max, boxLimit);
-        if (!screen.visible) return;
-
-        // Nothing to draw once the box has slid completely off the surface.
-        if (screen.maxX < 0.0f || screen.minX > proj.width ||
-            screen.maxY < 0.0f || screen.minY > proj.height) {
-            return;
-        }
-
-        const float boxLeft = screen.minX;
-        const float boxRight = screen.maxX;
-        const float boxTop = screen.minY;
-        const float boxBottom = screen.maxY;
-        const float boxW = boxRight - boxLeft;
-        const float centerX = (boxLeft + boxRight) * 0.5f;
-
-        // Distance from the camera to the entity center (blocks).
-        const float dist = std::sqrt(
-            (camPos.x - (aabb.min.x + aabb.max.x) * 0.5f) * (camPos.x - (aabb.min.x + aabb.max.x) * 0.5f) +
-            (camPos.y - (aabb.min.y + aabb.max.y) * 0.5f) * (camPos.y - (aabb.min.y + aabb.max.y) * 0.5f) +
-            (camPos.z - (aabb.min.z + aabb.max.z) * 0.5f) * (camPos.z - (aabb.min.z + aabb.max.z) * 0.5f));
-
-        // ---- Tracer --------------------------------------------------------
-        if (options.tracer) {
-            const float originX = proj.width * 0.5f;
-            const float originY = (options.tracerOrigin == EspModule::TracerOrigin::Crosshair)
-                                      ? proj.height * 0.5f
-                                      : proj.height;
-            addLine(labels, originX, originY, centerX, boxBottom,
-                    labelThickness * 0.75f, forceOpaqueColor(options.tracerColor));
-        }
-
-        // ---- Text stack above the box -------------------------------------
-        float textY = boxTop - nametagSize - 4.0f;
-
-        // Nametag (players only; the name field is only valid for Player).
-        std::string name;
-        if (options.nametag && s_actorIsPlayer && s_actorIsPlayer(ent)) {
-            name = reinterpret_cast<bedrocktools::sdk::Player*>(ent)->name();
-        }
-        if (options.nametag && !name.empty()) {
-            const float textW = name.size() * nametagSize * 0.6f;
-            addText(labels, name, centerX - textW * 0.5f, textY, nametagSize,
-                    forceOpaqueColor(options.nametagColor));
-            textY -= nametagSize + 2.0f;
-        }
-
-        // Health (living entities only: players + mobs own a health attribute).
-        const bool living = (s_actorIsPlayer && s_actorIsPlayer(ent)) ||
-                            hasCategory(ent, offsets::ActorCategories::IsMob);
-        if (options.health && living) {
-            float maxHealth = 0.0f;
-            const float current = readHealth(ent, maxHealth);
-            if (current >= 0.0f && std::isfinite(current)) {
-                const float fraction = std::clamp(current / (maxHealth > 0.0f ? maxHealth : current),
-                                                   0.0f, 1.0f);
-
-                const float barW = std::max(boxW, 20.0f);
-                const float barH = 4.0f;
-                const float barY = textY + subSize - barH; // place bar under the label
-
-                // Track + fill.
-                addRect(labels, centerX - barW * 0.5f, barY, barW, barH, 0x80000000u);
-                const uint32_t fillColor = fraction > 0.5f   ? 0xFF22C55Eu
-                                           : fraction > 0.25f ? 0xFFEAB308u
-                                                              : 0xFFEF4444u;
-                addRect(labels, centerX - barW * 0.5f, barY, barW * fraction, barH, fillColor);
-
-                char buffer[24];
-                std::snprintf(buffer, sizeof(buffer), "%.0f", current);
-                addText(labels, buffer, centerX - barW * 0.5f, barY - subSize - 2.0f,
-                        subSize, forceOpaqueColor(options.nametagColor));
-                textY = barY - subSize - 4.0f;
-            }
-        }
-
-        // Distance.
-        if (options.distance) {
-            char buffer[24];
-            std::snprintf(buffer, sizeof(buffer), "%.1fm", dist);
-            addText(labels, buffer, centerX - 16.0f, textY, subSize,
-                    forceOpaqueColor(options.nametagColor));
-        }
-    };
-
-    // Local player (third person only).
-    if (options.showLocalPlayer && thirdPerson) {
-        renderActor(localPlayer, true);
-    }
-
-    // Nearby actors, nearest first (that is the order the game's fetch sorts
-    // them in), so the per-frame cap drops the far ones instead of the actors
-    // the player is actually looking at.
-    if (actors.begin && actors.end) {
-        for (DistanceSortedActor* it = actors.begin;
-             it < actors.end && drawn < kMaxDrawnActors; ++it) {
-            void* ent = it->mActor;
-            if (!ent || ent == localPlayer) continue;
-
-            bool isPlayer = false;
-            if (s_actorIsPlayer) isPlayer = s_actorIsPlayer(ent);
-
-            if (isPlayer) {
-                if (!options.showPlayers) continue;
-            } else if (hasCategory(ent, offsets::ActorCategories::IsMob)) {
-                if (!options.showMobs) continue;
-            } else {
-                if (!options.showItems) continue;
-            }
-
-            if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
-
-            renderActor(ent, false);
-        }
-    }
-
-    // ---- flush the world-space half ---------------------------------------
-    if (meshReady && lineMaterial) {
-        // Faces first so the wireframe stays readable on top of the fill.
-        if (options.box && options.boxFilled && faceMaterial && !fillQuads.empty()) {
-            mesh.drawQuads(screenContext, faceMaterial, camPos,
-                           forceOpaqueColor(options.boxFilledColor),
-                           std::clamp(options.boxFilledOpacity, 0.0f, 1.0f), fillQuads);
-        }
-        if (options.box && !boxSegments.empty()) {
-            mesh.drawSegments(screenContext, lineMaterial, camPos, boxRgb, 1.0f,
-                              boxSegments, beamHalfWidth);
-        }
-    }
-
-    // Only the mesh pass touched the color holder; restoring it unconditionally
-    // would rewrite a value the module never read.
-    if (meshReady && colorHolder) {
-        colorHolder[0] = savedColor[0];
-        colorHolder[1] = savedColor[1];
-        colorHolder[2] = savedColor[2];
-        colorHolder[3] = savedColor[3];
-    }
-}
-
-void renderOverlay(void* levelRenderer, void* screenContext) {
-    // onFrame uses this to tell "the world is rendering, the hook owns the HUD
-    // labels" apart from "nothing drew this frame, so drop what is left".
-    s_overlayRanThisFrame.store(true, std::memory_order_relaxed);
-
-    std::vector<PLModMenu_DrawCommand> labels;
-    drawWorldOverlay(levelRenderer, screenContext, labels);
-    publishLabels(labels);
-}
-
-void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParams) {
-    if (s_renderLevelOriginal) s_renderLevelOriginal(levelRenderer, screenContext, renderParams);
-    renderOverlay(levelRenderer, screenContext);
-}
-
 } // namespace
 
 // ---------------------------------------------------------------------------
 // Module lifecycle.
 // ---------------------------------------------------------------------------
 EspModule::EspModule()
-    : Module("Esp",
-             "Draws entity boxes as world-space geometry in the game's own render pass, so they "
-             "stay locked to their target, and keeps them visible through walls.") {
+    : Module("Esp", "Screen-space ESP overlays on nearby entities.") {
     showInMenu = true;
     hideInHudEditor = true; // world overlay, not a draggable HUD element
     g_espMod = this;
@@ -745,34 +334,6 @@ void EspModule::onInit() {
     const uintptr_t isb = resolveFn(SignatureId::BlockSourceIsSolidBlockingBlock);
     if (isb) s_isSolidBlockingBlock = reinterpret_cast<BlockSource_isSolidBlockingBlock_t>(isb);
 
-    // The render pass the geometry is drawn in: same hook target as Hitbox and
-    // Block Outline (the hook manager chains them).
-    const uintptr_t renderLevel = resolveFn(SignatureId::RenderLevel);
-    if (renderLevel) m_patchTarget = reinterpret_cast<void*>(renderLevel);
-
-    const uintptr_t tessBegin = resolveFn(SignatureId::TessellatorBegin);
-    if (tessBegin) s_mesh.begin = reinterpret_cast<overlay::Mesh::BeginFn>(tessBegin);
-
-    const uintptr_t tessColor = resolveFn(SignatureId::TessellatorColor);
-    if (tessColor) s_mesh.color = reinterpret_cast<overlay::Mesh::ColorFn>(tessColor);
-
-    const uintptr_t tessVertex = resolveFn(SignatureId::TessellatorVertex);
-    if (tessVertex) s_mesh.vertex = reinterpret_cast<overlay::Mesh::VertexFn>(tessVertex);
-
-    uintptr_t renderMesh = resolveFn(SignatureId::MeshHelpersRenderMeshImmediately2);
-    if (!renderMesh) renderMesh = resolveFn(SignatureId::MeshHelpersRenderMeshImmediately);
-    if (renderMesh) s_mesh.render = reinterpret_cast<overlay::Mesh::RenderFn>(renderMesh);
-
-    const uintptr_t materialGroup = resolveFn(SignatureId::RenderMaterialGroupCommon);
-    if (materialGroup) {
-        const std::uintptr_t groupAddress = overlay::resolveAdrp(
-            reinterpret_cast<const std::uint32_t*>(materialGroup), 2, 0);
-        if (groupAddress) {
-            s_renderMaterialGroup =
-                groupAddress + offsets::MaterialGroup::mRenderMaterialGroupOffset;
-        }
-    }
-
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [](auto& event) { tickCallback(reinterpret_cast<void*>(event.player)); });
 
@@ -787,38 +348,258 @@ void EspModule::onInit() {
     }
 }
 
-void EspModule::applyPatch() {
-    if (m_patched || !m_patchTarget) return;
-    const auto handle = bedrocktools::hooks::install(
-        m_patchTarget, reinterpret_cast<void*>(&renderLevelHook),
-        reinterpret_cast<void**>(&s_renderLevelOriginal));
-    m_patched = handle != nullptr;
-}
-
-void EspModule::onEnable() {
-    applyPatch();
-}
+void EspModule::onEnable() {}
 
 void EspModule::onDisable() {
-    // The overlay is published from the render hook, so dropping it means
-    // clearing the HUD layer as well; onFrame stops running once disabled.
+    // Clear the overlay immediately; onFrame stops running once disabled.
     submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
-    s_overlayLabelsVisible.store(false, std::memory_order_relaxed);
 }
 
 void EspModule::onFrame() {
     if (!enabled) {
-        clearLabels();
+        submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
         return;
     }
 
-    // Nothing to do while the world is being rendered: renderOverlay already
-    // published this frame's overlay. If the render hook did not run (menu
-    // screen, level not drawn), the labels it left behind are dropped once so
-    // a frozen ESP never hangs over the rest of the UI.
-    if (!s_overlayRanThisFrame.exchange(false, std::memory_order_relaxed)) {
-        clearLabels();
+    void* localPlayer = g_localPlayer.load(std::memory_order_acquire);
+    if (!localPlayer || !s_actorFetchNearby) {
+        submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
+        return;
     }
+
+    // Camera position comes from the renderer the game already populated for
+    // this frame (LevelRendererPlayer::mCamPos); orientation comes from the
+    // local player's rotation component.
+    void* client = bedrocktools::core::gamehooks::clientInstance();
+    if (!client) {
+        submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
+        return;
+    }
+    auto* sdkClient = reinterpret_cast<bedrocktools::sdk::ClientInstance*>(client);
+    auto* levelRenderer = sdkClient->levelRenderer();
+    auto* playerRenderer = levelRenderer ? levelRenderer->playerRenderer() : nullptr;
+    if (!playerRenderer) {
+        submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
+        return;
+    }
+
+    const Vec3 camPos = playerRenderer->cameraPosition();
+    const Vec2 camRot = getActorRotation(localPlayer);
+
+    const esp::Camera camera = esp::computeCamera(camPos, camRot);
+    const pl::modmenu::HudSurfaceSize surface = pl::modmenu::getHudSurfaceSize();
+    const esp::SurfaceProjection proj = esp::makeProjection(surface.width, surface.height, fov);
+
+    // Resolve the dimension's BlockSource once per frame for the occlusion
+    // cull (only needed when Through Walls is off).
+    void* region = nullptr;
+    if (!throughWalls && s_isSolidBlockingBlock) {
+        const uintptr_t dimension = *reinterpret_cast<uintptr_t*>(
+            reinterpret_cast<uintptr_t>(localPlayer) + bedrocktools::sdk::offsets::Actor::mDimension);
+        if (dimension >= 0x1000) {
+            const uintptr_t blockSource = *reinterpret_cast<uintptr_t*>(
+                dimension + bedrocktools::sdk::offsets::Dimension::mBlockSource);
+            if (blockSource >= 0x1000) region = reinterpret_cast<void*>(blockSource);
+        }
+    }
+
+    // Fetch nearby actors (radius = configured range).
+    const float radius = std::clamp(range, 8.0f, 256.0f);
+    Vec3 extent = {radius, radius, radius};
+    const ActorVec actors = s_actorFetchNearby(localPlayer, &extent, 1);
+
+    // Resolve the box color once per frame (RGB animation wins over boxColor).
+    uint32_t boxRgb;
+    if (rgb) {
+        const float speed = std::clamp(rgbSpeed, 0.05f, 1.0f);
+        float hue = std::fmod(static_cast<float>(nowSeconds()) * speed * 360.0f, 360.0f);
+        if (hue < 0.0f) hue += 360.0f;
+        boxRgb = hsvToRgb(hue) | 0xFF000000u;
+    } else {
+        boxRgb = forceOpaqueColor(boxColor);
+    }
+
+    const float thickness = std::clamp(boxThickness, 0.5f, 20.0f);
+    const float nametagSize = std::clamp(nametagScale, 0.5f, 2.0f) * 14.0f;
+    const float subSize = nametagSize * 0.8f;
+    // Off-screen clamp for projections: an entity straddling the camera plane
+    // projects far outside the surface, and keeping the coordinates to a few
+    // screen sizes keeps the launcher's draw commands finite.
+    const float boxLimit = std::max(proj.width, proj.height) * 4.0f;
+
+    // First-person camera check for the local-player ESP. Until the game has
+    // reported a perspective value, stay conservative and hide the self ESP
+    // (the camera is almost always first person right after launch).
+    const bool thirdPerson = s_perspectiveKnown.load(std::memory_order_relaxed) &&
+                             s_perspective.load(std::memory_order_relaxed) != 0;
+
+    std::vector<PLModMenu_DrawCommand> cmds;
+
+    auto renderActor = [&](void* ent, bool isSelf) {
+        if (!ent) return;
+
+        const AABB aabb = getActorAABB(ent);
+        if (aabb.min.x == 0.0f && aabb.min.y == 0.0f && aabb.min.z == 0.0f &&
+            aabb.max.x == 0.0f && aabb.max.y == 0.0f && aabb.max.z == 0.0f) {
+            return;
+        }
+
+        // Occlusion cull (skipped for the local player, whose camera often
+        // sits inside geometry in third person).
+        if (!isSelf && !throughWalls && region && isOccluded(region, camPos, aabb)) {
+            return;
+        }
+
+        // Project the AABB to its tight 2D box. The corners that fall behind
+        // the near plane are clipped away by projectBox, so an entity pressed
+        // right up against the camera still spans the whole screen instead of
+        // collapsing to the few corners that survived.
+        const esp::ScreenBox screen =
+            esp::projectBox(camera, proj, aabb.min, aabb.max, boxLimit);
+        if (!screen.visible) return;
+
+        // Nothing to draw once the box has slid completely off the surface.
+        if (screen.maxX < 0.0f || screen.minX > proj.width ||
+            screen.maxY < 0.0f || screen.minY > proj.height) {
+            return;
+        }
+
+        const float boxLeft = screen.minX;
+        const float boxTop = screen.minY;
+        const float boxRight = screen.maxX;
+        const float boxBottom = screen.maxY;
+        const float boxW = boxRight - boxLeft;
+        const float boxH = boxBottom - boxTop;
+        const float centerX = (boxLeft + boxRight) * 0.5f;
+
+        // Distance from the camera to the entity center (blocks).
+        const float dist = std::sqrt(
+            (camPos.x - (aabb.min.x + aabb.max.x) * 0.5f) * (camPos.x - (aabb.min.x + aabb.max.x) * 0.5f) +
+            (camPos.y - (aabb.min.y + aabb.max.y) * 0.5f) * (camPos.y - (aabb.min.y + aabb.max.y) * 0.5f) +
+            (camPos.z - (aabb.min.z + aabb.max.z) * 0.5f) * (camPos.z - (aabb.min.z + aabb.max.z) * 0.5f));
+
+        // ---- Filled box (behind everything else) ---------------------------
+        if (box && boxFilled && boxW > 0.0f && boxH > 0.0f) {
+            const uint8_t alpha = static_cast<uint8_t>(
+                std::clamp(boxFilledOpacity, 0.0f, 1.0f) * 255.0f);
+            addRect(cmds, boxLeft, boxTop, boxW, boxH,
+                    (static_cast<uint32_t>(alpha) << 24) | (boxFilledColor & 0x00FFFFFFu));
+        }
+
+        // ---- Box outline ---------------------------------------------------
+        if (box) {
+            if (boxStyle == BoxStyle::Corner) {
+                const float len = std::min(boxW, boxH) * 0.33f;
+                // Four corner brackets.
+                addLine(cmds, boxLeft, boxTop, boxLeft + len, boxTop, thickness, boxRgb);
+                addLine(cmds, boxLeft, boxTop, boxLeft, boxTop + len, thickness, boxRgb);
+                addLine(cmds, boxRight - len, boxTop, boxRight, boxTop, thickness, boxRgb);
+                addLine(cmds, boxRight, boxTop, boxRight, boxTop + len, thickness, boxRgb);
+                addLine(cmds, boxLeft, boxBottom - len, boxLeft, boxBottom, thickness, boxRgb);
+                addLine(cmds, boxLeft, boxBottom, boxLeft + len, boxBottom, thickness, boxRgb);
+                addLine(cmds, boxRight, boxBottom - len, boxRight, boxBottom, thickness, boxRgb);
+                addLine(cmds, boxRight - len, boxBottom, boxRight, boxBottom, thickness, boxRgb);
+            } else {
+                // Full 2D rectangle.
+                addLine(cmds, boxLeft, boxTop, boxRight, boxTop, thickness, boxRgb);
+                addLine(cmds, boxRight, boxTop, boxRight, boxBottom, thickness, boxRgb);
+                addLine(cmds, boxRight, boxBottom, boxLeft, boxBottom, thickness, boxRgb);
+                addLine(cmds, boxLeft, boxBottom, boxLeft, boxTop, thickness, boxRgb);
+            }
+        }
+
+        // ---- Tracer --------------------------------------------------------
+        if (tracer) {
+            const float originX = proj.width * 0.5f;
+            const float originY = (tracerOrigin == TracerOrigin::Crosshair)
+                                      ? proj.height * 0.5f
+                                      : proj.height;
+            addLine(cmds, originX, originY, centerX, boxBottom, thickness * 0.75f,
+                    forceOpaqueColor(tracerColor));
+        }
+
+        // ---- Text stack above the box -------------------------------------
+        float textY = boxTop - nametagSize - 4.0f;
+
+        // Nametag (players only; the name field is only valid for Player).
+        std::string name;
+        if (nametag && s_actorIsPlayer && s_actorIsPlayer(ent)) {
+            name = reinterpret_cast<bedrocktools::sdk::Player*>(ent)->name();
+        }
+        if (nametag && !name.empty()) {
+            const float textW = name.size() * nametagSize * 0.6f;
+            addText(cmds, name, centerX - textW * 0.5f, textY, nametagSize,
+                    forceOpaqueColor(nametagColor));
+            textY -= nametagSize + 2.0f;
+        }
+
+        // Health (living entities only: players + mobs own a health attribute).
+        const bool living = (s_actorIsPlayer && s_actorIsPlayer(ent)) ||
+                            hasCategory(ent, bedrocktools::sdk::offsets::ActorCategories::IsMob);
+        if (health && living) {
+            float maxHealth = 0.0f;
+            const float current = readHealth(ent, maxHealth);
+            if (current >= 0.0f && std::isfinite(current)) {
+                const float fraction = std::clamp(current / (maxHealth > 0.0f ? maxHealth : current),
+                                                  0.0f, 1.0f);
+
+                const float barW = std::max(boxW, 20.0f);
+                const float barH = 4.0f;
+                const float barY = textY + subSize - barH; // place bar under the label
+
+                // Track + fill.
+                addRect(cmds, centerX - barW * 0.5f, barY, barW, barH, 0x80000000u);
+                const uint32_t fillColor = fraction > 0.5f   ? 0xFF22C55Eu
+                                           : fraction > 0.25f ? 0xFFEAB308u
+                                                              : 0xFFEF4444u;
+                addRect(cmds, centerX - barW * 0.5f, barY, barW * fraction, barH, fillColor);
+
+                char buffer[24];
+                std::snprintf(buffer, sizeof(buffer), "%.0f", current);
+                addText(cmds, buffer, centerX - barW * 0.5f, barY - subSize - 2.0f,
+                        subSize, forceOpaqueColor(nametagColor));
+                textY = barY - subSize - 4.0f;
+            }
+        }
+
+        // Distance.
+        if (distance) {
+            char buffer[24];
+            std::snprintf(buffer, sizeof(buffer), "%.1fm", dist);
+            addText(cmds, buffer, centerX - 16.0f, textY, subSize,
+                    forceOpaqueColor(nametagColor));
+        }
+    };
+
+    // Local player (third person only).
+    if (showLocalPlayer && thirdPerson) {
+        renderActor(localPlayer, true);
+    }
+
+    // Nearby actors.
+    if (actors.begin && actors.end) {
+        for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
+            void* ent = it->mActor;
+            if (!ent || ent == localPlayer) continue;
+
+            bool isPlayer = false;
+            if (s_actorIsPlayer) isPlayer = s_actorIsPlayer(ent);
+
+            if (isPlayer) {
+                if (!showPlayers) continue;
+            } else if (hasCategory(ent, bedrocktools::sdk::offsets::ActorCategories::IsMob)) {
+                if (!showMobs) continue;
+            } else {
+                if (!showItems) continue;
+            }
+
+            if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
+
+            renderActor(ent, false);
+        }
+    }
+
+    submitDrawCommands(moduleId, cmds);
 }
 
 // ---------------------------------------------------------------------------
@@ -832,9 +613,6 @@ void EspModule::loadConfig(const nlohmann::json& j) {
     showItems = j.value("showItems", showItems);
     showLocalPlayer = j.value("showLocalPlayer", showLocalPlayer);
 
-    // Default flipped when the overlay moved into the render pass: an ESP is
-    // expected to keep drawing through terrain. Configs that saved a value
-    // explicitly keep it.
     throughWalls = j.value("throughWalls", throughWalls);
     range = j.value("range", range);
 
@@ -933,9 +711,9 @@ void EspModule::saveConfig(nlohmann::json& j) {
     j["box"] = box;
 
     std::string boxStyleValue = std::to_string(static_cast<int>(boxStyle));
-    for (const char* const label : kBoxStyleNames) {
+    for (const char* const name : kBoxStyleNames) {
         boxStyleValue += ',';
-        boxStyleValue += label;
+        boxStyleValue += name;
     }
     j["boxStyle"] = boxStyleValue;
 
@@ -956,9 +734,9 @@ void EspModule::saveConfig(nlohmann::json& j) {
     j["tracer"] = tracer;
 
     std::string tracerOriginValue = std::to_string(static_cast<int>(tracerOrigin));
-    for (const char* const label : kTracerOriginNames) {
+    for (const char* const name : kTracerOriginNames) {
         tracerOriginValue += ',';
-        tracerOriginValue += label;
+        tracerOriginValue += name;
     }
     j["tracerOrigin"] = tracerOriginValue;
 

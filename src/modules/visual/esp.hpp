@@ -8,42 +8,28 @@ extern EspModule* g_espMod;
 
 // Esp
 //
-// Entity overlay that draws the boxes as *world-space geometry inside the
-// game's own render pass, i.e. the exact path the Hitbox module uses: a
-// LevelRenderer::renderLevel detour that feeds the game's Tessellator and
-// flushes the mesh with a level render material. Because the game transforms
-// that geometry with the very matrices it rendered the level with, a box can
-// only ever land where its entity is -- no camera model to get wrong, no
-// frame of look latency, and sprint FOV or view bob cannot pull it away.
+// Screen-space ESP drawn through the launcher HUD overlay. Every nearby
+// actor is projected from world space to the HUD surface once per frame
+// (camera position + local-player yaw/pitch + a configurable vertical FOV),
+// and the module submits plain draw commands for the classic ESP feature
+// set: 2D / corner boxes, translucent filled boxes, tracers (snaplines),
+// nametags, health bars and distance readouts.
 //
-// The one difference from Hitbox is depth: the overlay is emitted with a
-// material that does no depth test and no wall-occlusion culling, so entities
-// keep drawing through walls (the Hitbox module culls them on purpose; Esp
-// turns that into the Through Walls toggle, on by default).
+// Entity selection mirrors the Hitbox module: players, mobs and items can be
+// toggled independently, invisible actors are skipped, and a wall-occlusion
+// test (raycast through the BlockSource) can cull actors that are fully
+// hidden behind solid blocks unless "Through Walls" is enabled.
 //
-// The elements that are screen furniture rather than geometry -- nametags,
-// the health value and bar, the distance readout and tracers -- stay on the
-// launcher HUD layer, because that is where the font lives. They are anchored
-// with the projection in esp_geometry.hpp and are therefore tuned by Fov.
-//
-// Entity selection mirrors Hitbox: players, mobs and items are toggled
-// independently, invisible actors are skipped, and Show Local Player adds the
-// self overlay while the camera is in third person.
-//
-// All of the work happens inside the render hook, so the geometry and the HUD
-// labels describe the same frame. onFrame only keeps the overlay bookkeeping
-// (clearing when the module is off or when the world stopped rendering).
+// All of the heavy lifting happens in onFrame (published on the render
+// thread right before eglSwapBuffers), so the projection uses the camera
+// position the game actually rendered with, while the local-player pointer
+// is handed over from LocalPlayerTickEvent through an atomic.
 class EspModule : public Module {
 public:
     // Radio option order is persisted by index, so new styles must only be
     // appended at the end. Labels live in esp.cpp (kBoxStyleNames /
     // kTracerOriginNames) and are guarded by static_asserts.
-    //
-    // Both box styles are 3D wireframes now; the screen-space 2D rectangle the
-    // first versions drew is what used to slide off its entity while the view
-    // turned, so index 0 keeps its meaning ("the box outline") and just stops
-    // being a projection.
-    enum class BoxStyle : int { Box = 0, Corner = 1, Count };
+    enum class BoxStyle : int { Box2D = 0, Corner = 1, Count };
     enum class TracerOrigin : int { Bottom = 0, Crosshair = 1, Count };
 
     EspModule();
@@ -64,25 +50,18 @@ public:
     bool showLocalPlayer = false;
 
     // ---- Visibility --------------------------------------------------------
-    // True (default): the overlay is emitted with a material that ignores the
-    // depth buffer, and no occlusion test runs, so entities behind terrain stay
-    // visible. False: actors fully hidden behind solid blocks are culled with
-    // the same voxel raycast the Hitbox module uses (a tall mob whose head
-    // pokes over a low wall stays visible).
-    bool throughWalls = true;
+    // When false (default) actors fully hidden behind solid blocks are culled;
+    // when true every fetched actor is drawn regardless of occlusion.
+    bool throughWalls = false;
     float range = 64.0f; // fetch radius in blocks (8 .. 256)
 
     // ---- Box ---------------------------------------------------------------
     bool box = true;
-    BoxStyle boxStyle = BoxStyle::Box;
+    BoxStyle boxStyle = BoxStyle::Box2D;
     bool boxFilled = false;
     uint32_t boxColor = 0xFFFFFFFF;
     uint32_t boxFilledColor = 0xFFFFFFFF;
     float boxFilledOpacity = 0.25f;
-    // Line weight of the wireframe. 1.0 keeps the game's hairline edges; above
-    // that every edge also becomes a camera-facing beam of
-    // boxThickness * 0.01 blocks, because GLES line width is ignored by
-    // mobile drivers.
     float boxThickness = 1.5f;
     bool rgb = false;      // animated rainbow box color (overrides boxColor)
     float rgbSpeed = 0.3f; // full hue cycles per second (0.05 .. 1)
@@ -101,14 +80,9 @@ public:
     bool health = true;
     bool distance = true;
 
-    // ---- HUD label projection ----------------------------------------------
-    // Only the screen-space half (labels, tracers) needs it; the box geometry
-    // is placed by the game.
+    // ---- Projection ----------------------------------------------------------
     float fov = 60.0f; // vertical field of view in degrees (30 .. 120)
 
 private:
-    bool m_patched = false;
-    void* m_patchTarget = nullptr;
-
-    void applyPatch();
+    bool m_perspectiveHooked = false;
 };
