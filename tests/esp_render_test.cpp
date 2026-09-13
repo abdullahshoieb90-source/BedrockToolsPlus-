@@ -27,8 +27,6 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
-#include <memory>
-#include <new>
 #include <string>
 #include <vector>
 
@@ -71,8 +69,7 @@ void writeAt(std::array<std::byte, N>& storage, std::size_t offset, const T& val
 
 namespace fake {
 
-bool g_actorIsPlayer = false;
-bool actorIsPlayer(void*) { return g_actorIsPlayer; }
+bool actorIsPlayer(void*) { return false; }
 bool g_actorIsInvisible = false;
 bool actorIsInvisible(void*) { return g_actorIsInvisible; }
 
@@ -236,19 +233,6 @@ int textCommandCount() {
     return count;
 }
 
-// The distance readout is the only text command with the trailing "m" suffix
-// (the health value is a bare number and the fake actors are never players,
-// so no nametag is ever drawn).
-std::string findDistanceText() {
-    for (const auto& cmd : g_commands) {
-        if (cmd.type == pl::modmenu::DrawCommandType::Text &&
-            !cmd.text.empty() && cmd.text.back() == 'm') {
-            return cmd.text;
-        }
-    }
-    return {};
-}
-
 int lineCommandCount() {
     int count = 0;
     for (const auto& cmd : g_commands) {
@@ -283,8 +267,7 @@ int main() {
     alignas(std::max_align_t) std::array<std::byte, 64> dimension{};
     alignas(std::max_align_t) std::array<std::byte, 64> blockSource{};
 
-    // 0xC00 bytes: room for the Player name std::string at mName (2824).
-    alignas(std::max_align_t) std::array<std::byte, 0xC00> mob{};
+    alignas(std::max_align_t) std::array<std::byte, 0x800> mob{};
     alignas(std::max_align_t) std::array<std::byte, 64> mobAabbComponent{};
     alignas(std::max_align_t) std::array<std::byte, 64> mobHealthAttribute{};
 
@@ -303,10 +286,6 @@ int main() {
     writeAt(player, Actor::mCategories, static_cast<std::uint32_t>(ActorCategories::IsPlayer));
     writeAt(player, Actor::mDimension, static_cast<void*>(dimension.data()));
     writeAt(dimension, Dimension::mBlockSource, static_cast<void*>(blockSource.data()));
-    // The local player's own collision box: the distance readout measures
-    // from its bottom-center (feet), so it has to be wired like the mob's.
-    const AABB playerBounds{{-0.3f, 0.0f, -0.3f}, {0.3f, 1.8f, 0.3f}};
-    writeAt(playerAabbComponent, AABBShapeComponent::mAABB, playerBounds);
     // Mob::mHealthAttribute stays null, so readHealth reports "no health".
 
     // Mob: an AABB shape component plus the mob category bit.
@@ -450,66 +429,6 @@ int main() {
               "the cull never runs while Through Walls is on, even with a region");
     }
 
-    // --- Distance is measured from the player, not the camera ---------------
-    // The readout is the feet-to-feet distance between the two collision
-    // boxes, so it cannot depend on the perspective: pulling the camera back
-    // into third person must not change what the same entity reports.
-    {
-        setCameraRotation(0.0f, 0.0f);
-        setMobBox({-0.3f, 0.0f, 9.7f}, {0.3f, 1.8f, 10.3f});
-        esp.throughWalls = true;
-        fake::g_solidBlocks = false;
-
-        renderFrame();
-        check(findDistanceText() == "10.0m",
-              "ten blocks away reads 10.0m in first person");
-
-        // The readout sits just under the hitbox: 4px below the projected
-        // box bottom, centered on it -- not floating in the stack above.
-        {
-            const esp::Camera cam = esp::computeCamera(cameraPosition, {0.0f, 0.0f});
-            const esp::SurfaceProjection proj =
-                esp::makeProjection(kSurfaceWidth, kSurfaceHeight, 90.0f);
-            const esp::ScreenBox box = esp::projectBox(
-                cam, proj, {-0.3f, 0.0f, 9.7f}, {0.3f, 1.8f, 10.3f}, 0.0f);
-            const pl::modmenu::DrawCommand* distanceCmd = nullptr;
-            for (const auto& cmd : g_commands) {
-                if (cmd.type == pl::modmenu::DrawCommandType::Text &&
-                    !cmd.text.empty() && cmd.text.back() == 'm') {
-                    distanceCmd = &cmd;
-                }
-            }
-            const float expectedX = (box.minX + box.maxX) * 0.5f - 16.0f;
-            check(box.visible && distanceCmd != nullptr &&
-                      near(distanceCmd->x, expectedX, 1.0f) &&
-                      near(distanceCmd->y, box.maxY + 4.0f, 1.0f),
-                  "the readout sits just under the hitbox");
-        }
-
-        // Third-person boom: the camera swings several blocks behind and
-        // above the player while the player itself does not move.
-        const Vec3 thirdPersonCam{0.0f, 3.0f, -4.0f};
-        writeAt(playerRenderer, LevelRendererPlayer::mCamPos, thirdPersonCam);
-        renderFrame();
-        check(findDistanceText() == "10.0m",
-              "the same entity still reads 10.0m in third person");
-
-        // Degraded local box: with no feet anchor there is no second
-        // measurement to fall back to, so the readout is hidden instead of
-        // showing a differently-measured number.
-        const AABB zeroBox{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-        writeAt(playerAabbComponent, AABBShapeComponent::mAABB, zeroBox);
-        renderFrame();
-        check(findDistanceText().empty() && textCommandCount() == 0,
-              "without a local box no distance is shown, not a second one");
-        writeAt(playerAabbComponent, AABBShapeComponent::mAABB, playerBounds);
-
-        writeAt(playerRenderer, LevelRendererPlayer::mCamPos, cameraPosition);
-        renderFrame();
-        check(findDistanceText() == "10.0m",
-              "the feet anchor is used again once the local box is back");
-    }
-
     // --- Thick lines become real geometry ---------------------------------
     {
         esp.boxThickness = 6.0f;
@@ -584,14 +503,7 @@ int main() {
     }
 
     // --- Tracers -------------------------------------------------------------
-    // The line ends on the projected center of the entity's own box, so it
-    // lands mid-hitbox instead of the 2D box's middle (which perspective
-    // shifts off of it -- see the geometry test). The off-axis box below
-    // makes the two endpoints disagree by tens of pixels, so this fails if
-    // the line ever goes back to the 2D average.
     {
-        setCameraRotation(0.0f, 0.0f);
-        setMobBox({2.0f, 0.0f, 4.0f}, {4.0f, 1.8f, 6.0f});
         esp.tracer = true;
         esp.tracerOrigin = EspModule::TracerOrigin::Bottom;
         renderFrame();
@@ -600,56 +512,11 @@ int main() {
                                 near(g_commands.front().y, kSurfaceHeight);
         check(fromBottom, "the bottom origin starts at the screen edge");
 
-        // Center anchor (3, 0.9, 5) through the first-person camera at (0, 1.62, 0)
-        // on the 1000x1000, 90-degree surface: ndc (-0.6, -0.144).
-        const auto& bottomLine = g_commands.front();
-        const float bottomEndX = bottomLine.x + bottomLine.w;
-        const float bottomEndY = bottomLine.y + bottomLine.h;
-        check(lineCommandCount() == 1 && near(bottomEndX, 200.0f, 1.0f) &&
-                  near(bottomEndY, 572.0f, 1.0f),
-              "the tracer ends mid-hitbox, not on the 2D box middle");
-
         esp.tracerOrigin = EspModule::TracerOrigin::Crosshair;
         renderFrame();
         check(lineCommandCount() == 1 && near(g_commands.front().y, centerY),
               "the crosshair origin starts at the screen center");
-        const auto& crossLine = g_commands.front();
-        check(lineCommandCount() == 1 &&
-                  near(crossLine.x + crossLine.w, 200.0f, 1.0f) &&
-                  near(crossLine.y + crossLine.h, 572.0f, 1.0f),
-              "the crosshair tracer ends on the same mid-hitbox anchor");
         esp.tracer = false;
-    }
-
-    // --- Nametag sits above the head --------------------------------------
-    // The name is centered on the projected head point (top-center of the
-    // entity's own box), not on the 2D box's top-middle, which perspective
-    // shifts away from the head -- see the geometry test. The off-axis box
-    // left over from the tracer test makes the two anchors disagree by tens
-    // of pixels, so this fails if the name ever goes back to the 2D average.
-    {
-        auto* nameField = new (mob.data() + Player::mName) std::string("Steve");
-        fake::g_actorIsPlayer = true;
-        renderFrame();
-
-        // Head anchor (3, 1.8, 5) through the first-person camera at
-        // (0, 1.62, 0) on the 1000x1000, 90-degree surface: ndc (-0.6, 0.036).
-        // The 14px name sits 4px above it, centered: x = 200 - 42 / 2.
-        const pl::modmenu::DrawCommand* nameCmd = nullptr;
-        for (const auto& cmd : g_commands) {
-            if (cmd.type == pl::modmenu::DrawCommandType::Text && cmd.text == "Steve") {
-                nameCmd = &cmd;
-            }
-        }
-        check(nameCmd != nullptr && near(nameCmd->x, 179.0f, 1.0f) &&
-                  near(nameCmd->y, 464.0f, 1.0f),
-              "the nametag is centered above the head, not the 2D box");
-
-        fake::g_actorIsPlayer = false;
-        std::destroy_at(nameField);
-        renderFrame();
-        check(textCommandCount() == 1 && findDistanceText() == "5.8m",
-              "without a player name only the distance is left");
     }
 
     // --- Handendness of the label anchor ----------------------------------

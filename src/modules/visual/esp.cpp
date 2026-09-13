@@ -484,20 +484,6 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
     // screen sizes keeps the launcher's draw commands finite.
     const float boxLimit = std::max(proj.width, proj.height) * 4.0f;
 
-    // Distance anchor: the local player's own feet (bottom-center of its
-    // collision box), resolved once per frame. Measuring from the render
-    // camera instead would make the readout perspective-dependent -- third
-    // person pulls the camera several blocks behind the player -- so the same
-    // entity would report one distance in first person and another in third
-    // person. The camera stays the anchor for everything that is genuinely
-    // about the view (projection, occlusion, camera-relative vertices).
-    const AABB selfBox = getActorAABB(localPlayer);
-    const Vec3 selfFeet{(selfBox.min.x + selfBox.max.x) * 0.5f, selfBox.min.y,
-                        (selfBox.min.z + selfBox.max.z) * 0.5f};
-    const bool selfFeetValid =
-        !isDegenerateBox(selfBox) && std::isfinite(selfFeet.x) &&
-        std::isfinite(selfFeet.y) && std::isfinite(selfFeet.z);
-
     // Resolve the dimension's BlockSource once per frame, and only when the
     // occlusion cull is actually wanted (Through Walls off).
     void* region = options.throughWalls ? nullptr : blockSourceFor(localPlayer);
@@ -587,63 +573,24 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         const float boxW = boxRight - boxLeft;
         const float centerX = (boxLeft + boxRight) * 0.5f;
 
-        // One distance only, measured feet-to-feet (bottom-centers of the two
-        // collision boxes), in blocks. Both anchors come from the actors
-        // rather than the render camera, so the readout is identical in first
-        // and third person: ten blocks away reads 10.0m from either
-        // perspective. There is deliberately no second, camera-based
-        // measurement: while the local anchor is unavailable the readout is
-        // hidden (see below) instead of showing another number.
-        const float entFeetX = (aabb.min.x + aabb.max.x) * 0.5f;
-        const float entFeetZ = (aabb.min.z + aabb.max.z) * 0.5f;
-        float dist = 0.0f;
-        if (selfFeetValid) {
-            const float dx = selfFeet.x - entFeetX;
-            const float dy = selfFeet.y - aabb.min.y;
-            const float dz = selfFeet.z - entFeetZ;
-            dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        }
+        // Distance from the camera to the entity center (blocks).
+        const float dist = std::sqrt(
+            (camPos.x - (aabb.min.x + aabb.max.x) * 0.5f) * (camPos.x - (aabb.min.x + aabb.max.x) * 0.5f) +
+            (camPos.y - (aabb.min.y + aabb.max.y) * 0.5f) * (camPos.y - (aabb.min.y + aabb.max.y) * 0.5f) +
+            (camPos.z - (aabb.min.z + aabb.max.z) * 0.5f) * (camPos.z - (aabb.min.z + aabb.max.z) * 0.5f));
 
         // ---- Tracer --------------------------------------------------------
-        // The line ends on the projected center of the entity's own box, so
-        // it lands in the middle of the hitbox the game drew. Ending it on
-        // the 2D box's middle instead leaves it visibly detached: the
-        // projected box is asymmetric, so its screen-space middle is not
-        // where the hitbox's middle lands (see esp::projectBoxCenter). When
-        // the anchor itself is behind the near plane -- an entity straddling
-        // the camera -- the 2D box middle is kept as the fallback so the line
-        // still draws.
         if (options.tracer) {
             const float originX = proj.width * 0.5f;
             const float originY = (options.tracerOrigin == EspModule::TracerOrigin::Crosshair)
                                       ? proj.height * 0.5f
                                       : proj.height;
-            float endX = centerX;
-            float endY = (boxTop + boxBottom) * 0.5f;
-            float anchorX = 0.0f, anchorY = 0.0f;
-            if (esp::projectBoxCenter(camera, proj, aabb.min, aabb.max, anchorX, anchorY)) {
-                endX = std::clamp(anchorX, -boxLimit, proj.width + boxLimit);
-                endY = std::clamp(anchorY, -boxLimit, proj.height + boxLimit);
-            }
-            addLine(labels, originX, originY, endX, endY,
+            addLine(labels, originX, originY, centerX, boxBottom,
                     labelThickness * 0.75f, forceOpaqueColor(options.tracerColor));
         }
 
         // ---- Text stack above the box -------------------------------------
-        // The whole label column (nametag, health, distance) is centered on
-        // the projected head point -- the top-center of the entity's own box
-        // -- instead of the 2D box's middle, which perspective shifts away
-        // from the head (the same drift the tracer anchor fixes, see
-        // esp::projectBoxTopCenter). When the head itself is behind the near
-        // plane, the 2D box is kept as the fallback.
-        float headX = centerX;
-        float headY = boxTop;
-        float topX = 0.0f, topY = 0.0f;
-        if (esp::projectBoxTopCenter(camera, proj, aabb.min, aabb.max, topX, topY)) {
-            headX = std::clamp(topX, -boxLimit, proj.width + boxLimit);
-            headY = std::clamp(topY, -boxLimit, proj.height + boxLimit);
-        }
-        float textY = headY - nametagSize - 4.0f;
+        float textY = boxTop - nametagSize - 4.0f;
 
         // Nametag (players only; the name field is only valid for Player).
         std::string name;
@@ -652,7 +599,7 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
         }
         if (options.nametag && !name.empty()) {
             const float textW = name.size() * nametagSize * 0.6f;
-            addText(labels, name, headX - textW * 0.5f, textY, nametagSize,
+            addText(labels, name, centerX - textW * 0.5f, textY, nametagSize,
                     forceOpaqueColor(options.nametagColor));
             textY -= nametagSize + 2.0f;
         }
@@ -672,29 +619,25 @@ void drawWorldOverlay(void* levelRenderer, void* screenContext,
                 const float barY = textY + subSize - barH; // place bar under the label
 
                 // Track + fill.
-                addRect(labels, headX - barW * 0.5f, barY, barW, barH, 0x80000000u);
+                addRect(labels, centerX - barW * 0.5f, barY, barW, barH, 0x80000000u);
                 const uint32_t fillColor = fraction > 0.5f   ? 0xFF22C55Eu
                                            : fraction > 0.25f ? 0xFFEAB308u
                                                               : 0xFFEF4444u;
-                addRect(labels, headX - barW * 0.5f, barY, barW * fraction, barH, fillColor);
+                addRect(labels, centerX - barW * 0.5f, barY, barW * fraction, barH, fillColor);
 
                 char buffer[24];
                 std::snprintf(buffer, sizeof(buffer), "%.0f", current);
-                addText(labels, buffer, headX - barW * 0.5f, barY - subSize - 2.0f,
+                addText(labels, buffer, centerX - barW * 0.5f, barY - subSize - 2.0f,
                         subSize, forceOpaqueColor(options.nametagColor));
                 textY = barY - subSize - 4.0f;
             }
         }
 
-        // Distance, drawn just under the hitbox (below the projected box
-        // bottom) instead of floating in the stack above it, so the readout
-        // always sits next to the entity it belongs to. Hidden while the
-        // local anchor is unavailable, so the overlay never shows a second,
-        // differently-measured number.
-        if (options.distance && selfFeetValid) {
+        // Distance.
+        if (options.distance) {
             char buffer[24];
             std::snprintf(buffer, sizeof(buffer), "%.1fm", dist);
-            addText(labels, buffer, headX - 16.0f, boxBottom + 4.0f, subSize,
+            addText(labels, buffer, centerX - 16.0f, textY, subSize,
                     forceOpaqueColor(options.nametagColor));
         }
     };
