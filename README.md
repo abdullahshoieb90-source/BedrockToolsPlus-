@@ -69,7 +69,7 @@ Selecting **Vanilla** gives the crosshair back to the game: the module then only
 
 ## ESP
 
-**ESP** draws a screen-space overlay over nearby entities: 2D boxes, tracers, nametags, health bars and distance readouts, all projected from world space every frame using the camera the game actually rendered with. Every overlay is derived from the camera the game rendered that frame (position, yaw, pitch and the surface aspect), so a box sits on its entity and stays there while you turn or tilt the view. Everything is client-side and read-only.
+**ESP** draws a screen-space overlay over nearby entities: 2D boxes, tracers, nametags, health bars and distance readouts, all projected from world space every frame using the camera the game actually rendered with. Everything is client-side and read-only.
 
 - **Show Players**, **Show Mobs** and **Show Items** control which actor categories are drawn. Invisible actors are always skipped, and **Show Local Player** adds your own ESP while the camera is in third person (it is off by default, matching the Hitbox behavior).
 - **Range** sets how far out actors are fetched (8–256 blocks), and **Through Walls** switches off the wall-occlusion cull so hidden actors are drawn too. With it off (the default), actors fully hidden behind solid blocks are culled with the same voxel raycast the Hitbox module uses — a tall mob whose head pokes over a wall stays visible.
@@ -77,11 +77,9 @@ Selecting **Vanilla** gives the crosshair back to the game: the module then only
 - **Filled Box** paints a translucent fill inside the outline, styled independently by **Filled Box Color** and **Filled Box Opacity**.
 - **Tracers** draws a snapline to each entity. **Tracer Origin** anchors the lines at the bottom of the screen (**Bottom**) or at the crosshair (**Crosshair**), and **Tracer Color** styles them.
 - **Nametag** prints the player's name above the box, with **Nametag Color** and **Nametag Scale** styling it. **Health** adds a health value and a colored bar (green → yellow → red), and **Distance** prints the range from the camera in meters.
-- **Fov** matches the projection to your in-game field of view (default 60). It is a *vertical* FOV; the horizontal one is widened from the surface aspect ratio. If boxes sit too close to the middle of the screen (or overshoot their targets) near the edges, nudge it towards your in-game FOV setting.
+- **Fov** matches the projection to your in-game field of view (default 60). If boxes drift off their targets, adjust it to your FOV setting.
 
-An entity pressed right up against the camera keeps a full-size box too: its AABB is clipped against the camera's near plane before projecting, so the box grows to cover the screen instead of collapsing to whichever corners are still in front of you.
-
-The projection, camera basis, near-plane clipping and occlusion test are plain math in `esp_geometry.hpp` and covered by `tests/esp_geometry_test.cpp`; `tests/esp_render_test.cpp` additionally drives the real render path with stand-in actors and checks the submitted draw commands, so the overlay stays verifiable on the host.
+The projection, camera basis and occlusion test are plain math in `esp_geometry.hpp` and covered by `tests/esp_geometry_test.cpp`, so the rendering math stays verifiable on the host.
 
 ## Wings
 
