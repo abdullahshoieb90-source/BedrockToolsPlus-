@@ -9,7 +9,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 55 configurable modules
+- 56 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -17,7 +17,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Block Outline, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings
+**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Block Outline, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings, Storage ESP
 
 **HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair, ArmorHUD, Armor, Hotbar Slots, Inventory HUD, World Time, Arrow Counter, Totem Counter
 
@@ -35,6 +35,19 @@ The source is public so people can study how a real LeviLauncher mod is structur
 - **Through Walls** switches to a no-depth material when the current game build provides it. It is off by default, so terrain normally occludes the overlay.
 
 The target is sampled on the client tick instead of resolving the hit result from the render thread, avoiding frame stalls. Settings and keybind state are persisted in `config.json`.
+
+## Storage ESP
+
+**Storage ESP** highlights storage blocks around you: chests, trapped chests, ender chests, shulker boxes (all colors), barrels, hoppers, furnaces (including blast furnaces and smokers), dispensers and droppers. It is entirely client-side and only looks at blocks the world already has loaded.
+
+- Every group has its own toggle and color, so a base can be read at a glance and unwanted groups stay hidden. Turning a group off hides its boxes immediately, without waiting for a rescan.
+- **Scan Radius** and **Scan Height** set how far the module looks horizontally and how many blocks above and below your layer it covers. **Scan Speed** (Relaxed, Balanced, Fast, Instant) decides how many block positions each game tick is allowed to check; the scan is split across ticks, so it never stalls a frame, and the closest chunks are always swept first.
+- Found containers are re-confirmed by every sweep that reaches them, so a chest that gets broken or moved stops being highlighted right away instead of needing a block-update hook, and anything the scan area no longer covers is forgotten.
+- **Outline**, **Line Thickness**, **Fill** and **Fill Opacity** style the boxes the same way Block Outline does, with Android-safe camera-facing line geometry. **Model Sized Boxes** follows the smaller chest and hopper models instead of painting the whole voxel.
+- **Through Walls** uses a no-depth material so containers stay visible through terrain. Turn it off to keep them occluded by blocks, which makes the module a plain highlight instead of an x-ray.
+- **Rainbow**/**Rainbow Speed** and **Pulse**/**Pulse Speed** animate the group colors, and **Max Boxes** caps how many boxes are drawn per frame, nearest first, so huge bases stay cheap.
+
+Blocks that are not loaded yet can never be highlighted, which is why the radius is deliberately limited instead of "whole world".
 
 ## Inventory HUD
 
