@@ -9,14 +9,16 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
 // Pure logic for the Storage ESP module: which block names count as storage,
-// how a found block is turned into a box, how a budgeted world scan walks the
-// chunks around the player, and how found blocks are remembered/expired.
+// how a found block is turned into a box, how tracer lines are anchored to it,
+// how a budgeted world scan walks the chunks around the player, and how found
+// blocks are remembered/expired.
 //
 // Nothing here touches Minecraft memory, so every rule the module relies on
 // can be exercised by the host tests (tests/storageesp_geometry_test.cpp).
@@ -30,6 +32,7 @@ using bedrocktools::sdk::Vec3;
 enum class StorageKind : std::uint8_t {
     None = 0,
     Chest,
+    CopperChest,
     TrappedChest,
     EnderChest,
     ShulkerBox,
@@ -59,6 +62,15 @@ inline StorageKind classify(std::string_view rawName) {
     if (name == "trapped_chest") return StorageKind::TrappedChest;
     if (name == "ender_chest") return StorageKind::EnderChest;
 
+    // Copper chests ship as one block per oxidation stage ("copper_chest",
+    // "exposed_copper_chest", "weathered_copper_chest", "oxidized_copper_chest")
+    // and again per waxed stage, so a suffix test covers every variant a world
+    // can contain — including builds that keep oxidation in a block property
+    // instead and only ever report the base name.
+    if (name == "copper_chest" || name.ends_with("_copper_chest")) {
+        return StorageKind::CopperChest;
+    }
+
     // Colored boxes are "<color>_shulker_box"; Bedrock also still ships the
     // undyed variant under two different names across versions.
     if (name == "shulker_box" || name == "undyed_shulker_box" ||
@@ -82,6 +94,7 @@ inline StorageKind classify(std::string_view rawName) {
 // the launcher menu can list them) and hands this view to the pure helpers.
 struct CategoryFilter {
     bool chests = true;
+    bool copperChests = true;
     bool trappedChests = true;
     bool enderChests = true;
     bool shulkerBoxes = true;
@@ -94,6 +107,7 @@ struct CategoryFilter {
 inline constexpr bool enabled(const CategoryFilter& filter, StorageKind kind) {
     switch (kind) {
         case StorageKind::Chest: return filter.chests;
+        case StorageKind::CopperChest: return filter.copperChests;
         case StorageKind::TrappedChest: return filter.trappedChests;
         case StorageKind::EnderChest: return filter.enderChests;
         case StorageKind::ShulkerBox: return filter.shulkerBoxes;
@@ -427,6 +441,7 @@ inline constexpr blockoutline::Box makeStorageBox(const BlockPos& position,
     if (modelSized) {
         switch (kind) {
             case StorageKind::Chest:
+            case StorageKind::CopperChest:
             case StorageKind::TrappedChest:
             case StorageKind::EnderChest:
                 inset = 0.0625f;
@@ -458,6 +473,32 @@ inline std::vector<blockoutline::Box> boxesForKind(const std::vector<OverlayTarg
         boxes.push_back(makeStorageBox(target.position, kind, expansion, modelSized));
     }
     return boxes;
+}
+
+// The middle of the box a highlight draws for one container. Tracers aim here
+// rather than at the voxel center so the line still meets the block when model
+// sizing shrinks it (a chest is only 0.875 blocks tall).
+inline Vec3 storageCenter(const BlockPos& position, StorageKind kind, bool modelSized) {
+    const blockoutline::Box box = makeStorageBox(position, kind, 0.0f, modelSized);
+    return {(box.min.x + box.max.x) * 0.5f,
+            (box.min.y + box.max.y) * 0.5f,
+            (box.min.z + box.max.z) * 0.5f};
+}
+
+// Tracer lines for one highlight group: a segment from the chosen origin to
+// every container of that group, ready for the same line renderer the box
+// outlines use. `out` is reused across frames, so a busy base costs no
+// allocation once the vector has grown to size.
+inline void collectTracers(const std::vector<OverlayTarget>& targets,
+                           StorageKind kind,
+                           const Vec3& origin,
+                           bool modelSized,
+                           std::vector<blockoutline::Edge>& out) {
+    out.clear();
+    for (const auto& target : targets) {
+        if (target.kind != kind) continue;
+        out.push_back({origin, storageCenter(target.position, kind, modelSized)});
+    }
 }
 
 // Block types are stable for a whole session, and a sweep looks at the same
@@ -508,6 +549,45 @@ private:
     std::size_t m_misses = 0;
 };
 
+// Menu radios persist as "<selectedIndex>,<Option1>,<Option2>,...". Writing the
+// value out lists every option, which is what the launcher needs to build the
+// picker, and reading it back accepts that whole string, a bare index (older
+// configs stored one) or a bare option name.
+inline std::string radioValue(std::span<const std::string_view> names, int index, int fallback) {
+    if (index < 0 || static_cast<std::size_t>(index) >= names.size()) index = fallback;
+    std::string value = std::to_string(index);
+    for (const std::string_view name : names) {
+        value += ',';
+        value += name;
+    }
+    return value;
+}
+
+inline int resolveRadio(std::span<const std::string_view> names, int fallback, std::string_view value) {
+    if (value.empty() || names.empty()) return fallback;
+    const std::size_t comma = value.find(',');
+    const std::string_view head = value.substr(0, comma);
+
+    bool numeric = !head.empty();
+    for (char ch : head) {
+        if (ch < '0' || ch > '9') {
+            numeric = false;
+            break;
+        }
+    }
+    if (numeric) {
+        int index = 0;
+        for (char ch : head) index = index * 10 + (ch - '0');
+        if (index >= 0 && static_cast<std::size_t>(index) < names.size()) return index;
+        return fallback;
+    }
+
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (head == names[i]) return static_cast<int>(i);
+    }
+    return fallback;
+}
+
 // "Scan Speed" is a menu radio: each option is a number of block positions the
 // sweep is allowed to check per game tick. Keeping it a radio instead of a
 // slider matches how the launcher renders big ranges and keeps the cost
@@ -530,40 +610,49 @@ inline constexpr std::size_t scanSpeedBudget(int index) {
 }
 
 inline std::string scanSpeedRadioValue(int index) {
-    if (index < 0 || static_cast<std::size_t>(index) >= kScanSpeedCount) index = kDefaultScanSpeed;
-    std::string value = std::to_string(index);
-    for (const std::string_view name : kScanSpeedNames) {
-        value += ',';
-        value += name;
-    }
-    return value;
+    return radioValue(kScanSpeedNames, index, kDefaultScanSpeed);
 }
 
-// Accepts the launcher's radio value ("<index>,Relaxed,..."), a bare index or a
-// bare option name, so configs written by either side keep working.
 inline int resolveScanSpeed(std::string_view value) {
-    if (value.empty()) return kDefaultScanSpeed;
-    const std::size_t comma = value.find(',');
-    const std::string_view head = value.substr(0, comma);
+    return resolveRadio(kScanSpeedNames, kDefaultScanSpeed, value);
+}
 
-    bool numeric = !head.empty();
-    for (char ch : head) {
-        if (ch < '0' || ch > '9') {
-            numeric = false;
-            break;
-        }
-    }
-    if (numeric) {
-        int index = 0;
-        for (char ch : head) index = index * 10 + (ch - '0');
-        if (index >= 0 && static_cast<std::size_t>(index) < kScanSpeedCount) return index;
-        return kDefaultScanSpeed;
-    }
+// Where a tracer line starts. "Camera" anchors it to the eye the world is
+// rendered from, so every line converges on the crosshair and points at the
+// container you are looking towards; "Feet" anchors it to the block you stand
+// in, which reads better from a third-person camera and shows direction
+// relative to the player instead of the view.
+enum class TracerOrigin : std::uint8_t {
+    Camera = 0,
+    Feet,
+    Count,
+};
 
-    for (std::size_t i = 0; i < kScanSpeedCount; ++i) {
-        if (head == kScanSpeedNames[i]) return static_cast<int>(i);
+inline constexpr std::size_t kTracerOriginCount = static_cast<std::size_t>(TracerOrigin::Count);
+inline constexpr std::array<std::string_view, kTracerOriginCount> kTracerOriginNames = {
+    "Camera", "Feet",
+};
+
+inline constexpr int kDefaultTracerOrigin = static_cast<int>(TracerOrigin::Camera);
+
+inline std::string tracerOriginRadioValue(int index) {
+    return radioValue(kTracerOriginNames, index, kDefaultTracerOrigin);
+}
+
+inline int resolveTracerOrigin(std::string_view value) {
+    return resolveRadio(kTracerOriginNames, kDefaultTracerOrigin, value);
+}
+
+// Resolves the configured origin to the world-space point tracers start from.
+// `feet` is the local player position sampled on the game tick, since the
+// render thread only knows the camera.
+inline Vec3 tracerOriginPoint(TracerOrigin origin, const Vec3& camera, const Vec3& feet) {
+    switch (origin) {
+        case TracerOrigin::Feet: return feet;
+        case TracerOrigin::Camera:
+        case TracerOrigin::Count:
+        default: return camera;
     }
-    return kDefaultScanSpeed;
 }
 
 } // namespace storageesp

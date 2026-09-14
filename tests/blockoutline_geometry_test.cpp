@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 namespace {
 
@@ -59,6 +60,15 @@ int main() {
     check(axisAligned, "every outline edge is axis aligned (no diagonal artifacts)");
     check(xEdges == 4 && yEdges == 4 && zEdges == 4,
           "outline contains four edges on each axis");
+
+    std::vector<blockoutline::Edge> segments;
+    blockoutline::collectBoxEdges({box, box}, segments);
+    check(segments.size() == 24, "flattening two boxes yields twenty-four line segments");
+    check(near(segments.front().from.x, edges.front().from.x) &&
+              near(segments[12].from.x, edges.front().from.x),
+          "flattened segments keep the boxEdges order of every box");
+    blockoutline::collectBoxEdges({}, segments);
+    check(segments.empty(), "the reused buffer is cleared instead of growing every frame");
 
     const auto faces = blockoutline::boxFaces(box);
     check(faces.size() == 6, "full fill contains six faces");

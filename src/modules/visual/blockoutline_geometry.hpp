@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 // Pure geometry and animation helpers for Block Outline. Keeping these free of
 // Minecraft pointers makes the renderer's coordinate/facing rules host-testable.
@@ -109,6 +110,17 @@ inline constexpr std::array<Face, 6> boxFaces(const Box& box) {
         boxFace(box, West),
         boxFace(box, East),
     }};
+}
+
+// Flattens box outlines into the line segments a renderer submits: twelve edges
+// per box, in the order boxEdges() returns them. `out` is reused across frames
+// so the flattening does not allocate once the buffer has grown to size.
+inline void collectBoxEdges(const std::vector<Box>& boxes, std::vector<Edge>& out) {
+    out.clear();
+    out.reserve(boxes.size() * 12);
+    for (const auto& box : boxes) {
+        for (const auto& edge : boxEdges(box)) out.push_back(edge);
+    }
 }
 
 // Camera-facing beam around an edge, used wherever a line has to be wider than

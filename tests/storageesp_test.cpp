@@ -31,6 +31,7 @@ struct Batch {
     int mode = -1;
     int reservedVertices = 0;
     int emittedVertices = 0;
+    std::vector<Vec3> vertices; // camera-relative, in emission order
 };
 
 std::vector<Batch> g_batches;
@@ -38,10 +39,15 @@ Batch g_currentBatch;
 
 void fakeRenderLevel(void*, void*, void*) {}
 void fakeTessBegin(void*, void*, int mode, int vertexCount, int) {
-    g_currentBatch = {mode, vertexCount, 0};
+    g_currentBatch = Batch{};
+    g_currentBatch.mode = mode;
+    g_currentBatch.reservedVertices = vertexCount;
 }
 void fakeTessColor(void*, float, float, float, float) {}
-void fakeTessVertex(void*, float, float, float) { ++g_currentBatch.emittedVertices; }
+void fakeTessVertex(void*, float x, float y, float z) {
+    ++g_currentBatch.emittedVertices;
+    g_currentBatch.vertices.push_back({x, y, z});
+}
 void fakeRenderMesh(void*, void*, void*, char*) { g_batches.push_back(g_currentBatch); }
 
 template <typename T, std::size_t N>
@@ -205,6 +211,34 @@ int fillBatches() {
     return count;
 }
 
+int lineVertices() {
+    int count = 0;
+    for (const auto& batch : g_batches) {
+        if (batch.mode == 4) count += batch.emittedVertices;
+    }
+    return count;
+}
+
+// True when at least one native-line batch was submitted and every segment in
+// those batches starts at `expected` (in the tessellator's camera-relative
+// space). This is how the tracer origin is checked: the first vertex of each
+// pair is the anchor the line was drawn from.
+bool lineBatchesStartAt(const Vec3& expected) {
+    bool sawBatch = false;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 4 || batch.vertices.size() < 2) continue;
+        sawBatch = true;
+        for (std::size_t i = 0; i + 1 < batch.vertices.size(); i += 2) {
+            const Vec3& from = batch.vertices[i];
+            if (!near(from.x, expected.x) || !near(from.y, expected.y) ||
+                !near(from.z, expected.z)) {
+                return false;
+            }
+        }
+    }
+    return sawBatch;
+}
+
 } // namespace
 
 int main() {
@@ -265,11 +299,7 @@ int main() {
                   near(world.colorHolder[2], 0.4f) && near(world.colorHolder[3], 0.5f),
               "the overlay restores ScreenContext color state");
 
-        int lineVertices = 0;
-        for (const auto& batch : g_batches) {
-            if (batch.mode == 4) lineVertices += batch.emittedVertices;
-        }
-        check(lineVertices == 4 * 24, "all four in-range containers draw twelve edges each");
+        check(lineVertices() == 4 * 24, "all four in-range containers draw twelve edges each");
 
         module.fill = true;
         module.fillOpacity = 0.5f;
@@ -300,6 +330,42 @@ int main() {
         check(cappedBoxes == 1, "the box cap keeps only the nearest container");
         module.maxBoxes = 64;
 
+        std::printf("storage esp tracers\n");
+        module.outline = false;
+        module.tracer = true;
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(outlineBatches() == 3, "one tracer line batch per highlight group");
+        check(lineVertices() == 4 * 2, "every in-range container gets exactly one tracer segment");
+        check(fillBatches() == 3, "a tracer thicker than a hairline also builds camera-facing quads");
+        bool tracerCountsMatch = true;
+        for (const auto& batch : g_batches) {
+            if (batch.emittedVertices != batch.reservedVertices) tracerCountsMatch = false;
+        }
+        check(tracerCountsMatch, "tracer batches emit exactly what they reserved");
+        check(lineBatchesStartAt({0.0f, 0.0f, 0.0f}),
+              "camera-anchored tracers start at the camera, the origin of the render space");
+
+        module.tracerOrigin = 1; // Feet: published by the tick from the player position
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(lineBatchesStartAt({0.0f, -0.5f, 0.0f}),
+              "feet-anchored tracers start at the player position the tick sampled");
+        module.tracerOrigin = 0;
+
+        module.tracerThickness = 1.0f;
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(fillBatches() == 0 && outlineBatches() == 3,
+              "a hairline tracer skips the quad pass and stays a native line");
+        module.tracerThickness = 2.0f;
+
+        module.tracer = false;
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(g_batches.empty(), "with the boxes and the tracers both off nothing is submitted");
+        module.outline = true;
+
         std::printf("storage esp cache upkeep\n");
         setBlock({10, 64, 9}, nullptr); // the chest got broken or moved
         module.scanSpeed = 3;           // Instant: one tick covers the whole area
@@ -329,9 +395,47 @@ int main() {
         check(s_scan.region.anchor.x == 300 && s_scan.region.anchor.z == 300,
               "the sweep re-centers on the player after a teleport");
 
+        std::printf("storage esp copper chests\n");
+        setBlock({302, 64, 301}, "minecraft:oxidized_copper_chest");
+        setBlock({303, 64, 301}, "minecraft:waxed_copper_chest");
+        setBlock({304, 64, 301}, "minecraft:chest");
+        tick(world);
+        const auto* copper = s_cache.find({302, 64, 301});
+        const auto* waxed = s_cache.find({303, 64, 301});
+        const auto* plain = s_cache.find({304, 64, 301});
+        check(copper && copper->kind == Kind::CopperChest,
+              "an oxidized copper chest is remembered in its own group");
+        check(waxed && waxed->kind == Kind::CopperChest,
+              "waxed copper chests share the copper group");
+        check(plain && plain->kind == Kind::Chest,
+              "a wooden chest next to them stays in the chest group");
+
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(outlineBatches() == 2,
+              "copper chests are drawn as their own batch, apart from wooden chests");
+
+        module.showCopperChests = false;
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(outlineBatches() == 1, "turning the copper group off hides it immediately");
+        module.showCopperChests = true;
+
+        setBlock({302, 64, 301}, nullptr);
+        setBlock({303, 64, 301}, nullptr);
+        setBlock({304, 64, 301}, nullptr);
+        tick(world);
+        check(s_cache.empty(), "copper chests that were broken stop being highlighted");
+
         std::printf("storage esp config\n");
         module.showBarrels = false;
         module.showChestsColor = 0xFF112233u;
+        module.showCopperChests = false;
+        module.showCopperChestsColor = 0xFF123456u;
+        module.tracer = true;
+        module.tracerThickness = 5.0f;
+        module.tracerOpacity = 0.5f;
+        module.tracerOrigin = 1;
         module.lineThickness = 4.0f;
         module.throughWalls = false;
         module.modelSizedBoxes = false;
@@ -346,7 +450,14 @@ int main() {
         StorageEspModule restored;
         restored.loadConfig(saved);
         check(!restored.showBarrels && restored.showChests, "highlight groups round-trip");
+        check(!restored.showCopperChests, "the copper chest group round-trips");
         check(restored.showChestsColor == 0xFF112233u, "colors round-trip");
+        check(restored.showCopperChestsColor == 0xFF123456u, "the copper chest color round-trips");
+        check(restored.tracer, "the tracer toggle round-trips");
+        check(near(restored.tracerThickness, 5.0f) && near(restored.tracerOpacity, 0.5f),
+              "the tracer style round-trips");
+        check(restored.tracerOrigin == 1,
+              "the tracer origin round-trips through the launcher radio format");
         check(near(restored.lineThickness, 4.0f), "thickness round-trips");
         check(!restored.throughWalls && !restored.modelSizedBoxes, "render options round-trip");
         check(restored.pulse, "animation toggles round-trip");
@@ -354,6 +465,7 @@ int main() {
         check(restored.scanSpeed == 3, "the radio value round-trips through the launcher format");
         check(restored.maxBoxes == 12, "the box cap round-trips");
         check(saved["showChestsColor"].is_string(), "colors are saved as #rrggbb strings for the picker");
+        check(saved["tracerOrigin"].is_string(), "the tracer origin is saved as a radio value string");
 
         nlohmann::json legacy;
         legacy["showOutline"] = false;
@@ -365,6 +477,10 @@ int main() {
         legacy["tightBoxes"] = false;
         legacy["opacity"] = 2.0f;
         legacy["scanSpeed"] = "Fast";
+        legacy["showTracers"] = true;
+        legacy["tracerWidth"] = 20.0f;   // out of range: clamped instead of rejected
+        legacy["tracerOpacity"] = 3.0f;
+        legacy["tracerOrigin"] = "Feet";
         StorageEspModule fromLegacy;
         fromLegacy.loadConfig(legacy);
         check(!fromLegacy.outline, "legacy showOutline is imported");
@@ -374,12 +490,24 @@ int main() {
         check(fromLegacy.throughWalls && !fromLegacy.modelSizedBoxes, "legacy xray/tightBoxes are imported");
         check(near(fromLegacy.fillOpacity, 1.0f), "opacity clamps to fully opaque");
         check(fromLegacy.scanSpeed == 2, "a bare option name from an older config resolves");
+        check(fromLegacy.tracer, "the showTracers alias is imported");
+        check(near(fromLegacy.tracerThickness, 10.0f), "the tracer width clamps to the widest line");
+        check(near(fromLegacy.tracerOpacity, 1.0f), "the tracer opacity clamps to fully opaque");
+        check(fromLegacy.tracerOrigin == 1, "a bare tracer origin name resolves");
 
         nlohmann::json speedAsIndex;
         speedAsIndex["scanSpeed"] = 0;
         StorageEspModule numericSpeed;
         numericSpeed.loadConfig(speedAsIndex);
         check(numericSpeed.scanSpeed == 0, "a numeric scan speed (the legacy key type) still loads");
+
+        nlohmann::json originAsIndex;
+        originAsIndex["tracerOrigin"] = 1;
+        originAsIndex["tracer"] = false;
+        StorageEspModule numericOrigin;
+        numericOrigin.loadConfig(originAsIndex);
+        check(numericOrigin.tracerOrigin == 1 && !numericOrigin.tracer,
+              "a numeric tracer origin still loads and tracers stay opt-in");
     }
 
     std::printf("\n");

@@ -53,6 +53,23 @@ int main() {
           "trapped chests are their own group");
     check(storageesp::classify("minecraft:ender_chest") == StorageKind::EnderChest,
           "ender chests are not confused with normal chests");
+    check(storageesp::classify("minecraft:copper_chest") == StorageKind::CopperChest,
+          "copper chests are their own group");
+    check(storageesp::classify("minecraft:exposed_copper_chest") == StorageKind::CopperChest &&
+              storageesp::classify("minecraft:weathered_copper_chest") == StorageKind::CopperChest &&
+              storageesp::classify("minecraft:oxidized_copper_chest") == StorageKind::CopperChest,
+          "every copper chest oxidation stage is a copper chest");
+    check(storageesp::classify("minecraft:waxed_copper_chest") == StorageKind::CopperChest &&
+              storageesp::classify("minecraft:waxed_oxidized_copper_chest") == StorageKind::CopperChest,
+          "waxed copper chests keep the copper group");
+    check(storageesp::classify("copper_chest") == StorageKind::CopperChest,
+          "unnamespaced copper chests still match");
+    check(storageesp::classify("minecraft:copper_block") == StorageKind::None &&
+              storageesp::classify("minecraft:oxidized_cut_copper") == StorageKind::None &&
+              storageesp::classify("minecraft:copper_grate") == StorageKind::None,
+          "copper building blocks are not storage");
+    check(storageesp::classify("minecraft:trapped_chest") == StorageKind::TrappedChest,
+          "the copper suffix test does not swallow trapped chests");
     check(storageesp::classify("minecraft:undyed_shulker_box") == StorageKind::ShulkerBox,
           "undyed shulker boxes are shulker boxes");
     check(storageesp::classify("minecraft:light_blue_shulker_box") == StorageKind::ShulkerBox,
@@ -72,10 +89,15 @@ int main() {
 
     storageesp::CategoryFilter filter;
     filter.dispensers = false;
+    filter.copperChests = false;
     check(storageesp::enabled(filter, StorageKind::Chest), "enabled groups are highlighted");
     check(!storageesp::enabled(filter, StorageKind::Dispenser),
           "a group turned off in the menu is skipped");
+    check(!storageesp::enabled(filter, StorageKind::CopperChest),
+          "copper chests can be hidden without hiding wooden chests");
     check(!storageesp::enabled(filter, StorageKind::None), "None is never drawn");
+    check(storageesp::enabled(storageesp::CategoryFilter{}, StorageKind::CopperChest),
+          "copper chests are highlighted by default");
 
     std::printf("storage esp box geometry\n");
     const BlockPos position{-4, 63, 9};
@@ -97,6 +119,15 @@ int main() {
     const blockoutline::Box hopper = storageesp::makeStorageBox(position, StorageKind::Hopper, 0.0f, true);
     check(near(hopper.min.y, 63.15625f) && near(hopper.max.y, 64.0f),
           "a model-sized hopper box starts at the funnel");
+
+    const blockoutline::Box copper =
+        storageesp::makeStorageBox(position, StorageKind::CopperChest, 0.0f, true);
+    check(near(copper.min.x, model.min.x) && near(copper.max.y, model.max.y),
+          "a copper chest follows the chest model instead of filling its voxel");
+    const blockoutline::Box copperVoxel =
+        storageesp::makeStorageBox(position, StorageKind::CopperChest, 0.0f, false);
+    check(near(copperVoxel.min.x, voxel.min.x) && near(copperVoxel.max.y, voxel.max.y),
+          "without model sizing a copper chest fills its voxel like every other group");
 
     const auto edges = blockoutline::boxEdges(voxel);
     check(edges.size() == 12, "every highlighted block has twelve edges");
@@ -244,6 +275,36 @@ int main() {
     check(near(chestBoxes.front().min.x, 0.0605f) && near(chestBoxes.front().max.x, 0.9395f),
           "a highlighted chest keeps its model margin plus the expansion");
 
+    std::printf("storage esp tracers\n");
+    std::vector<blockoutline::Edge> tracers;
+    const Vec3 tracerFrom{0.5f, 1.5f, 0.5f};
+    storageesp::collectTracers(targets, StorageKind::Chest, tracerFrom, true, tracers);
+    check(tracers.size() == 1, "one tracer per container of the group");
+    check(near(tracers.front().from.x, tracerFrom.x) && near(tracers.front().from.y, tracerFrom.y) &&
+              near(tracers.front().from.z, tracerFrom.z),
+          "a tracer starts at the configured origin");
+    check(near(tracers.front().to.x, 0.5f) && near(tracers.front().to.y, 0.5f) &&
+              near(tracers.front().to.z, 0.5f),
+          "a tracer ends in the middle of the box its container is drawn with");
+
+    storageesp::collectTracers(targets, StorageKind::Barrel, tracerFrom, true, tracers);
+    check(tracers.size() == 1 && near(tracers.front().to.z, 6.5f),
+          "the reused buffer is refilled for the next group, not appended to");
+
+    storageesp::collectTracers(targets, StorageKind::Hopper, tracerFrom, true, tracers);
+    check(tracers.empty(), "a group with no visible container draws no tracer");
+
+    const Vec3 modelCenter =
+        storageesp::storageCenter({0, 64, 0}, StorageKind::Chest, true);
+    const Vec3 voxelCenter =
+        storageesp::storageCenter({0, 64, 0}, StorageKind::Chest, false);
+    check(near(modelCenter.y, 64.5f) && near(voxelCenter.y, 64.5f),
+          "a chest is aimed at from the same height either way");
+    const Vec3 hopperCenter =
+        storageesp::storageCenter({0, 64, 0}, StorageKind::Hopper, true);
+    check(near(hopperCenter.y, 64.578125f),
+          "a model-sized hopper is aimed at the middle of its funnel, not of the voxel");
+
     std::printf("storage esp block-type memoization\n");
     storageesp::TypeKindCache types;
     int resolved = 0;
@@ -286,6 +347,45 @@ int main() {
         }
         check(commas == storageesp::kScanSpeedCount,
               "the radio value lists every option after the selected index");
+    }
+
+    std::printf("storage esp tracer origin setting\n");
+    check(storageesp::kTracerOriginCount == 2 &&
+              storageesp::kTracerOriginNames[0] == "Camera" &&
+              storageesp::kTracerOriginNames[1] == "Feet",
+          "the origin picker offers camera and feet");
+    check(storageesp::resolveTracerOrigin("0,Camera,Feet") == 0 &&
+              storageesp::resolveTracerOrigin("1,Camera,Feet") == 1,
+          "the full launcher radio value resolves to its index");
+    check(storageesp::resolveTracerOrigin("Feet") == 1, "a bare origin name resolves");
+    check(storageesp::resolveTracerOrigin("1") == 1, "a bare numeric origin resolves");
+    check(storageesp::resolveTracerOrigin("nonsense") == storageesp::kDefaultTracerOrigin &&
+              storageesp::resolveTracerOrigin("") == storageesp::kDefaultTracerOrigin &&
+              storageesp::resolveTracerOrigin("9") == storageesp::kDefaultTracerOrigin,
+          "an unknown or out-of-range origin falls back to the camera");
+    check(storageesp::resolveTracerOrigin(storageesp::tracerOriginRadioValue(1)) == 1,
+          "the saved origin round-trips");
+    check(storageesp::tracerOriginRadioValue(99) ==
+              storageesp::tracerOriginRadioValue(storageesp::kDefaultTracerOrigin),
+          "an out-of-range index saves as the default origin");
+    {
+        const std::string saved = storageesp::tracerOriginRadioValue(0);
+        std::size_t commas = 0;
+        for (char ch : saved) {
+            if (ch == ',') ++commas;
+        }
+        check(commas == storageesp::kTracerOriginCount,
+              "the origin radio value lists every option after the selected index");
+    }
+    {
+        const Vec3 camera{1.0f, 2.0f, 3.0f};
+        const Vec3 feet{1.0f, 0.0f, 3.0f};
+        check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Camera, camera, feet) == camera,
+              "the camera origin uses the render camera");
+        check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Feet, camera, feet) == feet,
+              "the feet origin uses the player position the tick published");
+        check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Count, camera, feet) == camera,
+              "an out-of-range origin renders from the camera");
     }
 
     std::printf("\n");
