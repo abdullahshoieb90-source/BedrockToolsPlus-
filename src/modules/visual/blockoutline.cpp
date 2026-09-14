@@ -8,6 +8,7 @@
 #include <bedrocktools/sdk/Types.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -300,61 +301,9 @@ void drawOutline(void* screenContext,
         setTessellatorColor(tessellator, rgb, alpha);
 
         for (const auto& edge : edges) {
-            bedrocktools::sdk::Vec3 p1{
-                edge.from.x - camera.x,
-                edge.from.y - camera.y,
-                edge.from.z - camera.z,
-            };
-            bedrocktools::sdk::Vec3 p2{
-                edge.to.x - camera.x,
-                edge.to.y - camera.y,
-                edge.to.z - camera.z,
-            };
+            std::array<bedrocktools::sdk::Vec3, 4> quad{};
+            if (!blockoutline::makeEdgeBeam(edge, camera, halfWidth, quad)) continue;
 
-            float dx = p2.x - p1.x;
-            float dy = p2.y - p1.y;
-            float dz = p2.z - p1.z;
-            const float length = std::sqrt(dx * dx + dy * dy + dz * dz);
-            if (length < 0.00001f) continue;
-            dx /= length;
-            dy /= length;
-            dz /= length;
-
-            // Camera is the origin in this coordinate space. dir x midpoint
-            // gives a vector perpendicular to both the edge and view ray.
-            const float mx = (p1.x + p2.x) * 0.5f;
-            const float my = (p1.y + p2.y) * 0.5f;
-            const float mz = (p1.z + p2.z) * 0.5f;
-            float sx = dy * mz - dz * my;
-            float sy = dz * mx - dx * mz;
-            float sz = dx * my - dy * mx;
-            float sideLength = std::sqrt(sx * sx + sy * sy + sz * sz);
-            if (sideLength < 0.00001f) {
-                // Looking directly along an edge: choose a stable arbitrary
-                // perpendicular instead of dropping that edge for one frame.
-                if (std::fabs(dy) < 0.9f) {
-                    sx = -dz; sy = 0.0f; sz = dx;
-                } else {
-                    sx = 1.0f; sy = 0.0f; sz = 0.0f;
-                }
-                sideLength = std::sqrt(sx * sx + sy * sy + sz * sz);
-                if (sideLength < 0.00001f) continue;
-            }
-            sx = sx / sideLength * halfWidth;
-            sy = sy / sideLength * halfWidth;
-            sz = sz / sideLength * halfWidth;
-
-            // Slightly overlap neighboring edge ends so all eight corners stay
-            // closed at high thickness values.
-            const float ex = dx * halfWidth;
-            const float ey = dy * halfWidth;
-            const float ez = dz * halfWidth;
-            const bedrocktools::sdk::Vec3 quad[4] = {
-                {p1.x - ex - sx, p1.y - ey - sy, p1.z - ez - sz},
-                {p2.x + ex - sx, p2.y + ey - sy, p2.z + ez - sz},
-                {p2.x + ex + sx, p2.y + ey + sy, p2.z + ez + sz},
-                {p1.x - ex + sx, p1.y - ey + sy, p1.z - ez + sz},
-            };
             for (const auto& vertex : quad) {
                 s_tessVertex(tessellator, vertex.x, vertex.y, vertex.z);
             }
