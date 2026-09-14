@@ -25,12 +25,14 @@
 namespace {
 
 using bedrocktools::sdk::BlockPos;
+using bedrocktools::sdk::Vec2;
 using bedrocktools::sdk::Vec3;
 
 struct Batch {
     int mode = -1;
     int reservedVertices = 0;
     int emittedVertices = 0;
+    std::vector<Vec3> vertices; // camera-relative, in emission order
 };
 
 std::vector<Batch> g_batches;
@@ -38,10 +40,15 @@ Batch g_currentBatch;
 
 void fakeRenderLevel(void*, void*, void*) {}
 void fakeTessBegin(void*, void*, int mode, int vertexCount, int) {
-    g_currentBatch = {mode, vertexCount, 0};
+    g_currentBatch = Batch{};
+    g_currentBatch.mode = mode;
+    g_currentBatch.reservedVertices = vertexCount;
 }
 void fakeTessColor(void*, float, float, float, float) {}
-void fakeTessVertex(void*, float, float, float) { ++g_currentBatch.emittedVertices; }
+void fakeTessVertex(void*, float x, float y, float z) {
+    ++g_currentBatch.emittedVertices;
+    g_currentBatch.vertices.push_back({x, y, z});
+}
 void fakeRenderMesh(void*, void*, void*, char*) { g_batches.push_back(g_currentBatch); }
 
 template <typename T, std::size_t N>
@@ -153,6 +160,7 @@ struct FakeWorld {
     alignas(std::max_align_t) std::array<std::byte, 0x100> dimension{};
     alignas(std::max_align_t) std::array<std::byte, 16> region{};
     alignas(std::max_align_t) std::array<std::byte, 32> position{};
+    alignas(std::max_align_t) std::array<std::byte, 16> rotationComponent{};
     alignas(std::max_align_t) std::array<std::byte, 256> screenContext{};
     alignas(std::max_align_t) std::array<std::byte, 0x500> levelRenderer{};
     alignas(std::max_align_t) std::array<std::byte, 0x1100> playerRenderer{};
@@ -163,9 +171,16 @@ struct FakeWorld {
         std::memcpy(position.data(), &at, sizeof(Vec3));
     }
 
+    // The tick publishes the player's rotation with its position, because the
+    // render pass has a camera position but no view direction of its own.
+    void setRotation(const Vec2& rotation) {
+        std::memcpy(rotationComponent.data(), &rotation, sizeof(Vec2));
+    }
+
     void bind() {
         void* regionPointer = region.data();
         void* positionPointer = position.data();
+        void* rotationPointer = rotationComponent.data();
         void* dimensionPointer = dimension.data();
         void* playerRendererPointer = playerRenderer.data();
         void* colorPointer = colorHolder.data();
@@ -174,6 +189,7 @@ struct FakeWorld {
         writeAt(dimension, bedrocktools::sdk::offsets::Dimension::mBlockSource, regionPointer);
         writeAt(player, bedrocktools::sdk::offsets::Actor::mDimension, dimensionPointer);
         writeAt(player, bedrocktools::sdk::offsets::Actor::mStateVectorComponent, positionPointer);
+        writeAt(player, bedrocktools::sdk::offsets::Actor::mActorRotationComponent, rotationPointer);
         writeAt(screenContext, bedrocktools::sdk::offsets::ScreenContext::mTessellator,
                 tessellatorPointer);
         writeAt(screenContext, bedrocktools::sdk::offsets::ScreenContext::mColorHolder, colorPointer);
@@ -203,6 +219,76 @@ int fillBatches() {
         if (batch.mode == 1) ++count;
     }
     return count;
+}
+
+int lineVertices() {
+    int count = 0;
+    for (const auto& batch : g_batches) {
+        if (batch.mode == 4) count += batch.emittedVertices;
+    }
+    return count;
+}
+
+float length(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
+
+// True when at least one native-line batch was submitted and every segment in
+// those batches starts `depth` blocks in front of the camera along `forward`.
+// Submitted vertices are camera-relative, so the dot product is the view depth.
+// A tracer start at depth zero is the bug this guards: it projects through a
+// divide by zero and mobile drivers drop the primitive instead of clipping it.
+bool lineBatchesStartAtDepth(float depth, const Vec3& forward) {
+    bool sawBatch = false;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 4 || batch.vertices.size() < 2) continue;
+        sawBatch = true;
+        for (std::size_t i = 0; i + 1 < batch.vertices.size(); i += 2) {
+            const Vec3& from = batch.vertices[i];
+            const float fromDepth = from.x * forward.x + from.y * forward.y + from.z * forward.z;
+            if (!near(fromDepth, depth, 0.001f)) return false;
+        }
+    }
+    return sawBatch;
+}
+
+// True when every submitted line segment lies on one ray out of the camera, so
+// its two camera-relative vertices are parallel. That is what a camera-anchored
+// tracer has to look like: all of them converge on the crosshair.
+bool lineBatchesRunThroughTheCamera() {
+    bool sawBatch = false;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 4 || batch.vertices.size() < 2) continue;
+        sawBatch = true;
+        for (std::size_t i = 0; i + 1 < batch.vertices.size(); i += 2) {
+            const Vec3& from = batch.vertices[i];
+            const Vec3& to = batch.vertices[i + 1];
+            const Vec3 cross{from.y * to.z - from.z * to.y,
+                             from.z * to.x - from.x * to.z,
+                             from.x * to.y - from.y * to.x};
+            if (length(cross) > 0.001f * std::max(1.0f, length(to))) return false;
+        }
+    }
+    return sawBatch;
+}
+
+// True when every camera-facing strip is wider at its far end than at its near
+// end, by more than the distance ratio would suggest is accidental. Corners are
+// emitted near-far-far-near, so the far end is |v2 - v1| and the near |v3 - v0|.
+bool stripsWidenWithDistance() {
+    bool sawBatch = false;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 1 || batch.vertices.size() < 4) continue;
+        sawBatch = true;
+        for (std::size_t i = 0; i + 4 <= batch.vertices.size(); i += 4) {
+            const Vec3 nearSide{batch.vertices[i + 3].x - batch.vertices[i].x,
+                                batch.vertices[i + 3].y - batch.vertices[i].y,
+                                batch.vertices[i + 3].z - batch.vertices[i].z};
+            const Vec3 farSide{batch.vertices[i + 2].x - batch.vertices[i + 1].x,
+                               batch.vertices[i + 2].y - batch.vertices[i + 1].y,
+                               batch.vertices[i + 2].z - batch.vertices[i + 1].z};
+            if (length(farSide) < length(nearSide) * 2.0f) return false;
+        }
+    }
+    return sawBatch;
 }
 
 } // namespace
@@ -265,11 +351,7 @@ int main() {
                   near(world.colorHolder[2], 0.4f) && near(world.colorHolder[3], 0.5f),
               "the overlay restores ScreenContext color state");
 
-        int lineVertices = 0;
-        for (const auto& batch : g_batches) {
-            if (batch.mode == 4) lineVertices += batch.emittedVertices;
-        }
-        check(lineVertices == 4 * 24, "all four in-range containers draw twelve edges each");
+        check(lineVertices() == 4 * 24, "all four in-range containers draw twelve edges each");
 
         module.fill = true;
         module.fillOpacity = 0.5f;
@@ -300,6 +382,64 @@ int main() {
         check(cappedBoxes == 1, "the box cap keeps only the nearest container");
         module.maxBoxes = 64;
 
+        std::printf("storage esp tracers\n");
+        // Looking towards +X: the two chests are in front of the camera, the
+        // ender chest and the barrel are behind it.
+        world.setRotation({0.0f, -90.0f});
+        const Vec3 forward{1.0f, 0.0f, 0.0f};
+        tick(world); // the tick publishes the rotation to the render pass
+
+        module.outline = false;
+        module.tracer = true;
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(outlineBatches() == 1, "the visible tracers of a group are one line batch");
+        check(lineVertices() == 2 * 2,
+              "containers behind the eye plane get no tracer instead of a degenerate one");
+        check(fillBatches() == 1, "a tracer thicker than a hairline also builds a camera-facing strip");
+        bool tracerCountsMatch = true;
+        for (const auto& batch : g_batches) {
+            if (batch.emittedVertices != batch.reservedVertices) tracerCountsMatch = false;
+        }
+        check(tracerCountsMatch, "tracer batches emit exactly what they reserved");
+        check(lineBatchesStartAtDepth(storageesp::kTracerNearPlane, forward),
+              "a camera-anchored tracer starts just in front of the eye plane, never on it");
+        check(lineBatchesRunThroughTheCamera(),
+              "camera-anchored tracers run along the eye ray, so they converge on the crosshair");
+        check(stripsWidenWithDistance(),
+              "the strip widens with distance so a long tracer keeps one width on screen");
+
+        module.tracerOrigin = 1; // Feet: published by the tick from the player position
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(lineVertices() == 2 * 2, "feet-anchored tracers reach the same containers");
+        check(lineBatchesStartAtDepth(storageesp::kTracerNearPlane, forward),
+              "a feet anchor sitting on the eye plane is clipped forward instead of dropped");
+        check(!lineBatchesRunThroughTheCamera(),
+              "feet-anchored tracers start at the player, not on the eye ray");
+        module.tracerOrigin = 0;
+
+        module.tracerThickness = 1.0f;
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(fillBatches() == 0 && outlineBatches() == 1,
+              "a hairline tracer skips the strip pass and stays a native line");
+        module.tracerThickness = 2.0f;
+
+        world.setRotation({90.0f, -90.0f}); // look straight down: nothing is in front of the camera
+        tick(world);
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(g_batches.empty(), "nothing is submitted when no container is in front of the camera");
+        world.setRotation({0.0f, -90.0f});
+        tick(world);
+
+        module.tracer = false;
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(g_batches.empty(), "with the boxes and the tracers both off nothing is submitted");
+        module.outline = true;
+
         std::printf("storage esp cache upkeep\n");
         setBlock({10, 64, 9}, nullptr); // the chest got broken or moved
         module.scanSpeed = 3;           // Instant: one tick covers the whole area
@@ -329,9 +469,47 @@ int main() {
         check(s_scan.region.anchor.x == 300 && s_scan.region.anchor.z == 300,
               "the sweep re-centers on the player after a teleport");
 
+        std::printf("storage esp copper chests\n");
+        setBlock({302, 64, 301}, "minecraft:oxidized_copper_chest");
+        setBlock({303, 64, 301}, "minecraft:waxed_copper_chest");
+        setBlock({304, 64, 301}, "minecraft:chest");
+        tick(world);
+        const auto* copper = s_cache.find({302, 64, 301});
+        const auto* waxed = s_cache.find({303, 64, 301});
+        const auto* plain = s_cache.find({304, 64, 301});
+        check(copper && copper->kind == Kind::CopperChest,
+              "an oxidized copper chest is remembered in its own group");
+        check(waxed && waxed->kind == Kind::CopperChest,
+              "waxed copper chests share the copper group");
+        check(plain && plain->kind == Kind::Chest,
+              "a wooden chest next to them stays in the chest group");
+
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(outlineBatches() == 2,
+              "copper chests are drawn as their own batch, apart from wooden chests");
+
+        module.showCopperChests = false;
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(outlineBatches() == 1, "turning the copper group off hides it immediately");
+        module.showCopperChests = true;
+
+        setBlock({302, 64, 301}, nullptr);
+        setBlock({303, 64, 301}, nullptr);
+        setBlock({304, 64, 301}, nullptr);
+        tick(world);
+        check(s_cache.empty(), "copper chests that were broken stop being highlighted");
+
         std::printf("storage esp config\n");
         module.showBarrels = false;
         module.showChestsColor = 0xFF112233u;
+        module.showCopperChests = false;
+        module.showCopperChestsColor = 0xFF123456u;
+        module.tracer = true;
+        module.tracerThickness = 5.0f;
+        module.tracerOpacity = 0.5f;
+        module.tracerOrigin = 1;
         module.lineThickness = 4.0f;
         module.throughWalls = false;
         module.modelSizedBoxes = false;
@@ -346,7 +524,14 @@ int main() {
         StorageEspModule restored;
         restored.loadConfig(saved);
         check(!restored.showBarrels && restored.showChests, "highlight groups round-trip");
+        check(!restored.showCopperChests, "the copper chest group round-trips");
         check(restored.showChestsColor == 0xFF112233u, "colors round-trip");
+        check(restored.showCopperChestsColor == 0xFF123456u, "the copper chest color round-trips");
+        check(restored.tracer, "the tracer toggle round-trips");
+        check(near(restored.tracerThickness, 5.0f) && near(restored.tracerOpacity, 0.5f),
+              "the tracer style round-trips");
+        check(restored.tracerOrigin == 1,
+              "the tracer origin round-trips through the launcher radio format");
         check(near(restored.lineThickness, 4.0f), "thickness round-trips");
         check(!restored.throughWalls && !restored.modelSizedBoxes, "render options round-trip");
         check(restored.pulse, "animation toggles round-trip");
@@ -354,6 +539,7 @@ int main() {
         check(restored.scanSpeed == 3, "the radio value round-trips through the launcher format");
         check(restored.maxBoxes == 12, "the box cap round-trips");
         check(saved["showChestsColor"].is_string(), "colors are saved as #rrggbb strings for the picker");
+        check(saved["tracerOrigin"].is_string(), "the tracer origin is saved as a radio value string");
 
         nlohmann::json legacy;
         legacy["showOutline"] = false;
@@ -365,6 +551,10 @@ int main() {
         legacy["tightBoxes"] = false;
         legacy["opacity"] = 2.0f;
         legacy["scanSpeed"] = "Fast";
+        legacy["showTracers"] = true;
+        legacy["tracerWidth"] = 20.0f;   // out of range: clamped instead of rejected
+        legacy["tracerOpacity"] = 3.0f;
+        legacy["tracerOrigin"] = "Feet";
         StorageEspModule fromLegacy;
         fromLegacy.loadConfig(legacy);
         check(!fromLegacy.outline, "legacy showOutline is imported");
@@ -374,12 +564,24 @@ int main() {
         check(fromLegacy.throughWalls && !fromLegacy.modelSizedBoxes, "legacy xray/tightBoxes are imported");
         check(near(fromLegacy.fillOpacity, 1.0f), "opacity clamps to fully opaque");
         check(fromLegacy.scanSpeed == 2, "a bare option name from an older config resolves");
+        check(fromLegacy.tracer, "the showTracers alias is imported");
+        check(near(fromLegacy.tracerThickness, 10.0f), "the tracer width clamps to the widest line");
+        check(near(fromLegacy.tracerOpacity, 1.0f), "the tracer opacity clamps to fully opaque");
+        check(fromLegacy.tracerOrigin == 1, "a bare tracer origin name resolves");
 
         nlohmann::json speedAsIndex;
         speedAsIndex["scanSpeed"] = 0;
         StorageEspModule numericSpeed;
         numericSpeed.loadConfig(speedAsIndex);
         check(numericSpeed.scanSpeed == 0, "a numeric scan speed (the legacy key type) still loads");
+
+        nlohmann::json originAsIndex;
+        originAsIndex["tracerOrigin"] = 1;
+        originAsIndex["tracer"] = false;
+        StorageEspModule numericOrigin;
+        numericOrigin.loadConfig(originAsIndex);
+        check(numericOrigin.tracerOrigin == 1 && !numericOrigin.tracer,
+              "a numeric tracer origin still loads and tracers stay opt-in");
     }
 
     std::printf("\n");
