@@ -30,6 +30,14 @@ bool near(float a, float b, float epsilon = 0.0001f) {
     return std::fabs(a - b) <= epsilon;
 }
 
+float length(float x, float y, float z) {
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+float length(const bedrocktools::sdk::Vec3& v) {
+    return length(v.x, v.y, v.z);
+}
+
 using storageesp::ScanRegion;
 using storageesp::StorageKind;
 
@@ -276,23 +284,71 @@ int main() {
           "a highlighted chest keeps its model margin plus the expansion");
 
     std::printf("storage esp tracers\n");
-    std::vector<blockoutline::Edge> tracers;
-    const Vec3 tracerFrom{0.5f, 1.5f, 0.5f};
-    storageesp::collectTracers(targets, StorageKind::Chest, tracerFrom, true, tracers);
-    check(tracers.size() == 1, "one tracer per container of the group");
-    check(near(tracers.front().from.x, tracerFrom.x) && near(tracers.front().from.y, tracerFrom.y) &&
-              near(tracers.front().from.z, tracerFrom.z),
-          "a tracer starts at the configured origin");
-    check(near(tracers.front().to.x, 0.5f) && near(tracers.front().to.y, 0.5f) &&
-              near(tracers.front().to.z, 0.5f),
-          "a tracer ends in the middle of the box its container is drawn with");
+    // Straight ahead, straight behind, and ahead in another group: the tracer
+    // pass has to keep the first, drop the second and ignore the third.
+    const std::vector<storageesp::FoundBlock> tracerBlocks = {
+        {{0, 0, 4}, StorageKind::Chest},
+        {{0, 0, -6}, StorageKind::Chest},
+        {{0, 0, 9}, StorageKind::Barrel},
+    };
+    std::vector<storageesp::OverlayTarget> tracerTargets;
+    storageesp::collectVisible(tracerBlocks, camera, 24.0f, 64, storageesp::CategoryFilter{},
+                               tracerTargets);
+    check(tracerTargets.size() == 3, "the scan area keeps all three containers as targets");
 
-    storageesp::collectTracers(targets, StorageKind::Barrel, tracerFrom, true, tracers);
-    check(tracers.size() == 1 && near(tracers.front().to.z, 6.5f),
+    storageesp::TracerView view;
+    view.camera = camera;              // {0.5, 0.5, 0.5}
+    view.forward = {0.0f, 0.0f, 1.0f}; // looking towards +Z
+
+    std::vector<blockoutline::Edge> tracers;
+    storageesp::collectTracers(tracerTargets, StorageKind::Chest, camera, true, view, tracers);
+    check(tracers.size() == 1, "a container behind the eye plane gets no tracer at all");
+    check(near(tracers.front().from.z, 0.5f + storageesp::kTracerNearPlane) &&
+              near(tracers.front().from.x, 0.5f),
+          "a camera-anchored tracer starts just in front of the eye plane, never on it");
+    check(near(tracers.front().to.x, 0.5f) && near(tracers.front().to.y, 0.5f) &&
+              near(tracers.front().to.z, 4.5f),
+          "the tracer still ends in the middle of the box its container is drawn with");
+
+    storageesp::collectTracers(tracerTargets, StorageKind::Barrel, camera, true, view, tracers);
+    check(tracers.size() == 1 && near(tracers.front().to.z, 9.5f),
           "the reused buffer is refilled for the next group, not appended to");
 
-    storageesp::collectTracers(targets, StorageKind::Hopper, tracerFrom, true, tracers);
+    storageesp::collectTracers(tracerTargets, StorageKind::Hopper, camera, true, view, tracers);
     check(tracers.empty(), "a group with no visible container draws no tracer");
+
+    const Vec3 feet{0.5f, -1.1f, 0.5f}; // under the camera, so on the eye plane
+    storageesp::collectTracers(tracerTargets, StorageKind::Chest, feet, true, view, tracers);
+    check(tracers.size() == 1 &&
+              near(tracers.front().from.z, 0.5f + storageesp::kTracerNearPlane),
+          "a feet anchor sitting on the eye plane is clipped forward instead of dropped");
+    check(tracers.front().from.y > feet.y && tracers.front().from.y < 0.5f,
+          "the clipped start stays on the line between the feet and the container");
+
+    storageesp::TracerView blind;
+    blind.camera = camera;
+    blind.forward = {}; // the game did not expose a usable rotation
+    blockoutline::Edge atCamera{camera, {0.5f, 0.5f, 4.5f}};
+    check(storageesp::clipTracerEdge(atCamera, blind, storageesp::kTracerNearPlane),
+          "an unknown view direction still clips instead of dropping the tracer");
+    check(length(atCamera.from.x - camera.x, atCamera.from.y - camera.y,
+                 atCamera.from.z - camera.z) > 0.19f,
+          "the fallback pushes the start off the camera along the segment");
+    blockoutline::Edge zeroLength{camera, camera};
+    check(!storageesp::clipTracerEdge(zeroLength, blind, storageesp::kTracerNearPlane),
+          "a segment with nowhere to go is dropped");
+
+    std::printf("storage esp view direction\n");
+    check(near(storageesp::viewForward({0.0f, 0.0f}).z, 1.0f), "yaw 0 looks towards +Z");
+    check(near(storageesp::viewForward({0.0f, -90.0f}).x, 1.0f), "yaw -90 looks towards +X");
+    check(near(storageesp::viewForward({0.0f, 90.0f}).x, -1.0f), "yaw 90 looks towards -X");
+    check(near(storageesp::viewForward({-90.0f, 0.0f}).y, 1.0f), "negative pitch looks up");
+    check(near(storageesp::viewForward({90.0f, 0.0f}).y, -1.0f), "positive pitch looks down");
+    check(near(length(storageesp::viewForward({37.5f, -142.0f})), 1.0f),
+          "the look vector stays normalized at any pitch and yaw");
+    check(near(storageesp::viewDepth({0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}), 2.0f) &&
+              near(storageesp::viewDepth({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}), -1.0f),
+          "depth is positive in front of the camera and negative behind it");
 
     const Vec3 modelCenter =
         storageesp::storageCenter({0, 64, 0}, StorageKind::Chest, true);

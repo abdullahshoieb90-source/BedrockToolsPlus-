@@ -116,10 +116,18 @@ std::atomic<bool> s_resetRequested{false};
 std::mutex s_publishMutex;
 std::shared_ptr<const FoundBlocks> s_published = std::make_shared<const FoundBlocks>();
 
-// The local player's feet, sampled on the tick that runs the sweep. The render
-// thread only ever reads the camera out of the level renderer, and "Tracer
-// Origin: Feet" needs a point that follows the player between block updates.
-bedrocktools::sdk::Vec3 s_publishedFeet{};
+// What the tracer pass needs about the local player, sampled on the tick that
+// runs the sweep: the render thread only ever reads a camera *position* out of
+// the level renderer, and a tracer anchored to the player's feet (or clipped
+// against the eye plane) needs a point and a view direction that follow the
+// player between block updates.
+struct PublishedView {
+    bedrocktools::sdk::Vec3 feet{};
+    bedrocktools::sdk::Vec2 rotation{};
+    bool rotationValid = false;
+};
+
+PublishedView s_publishedView{};
 
 // Where the current sweep stands. Restarting it is cheap: the cache survives,
 // only the cursor and the chunk list are rebuilt.
@@ -136,6 +144,12 @@ struct ScanState {
 ScanState s_scan;
 
 constexpr float kBoxExpansion = 0.002f;      // same as Block Outline, avoids z-fighting
+// Camera-facing line widths, in world units per thickness step. Box edges are
+// about a block long and are drawn at this literal width; a tracer's width is
+// this value at one block of range and grows with distance from there, so it
+// keeps a steady width on screen however far the container is.
+constexpr float kBoxHalfWidthPerThickness = 0.005f;
+constexpr float kTracerHalfWidthPerThickness = 0.002f;
 constexpr int kReanchorDistance = 12;        // blocks the player may move before restarting
 constexpr int kKeepXMargin = 16;             // cached blocks stay this far past the scan area
 constexpr int kKeepYMargin = 8;
@@ -230,12 +244,18 @@ void publishCleared() {
     s_published = std::make_shared<const FoundBlocks>();
 }
 
-// Publishes the tracer anchor for "Feet" every tick, on its own: a tracer that
-// only refreshed together with the block snapshot would keep pointing at where
-// the player stood the last time a container was found or lost.
-void publishFeet(const bedrocktools::sdk::Vec3& feet) {
+// Publishes the tracer anchors every tick, on their own: a tracer that only
+// refreshed together with the block snapshot would keep pointing at where the
+// player stood the last time a container was found or lost.
+void publishView(const bedrocktools::sdk::Player* player, const bedrocktools::sdk::Vec3& feet) {
+    PublishedView next;
+    next.feet = feet;
+    if (player->rotationComponent()) {
+        next.rotation = player->rotation();
+        next.rotationValid = true;
+    }
     std::lock_guard<std::mutex> lock(s_publishMutex);
-    s_publishedFeet = feet;
+    s_publishedView = next;
 }
 
 // Puts the sweep cursor back at the player, and `clearFound` additionally
@@ -337,7 +357,7 @@ void scanStep(bedrocktools::sdk::Player* player) {
     if (requestedReset) restartSweep(true);
 
     const bedrocktools::sdk::Vec3 position = player->position();
-    publishFeet(position);
+    publishView(player, position);
 
     storageesp::ScanRegion wanted;
     wanted.anchor = {static_cast<int>(std::floor(position.x)),
@@ -421,6 +441,12 @@ void drawFill(void* screenContext,
 
 // Draws world-space line segments: box edges and tracer lines share this pass,
 // because both need the same two-step trick on Android.
+//
+// `constantScreenWidth` picks how the camera-facing quads are widened. Box
+// edges are about a block long, so one world-space width reads the same from
+// any distance. A tracer spans tens of blocks and is seen end-on: with a fixed
+// world width its far end is a fraction of a pixel, so its width instead grows
+// with the distance of each end, which keeps one steady width on screen.
 void drawSegments(void* screenContext,
                   void* tessellator,
                   void* material,
@@ -428,7 +454,8 @@ void drawSegments(void* screenContext,
                   const bedrocktools::sdk::Vec3& camera,
                   std::uint32_t rgb,
                   float alpha,
-                  float thickness) {
+                  float thickness,
+                  bool constantScreenWidth) {
     if (segments.empty() || alpha <= 0.001f) return;
 
     const float safeThickness = std::clamp(thickness, 1.0f, 10.0f);
@@ -436,12 +463,22 @@ void drawSegments(void* screenContext,
     // Above the hairline setting every segment becomes a camera-facing quad, so
     // the slider has a real effect on GLES drivers that ignore line width.
     if (safeThickness > 1.05f) {
-        const float halfWidth = safeThickness * 0.005f;
+        const float halfWidth = safeThickness *
+            (constantScreenWidth ? kTracerHalfWidthPerThickness : kBoxHalfWidthPerThickness);
         s_tessBegin(tessellator, nullptr, 1, static_cast<int>(segments.size()) * 8, 0);
         setTessellatorColor(tessellator, rgb, alpha);
         for (const auto& segment : segments) {
             std::array<bedrocktools::sdk::Vec3, 4> quad{};
-            if (!blockoutline::makeEdgeBeam(segment, camera, halfWidth, quad)) continue;
+            const bool built = constantScreenWidth
+                ? blockoutline::makeTaperedBeam(
+                      segment, camera,
+                      blockoutline::screenConstantHalfWidth(halfWidth, segment.from, camera,
+                                                            storageesp::kTracerWidthFloor),
+                      blockoutline::screenConstantHalfWidth(halfWidth, segment.to, camera,
+                                                            storageesp::kTracerWidthFloor),
+                      quad)
+                : blockoutline::makeEdgeBeam(segment, camera, halfWidth, quad);
+            if (!built) continue;
             for (const auto& vertex : quad) {
                 s_tessVertex(tessellator, vertex.x, vertex.y, vertex.z);
             }
@@ -477,18 +514,22 @@ void drawOutline(void* screenContext,
 
     static thread_local std::vector<blockoutline::Edge> segments;
     blockoutline::collectBoxEdges(boxes, segments);
-    drawSegments(screenContext, tessellator, material, segments, camera, rgb, alpha, thickness);
+    drawSegments(screenContext, tessellator, material, segments, camera, rgb, alpha, thickness,
+                 /*constantScreenWidth=*/false);
 }
 
 // One line per container of a highlight group, from the configured tracer
-// origin to the middle of the box that container is drawn with.
+// origin to the middle of the box that container is drawn with. Segments that
+// cannot be seen (container behind the eye plane) are dropped before anything
+// is submitted, and a start sitting on the camera is pulled down the line, so
+// no degenerate vertex ever reaches the driver.
 void drawTracers(void* screenContext,
                  void* tessellator,
                  void* material,
                  const std::vector<storageesp::OverlayTarget>& targets,
                  storageesp::StorageKind kind,
                  const bedrocktools::sdk::Vec3& origin,
-                 const bedrocktools::sdk::Vec3& camera,
+                 const storageesp::TracerView& view,
                  bool modelSized,
                  std::uint32_t rgb,
                  float alpha,
@@ -496,8 +537,9 @@ void drawTracers(void* screenContext,
     if (targets.empty() || alpha <= 0.001f) return;
 
     static thread_local std::vector<blockoutline::Edge> segments;
-    storageesp::collectTracers(targets, kind, origin, modelSized, segments);
-    drawSegments(screenContext, tessellator, material, segments, camera, rgb, alpha, thickness);
+    storageesp::collectTracers(targets, kind, origin, modelSized, view, segments);
+    drawSegments(screenContext, tessellator, material, segments, view.camera, rgb, alpha, thickness,
+                 /*constantScreenWidth=*/true);
 }
 
 void renderStorageEsp(void* levelRenderer, void* screenContext) {
@@ -524,11 +566,11 @@ void renderStorageEsp(void* levelRenderer, void* screenContext) {
         playerRenderer + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
 
     std::shared_ptr<const FoundBlocks> snapshot;
-    bedrocktools::sdk::Vec3 feet{};
+    PublishedView view;
     {
         std::lock_guard<std::mutex> lock(s_publishMutex);
         snapshot = s_published;
-        feet = s_publishedFeet;
+        view = s_publishedView;
     }
     if (!snapshot || snapshot->empty()) return;
 
@@ -576,8 +618,11 @@ void renderStorageEsp(void* levelRenderer, void* screenContext) {
 
     // One batch per highlight group, so the colors stay independent while the
     // number of tessellator submissions stays small.
+    storageesp::TracerView tracerView;
+    tracerView.camera = camera;
+    if (view.rotationValid) tracerView.forward = storageesp::viewForward(view.rotation);
     const auto tracerOrigin = storageesp::tracerOriginPoint(
-        static_cast<storageesp::TracerOrigin>(g_storageEsp->tracerOrigin), camera, feet);
+        static_cast<storageesp::TracerOrigin>(g_storageEsp->tracerOrigin), camera, view.feet);
     for (std::size_t index = 1; index < storageesp::kindCount; ++index) {
         const auto kind = static_cast<storageesp::StorageKind>(index);
         if (!storageesp::enabled(g_storageEsp->filter(), kind)) continue;
@@ -599,7 +644,7 @@ void renderStorageEsp(void* levelRenderer, void* screenContext) {
         }
         if (g_storageEsp->tracer) {
             drawTracers(screenContext, tessellator, outlineMaterial, targets, kind,
-                        tracerOrigin, camera, g_storageEsp->modelSizedBoxes, rgb,
+                        tracerOrigin, tracerView, g_storageEsp->modelSizedBoxes, rgb,
                         blockoutline::clampedOpacity(g_storageEsp->tracerOpacity, pulse),
                         g_storageEsp->tracerThickness);
         }

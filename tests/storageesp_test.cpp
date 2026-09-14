@@ -25,6 +25,7 @@
 namespace {
 
 using bedrocktools::sdk::BlockPos;
+using bedrocktools::sdk::Vec2;
 using bedrocktools::sdk::Vec3;
 
 struct Batch {
@@ -159,6 +160,7 @@ struct FakeWorld {
     alignas(std::max_align_t) std::array<std::byte, 0x100> dimension{};
     alignas(std::max_align_t) std::array<std::byte, 16> region{};
     alignas(std::max_align_t) std::array<std::byte, 32> position{};
+    alignas(std::max_align_t) std::array<std::byte, 16> rotationComponent{};
     alignas(std::max_align_t) std::array<std::byte, 256> screenContext{};
     alignas(std::max_align_t) std::array<std::byte, 0x500> levelRenderer{};
     alignas(std::max_align_t) std::array<std::byte, 0x1100> playerRenderer{};
@@ -169,9 +171,16 @@ struct FakeWorld {
         std::memcpy(position.data(), &at, sizeof(Vec3));
     }
 
+    // The tick publishes the player's rotation with its position, because the
+    // render pass has a camera position but no view direction of its own.
+    void setRotation(const Vec2& rotation) {
+        std::memcpy(rotationComponent.data(), &rotation, sizeof(Vec2));
+    }
+
     void bind() {
         void* regionPointer = region.data();
         void* positionPointer = position.data();
+        void* rotationPointer = rotationComponent.data();
         void* dimensionPointer = dimension.data();
         void* playerRendererPointer = playerRenderer.data();
         void* colorPointer = colorHolder.data();
@@ -180,6 +189,7 @@ struct FakeWorld {
         writeAt(dimension, bedrocktools::sdk::offsets::Dimension::mBlockSource, regionPointer);
         writeAt(player, bedrocktools::sdk::offsets::Actor::mDimension, dimensionPointer);
         writeAt(player, bedrocktools::sdk::offsets::Actor::mStateVectorComponent, positionPointer);
+        writeAt(player, bedrocktools::sdk::offsets::Actor::mActorRotationComponent, rotationPointer);
         writeAt(screenContext, bedrocktools::sdk::offsets::ScreenContext::mTessellator,
                 tessellatorPointer);
         writeAt(screenContext, bedrocktools::sdk::offsets::ScreenContext::mColorHolder, colorPointer);
@@ -219,21 +229,63 @@ int lineVertices() {
     return count;
 }
 
+float length(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
+
 // True when at least one native-line batch was submitted and every segment in
-// those batches starts at `expected` (in the tessellator's camera-relative
-// space). This is how the tracer origin is checked: the first vertex of each
-// pair is the anchor the line was drawn from.
-bool lineBatchesStartAt(const Vec3& expected) {
+// those batches starts `depth` blocks in front of the camera along `forward`.
+// Submitted vertices are camera-relative, so the dot product is the view depth.
+// A tracer start at depth zero is the bug this guards: it projects through a
+// divide by zero and mobile drivers drop the primitive instead of clipping it.
+bool lineBatchesStartAtDepth(float depth, const Vec3& forward) {
     bool sawBatch = false;
     for (const auto& batch : g_batches) {
         if (batch.mode != 4 || batch.vertices.size() < 2) continue;
         sawBatch = true;
         for (std::size_t i = 0; i + 1 < batch.vertices.size(); i += 2) {
             const Vec3& from = batch.vertices[i];
-            if (!near(from.x, expected.x) || !near(from.y, expected.y) ||
-                !near(from.z, expected.z)) {
-                return false;
-            }
+            const float fromDepth = from.x * forward.x + from.y * forward.y + from.z * forward.z;
+            if (!near(fromDepth, depth, 0.001f)) return false;
+        }
+    }
+    return sawBatch;
+}
+
+// True when every submitted line segment lies on one ray out of the camera, so
+// its two camera-relative vertices are parallel. That is what a camera-anchored
+// tracer has to look like: all of them converge on the crosshair.
+bool lineBatchesRunThroughTheCamera() {
+    bool sawBatch = false;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 4 || batch.vertices.size() < 2) continue;
+        sawBatch = true;
+        for (std::size_t i = 0; i + 1 < batch.vertices.size(); i += 2) {
+            const Vec3& from = batch.vertices[i];
+            const Vec3& to = batch.vertices[i + 1];
+            const Vec3 cross{from.y * to.z - from.z * to.y,
+                             from.z * to.x - from.x * to.z,
+                             from.x * to.y - from.y * to.x};
+            if (length(cross) > 0.001f * std::max(1.0f, length(to))) return false;
+        }
+    }
+    return sawBatch;
+}
+
+// True when every camera-facing strip is wider at its far end than at its near
+// end, by more than the distance ratio would suggest is accidental. Corners are
+// emitted near-far-far-near, so the far end is |v2 - v1| and the near |v3 - v0|.
+bool stripsWidenWithDistance() {
+    bool sawBatch = false;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 1 || batch.vertices.size() < 4) continue;
+        sawBatch = true;
+        for (std::size_t i = 0; i + 4 <= batch.vertices.size(); i += 4) {
+            const Vec3 nearSide{batch.vertices[i + 3].x - batch.vertices[i].x,
+                                batch.vertices[i + 3].y - batch.vertices[i].y,
+                                batch.vertices[i + 3].z - batch.vertices[i].z};
+            const Vec3 farSide{batch.vertices[i + 2].x - batch.vertices[i + 1].x,
+                               batch.vertices[i + 2].y - batch.vertices[i + 1].y,
+                               batch.vertices[i + 2].z - batch.vertices[i + 1].z};
+            if (length(farSide) < length(nearSide) * 2.0f) return false;
         }
     }
     return sawBatch;
@@ -331,34 +383,56 @@ int main() {
         module.maxBoxes = 64;
 
         std::printf("storage esp tracers\n");
+        // Looking towards +X: the two chests are in front of the camera, the
+        // ender chest and the barrel are behind it.
+        world.setRotation({0.0f, -90.0f});
+        const Vec3 forward{1.0f, 0.0f, 0.0f};
+        tick(world); // the tick publishes the rotation to the render pass
+
         module.outline = false;
         module.tracer = true;
         g_batches.clear();
         renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
-        check(outlineBatches() == 3, "one tracer line batch per highlight group");
-        check(lineVertices() == 4 * 2, "every in-range container gets exactly one tracer segment");
-        check(fillBatches() == 3, "a tracer thicker than a hairline also builds camera-facing quads");
+        check(outlineBatches() == 1, "the visible tracers of a group are one line batch");
+        check(lineVertices() == 2 * 2,
+              "containers behind the eye plane get no tracer instead of a degenerate one");
+        check(fillBatches() == 1, "a tracer thicker than a hairline also builds a camera-facing strip");
         bool tracerCountsMatch = true;
         for (const auto& batch : g_batches) {
             if (batch.emittedVertices != batch.reservedVertices) tracerCountsMatch = false;
         }
         check(tracerCountsMatch, "tracer batches emit exactly what they reserved");
-        check(lineBatchesStartAt({0.0f, 0.0f, 0.0f}),
-              "camera-anchored tracers start at the camera, the origin of the render space");
+        check(lineBatchesStartAtDepth(storageesp::kTracerNearPlane, forward),
+              "a camera-anchored tracer starts just in front of the eye plane, never on it");
+        check(lineBatchesRunThroughTheCamera(),
+              "camera-anchored tracers run along the eye ray, so they converge on the crosshair");
+        check(stripsWidenWithDistance(),
+              "the strip widens with distance so a long tracer keeps one width on screen");
 
         module.tracerOrigin = 1; // Feet: published by the tick from the player position
         g_batches.clear();
         renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
-        check(lineBatchesStartAt({0.0f, -0.5f, 0.0f}),
-              "feet-anchored tracers start at the player position the tick sampled");
+        check(lineVertices() == 2 * 2, "feet-anchored tracers reach the same containers");
+        check(lineBatchesStartAtDepth(storageesp::kTracerNearPlane, forward),
+              "a feet anchor sitting on the eye plane is clipped forward instead of dropped");
+        check(!lineBatchesRunThroughTheCamera(),
+              "feet-anchored tracers start at the player, not on the eye ray");
         module.tracerOrigin = 0;
 
         module.tracerThickness = 1.0f;
         g_batches.clear();
         renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
-        check(fillBatches() == 0 && outlineBatches() == 3,
-              "a hairline tracer skips the quad pass and stays a native line");
+        check(fillBatches() == 0 && outlineBatches() == 1,
+              "a hairline tracer skips the strip pass and stays a native line");
         module.tracerThickness = 2.0f;
+
+        world.setRotation({90.0f, -90.0f}); // look straight down: nothing is in front of the camera
+        tick(world);
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(g_batches.empty(), "nothing is submitted when no container is in front of the camera");
+        world.setRotation({0.0f, -90.0f});
+        tick(world);
 
         module.tracer = false;
         g_batches.clear();

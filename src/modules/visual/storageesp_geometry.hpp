@@ -25,6 +25,7 @@
 namespace storageesp {
 
 using bedrocktools::sdk::BlockPos;
+using bedrocktools::sdk::Vec2;
 using bedrocktools::sdk::Vec3;
 
 // Storage groups the module can highlight. Each group has its own menu toggle
@@ -485,19 +486,104 @@ inline Vec3 storageCenter(const BlockPos& position, StorageKind kind, bool model
             (box.min.z + box.max.z) * 0.5f};
 }
 
+// Depth a tracer start is pulled to, in blocks in front of the camera. A
+// segment that begins exactly at the eye has zero view depth, and a zero depth
+// is a divide by zero in the projection: mobile GLES drivers drop the primitive
+// instead of clipping it, which is why a tracer anchored to the camera has to
+// start a little way down the line towards its container. The value only has to
+// be comfortably above zero (and above the game's own near plane); it does not
+// move the line on screen, because the start stays on the same eye ray.
+inline constexpr float kTracerNearPlane = 0.20f;
+
+// Distance the width of a tracer's near end is measured at, so the strip cannot
+// widen into a wedge where it leaves the camera.
+inline constexpr float kTracerWidthFloor = kTracerNearPlane;
+
+inline constexpr float kDegreesToRadians = 3.14159265358979323846f / 180.0f;
+
+// What the tracer pass knows about the view, resolved once per frame.
+struct TracerView {
+    Vec3 camera{};
+    // Zero vector when the game did not expose a usable rotation; clipping then
+    // falls back to padding the start away from the camera by distance.
+    Vec3 forward{};
+};
+
+// The camera's look direction from the local player's rotation, using the
+// convention the game itself uses: rot.x is pitch (negative = looking up),
+// rot.y is yaw in degrees, yaw 0 looks towards +Z (south) and grows towards -X
+// (west). The render pass only gets a camera *position* out of the level
+// renderer, so this is how it learns which side of the eye plane a point is on.
+inline Vec3 viewForward(const Vec2& rotation) {
+    const float yaw = rotation.y * kDegreesToRadians;
+    const float pitch = rotation.x * kDegreesToRadians;
+    const float cosPitch = std::cos(pitch);
+    return {-std::sin(yaw) * cosPitch, -std::sin(pitch), std::cos(yaw) * cosPitch};
+}
+
+// How far in front of the camera a world point sits; negative behind it.
+inline constexpr float viewDepth(const Vec3& point, const Vec3& camera, const Vec3& forward) {
+    return (point.x - camera.x) * forward.x + (point.y - camera.y) * forward.y +
+           (point.z - camera.z) * forward.z;
+}
+
+inline Vec3 lerp(const Vec3& from, const Vec3& to, float t) {
+    return {from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, from.z + (to.z - from.z) * t};
+}
+
+// Clips one tracer against the eye plane, in place. Returns false when the
+// container itself is at or behind it — no part of that line could ever be seen,
+// and submitting it would put a degenerate vertex in the batch.
+inline bool clipTracerEdge(blockoutline::Edge& edge, const TracerView& view, float nearPlane) {
+    const float forwardLength = std::sqrt(view.forward.x * view.forward.x +
+                                          view.forward.y * view.forward.y +
+                                          view.forward.z * view.forward.z);
+    if (forwardLength < 0.5f) {
+        // No usable view direction: the only case that can be repaired is a
+        // start sitting on the camera itself, so push it towards the container.
+        const float dx = view.camera.x - edge.from.x;
+        const float dy = view.camera.y - edge.from.y;
+        const float dz = view.camera.z - edge.from.z;
+        if (dx * dx + dy * dy + dz * dz >= nearPlane * nearPlane) return true;
+
+        const float sx = edge.to.x - edge.from.x;
+        const float sy = edge.to.y - edge.from.y;
+        const float sz = edge.to.z - edge.from.z;
+        const float length = std::sqrt(sx * sx + sy * sy + sz * sz);
+        if (length < 0.00001f) return false;
+        const float pad = std::min(nearPlane, length * 0.5f);
+        edge.from = {edge.from.x + sx / length * pad, edge.from.y + sy / length * pad,
+                     edge.from.z + sz / length * pad};
+        return true;
+    }
+
+    const float depthTo = viewDepth(edge.to, view.camera, view.forward);
+    if (depthTo <= nearPlane) return false;
+
+    const float depthFrom = viewDepth(edge.from, view.camera, view.forward);
+    if (depthFrom >= nearPlane) return true;
+
+    // depthTo > nearPlane >= depthFrom, so the span cannot be zero.
+    edge.from = lerp(edge.from, edge.to, (nearPlane - depthFrom) / (depthTo - depthFrom));
+    return true;
+}
+
 // Tracer lines for one highlight group: a segment from the chosen origin to
-// every container of that group, ready for the same line renderer the box
-// outlines use. `out` is reused across frames, so a busy base costs no
-// allocation once the vector has grown to size.
+// every container of that group, clipped to what the camera can actually see,
+// ready for the same line renderer the box outlines use. `out` is reused across
+// frames, so a busy base costs no allocation once the vector has grown to size.
 inline void collectTracers(const std::vector<OverlayTarget>& targets,
                            StorageKind kind,
                            const Vec3& origin,
                            bool modelSized,
+                           const TracerView& view,
                            std::vector<blockoutline::Edge>& out) {
     out.clear();
     for (const auto& target : targets) {
         if (target.kind != kind) continue;
-        out.push_back({origin, storageCenter(target.position, kind, modelSized)});
+        blockoutline::Edge line{origin, storageCenter(target.position, kind, modelSized)};
+        if (!clipTracerEdge(line, view, kTracerNearPlane)) continue;
+        out.push_back(line);
     }
 }
 
