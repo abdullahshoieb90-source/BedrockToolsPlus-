@@ -23,6 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -139,6 +140,11 @@ struct ScanState {
     std::uint64_t revision = 0;
     void* regionPointer = nullptr;
     bool active = false;
+    // Absolute world chunks fully scanned in the current pass. The cursor
+    // always advances to the nearest *unvisited* chunk, so a re-sort
+    // mid-pass can neither re-scan work nor strand it: every chunk in the
+    // area is visited exactly once per pass, nearest first.
+    std::unordered_set<std::uint64_t> visited;
 };
 
 ScanState s_scan;
@@ -269,6 +275,7 @@ void restartSweep(bool clearFound) {
     s_scan.blockIndex = 0;
     s_scan.active = false;
     s_scan.revision = s_scanRevision.load();
+    s_scan.visited.clear();
     if (clearFound) {
         s_cache.clear();
         s_typeCache.clear();
@@ -286,26 +293,129 @@ bool regionChanged(void* region) {
     return true;
 }
 
+// Packs absolute chunk coordinates into one hashable key.
+inline std::uint64_t packChunkCoords(int chunkX, int chunkZ) {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(chunkX)) << 32) |
+           static_cast<std::uint64_t>(static_cast<std::uint32_t>(chunkZ));
+}
+
+inline std::uint64_t chunkKeyFor(const storageesp::ScanRegion& region,
+                                 storageesp::ScanCell cell) {
+    const int baseX = storageesp::floorDiv(region.anchor.x, storageesp::kChunkSize);
+    const int baseZ = storageesp::floorDiv(region.anchor.z, storageesp::kChunkSize);
+    return packChunkCoords(baseX + cell.cx, baseZ + cell.cz);
+}
+
+inline bool currentChunkVisited() {
+    if (s_scan.cells.empty() || s_scan.cellIndex >= s_scan.cells.size()) return false;
+    return s_scan.visited.count(chunkKeyFor(s_scan.region, s_scan.cells[s_scan.cellIndex])) != 0;
+}
+
+// Marks the cursor chunk done and advances to the *nearest* chunk of this
+// pass that has not been scanned yet (the list is nearest-first, so that is
+// the first unvisited entry). Greedy nearest-untaken is what keeps a moving
+// player covered: reanchors re-sort the list under the cursor, so stepping to
+// "the next index" would random-walk into the far field and strand unvisited
+// near chunks behind it. Snapping back to the nearest untaken chunk instead
+// makes every take useful no matter how the order shifted. When every chunk
+// is done, a fresh pass starts from the nearest cell.
+void advanceCursor() {
+    if (s_scan.cells.empty()) return;
+    if (s_scan.cellIndex < s_scan.cells.size()) {
+        s_scan.visited.insert(chunkKeyFor(s_scan.region, s_scan.cells[s_scan.cellIndex]));
+    }
+    // The visited set only ever holds chunks of this area (reanchors prune
+    // it), so reaching the area size means the pass is complete.
+    if (s_scan.visited.size() >= s_scan.cells.size()) {
+        s_scan.visited.clear();
+    }
+    for (std::size_t index = 0; index < s_scan.cells.size(); ++index) {
+        if (!s_scan.visited.count(chunkKeyFor(s_scan.region, s_scan.cells[index]))) {
+            s_scan.cellIndex = index;
+            s_scan.blockIndex = 0;
+            return;
+        }
+    }
+    // Unreachable (a fresh pass guarantees unvisited cells), but stay safe:
+    s_scan.visited.clear();
+    s_scan.cellIndex = 0;
+    s_scan.blockIndex = 0;
+}
+
 // (Re)builds the chunk list around `region`. When `preserveProgress` is set,
-// the sweep keeps its place instead of restarting from the nearest cell: the
-// cell cursor survives (clamped to the rebuilt list) while the in-cell cursor
-// restarts, so the current cell is always scanned contiguously from its first
-// block and coverage stays complete. Without this, every small move restarts a
-// large-radius sweep from zero and its far cells are never reached while
-// walking, so the visible range stays short no matter how high the slider is.
+// the sweep resumes the exact same *world chunk and block* it was scanning,
+// not the same numeric index: the rebuilt list is re-sorted by distance to
+// the moved anchor, so an index would land on a different chunk after every
+// reanchor and the sweep would chase a moving target instead of advancing.
+// Resuming by world chunk also keeps partial cells: a cell bigger than one
+// reanchor interval's budget (easy with a tall scan height) would otherwise
+// never complete, because every reanchor would throw its progress away and
+// the sweep would loop over the same first blocks forever.
 void startSweep(const storageesp::ScanRegion& region, bool preserveProgress) {
+    // Resolve the cursor to absolute chunk coordinates before rebuilding.
+    int resumeChunkX = 0;
+    int resumeChunkZ = 0;
+    bool haveResumeChunk = false;
+    if (preserveProgress && s_scan.active && !s_scan.cells.empty() &&
+        s_scan.cellIndex < s_scan.cells.size()) {
+        const int oldBaseX =
+            storageesp::floorDiv(s_scan.region.anchor.x, storageesp::kChunkSize);
+        const int oldBaseZ =
+            storageesp::floorDiv(s_scan.region.anchor.z, storageesp::kChunkSize);
+        const storageesp::ScanCell oldCell = s_scan.cells[s_scan.cellIndex];
+        resumeChunkX = oldBaseX + oldCell.cx;
+        resumeChunkZ = oldBaseZ + oldCell.cz;
+        haveResumeChunk = true;
+    }
+
     s_scan.region = region;
     std::vector<storageesp::ScanCell> cells(storageesp::maxCellCount(region));
     const std::size_t count =
         storageesp::collectScanCells(region, cells.data(), cells.size());
     cells.resize(count);
     s_scan.cells = std::move(cells);
-    if (preserveProgress && !s_scan.cells.empty()) {
-        s_scan.cellIndex = std::min(s_scan.cellIndex, s_scan.cells.size() - 1);
+    if (haveResumeChunk) {
+        // Drop marks for chunks the re-centered area no longer covers, so
+        // the set stays bounded while traveling and cannot block fresh ones.
+        std::unordered_set<std::uint64_t> area;
+        area.reserve(s_scan.cells.size() * 2);
+        for (const auto& cell : s_scan.cells) area.insert(chunkKeyFor(region, cell));
+        for (auto it = s_scan.visited.begin(); it != s_scan.visited.end();) {
+            if (!area.count(*it)) it = s_scan.visited.erase(it);
+            else ++it;
+        }
+
+        const int newBaseX =
+            storageesp::floorDiv(region.anchor.x, storageesp::kChunkSize);
+        const int newBaseZ =
+            storageesp::floorDiv(region.anchor.z, storageesp::kChunkSize);
+        const int wantCx = resumeChunkX - newBaseX;
+        const int wantCz = resumeChunkZ - newBaseZ;
+        std::size_t found = s_scan.cells.size();
+        for (std::size_t i = 0; i < s_scan.cells.size(); ++i) {
+            if (s_scan.cells[i].cx == wantCx && s_scan.cells[i].cz == wantCz) {
+                found = i;
+                break;
+            }
+        }
+        if (found < s_scan.cells.size()) {
+            // Same world chunk, same block: an exact resume, so no scanned
+            // block is ever revisited and none is skipped by the re-sort.
+            // (The budget loop normalizes a cursor sitting exactly on a cell
+            // boundary, so blockIndex needs no clamping here.)
+            s_scan.cellIndex = found;
+        } else {
+            // The cursor chunk left the re-centered area (it was on the
+            // trailing edge): continue with the nearest unvisited chunk.
+            s_scan.cellIndex = 0;
+            s_scan.blockIndex = 0;
+            if (currentChunkVisited()) advanceCursor();
+        }
     } else {
         s_scan.cellIndex = 0;
+        s_scan.blockIndex = 0;
+        s_scan.visited.clear();
     }
-    s_scan.blockIndex = 0;
     s_scan.active = !s_scan.cells.empty();
     s_scan.revision = s_scanRevision.load();
 }
@@ -404,8 +514,7 @@ void scanStep(bedrocktools::sdk::Player* player) {
     const std::size_t blocksPerCell = storageesp::blocksPerCell(s_scan.region);
     for (std::size_t step = 0; step < budget; ++step) {
         if (s_scan.blockIndex >= blocksPerCell) {
-            s_scan.blockIndex = 0;
-            s_scan.cellIndex = (s_scan.cellIndex + 1) % s_scan.cells.size();
+            advanceCursor();
         }
         visitBlock(region,
                    storageesp::blockInCell(s_scan.region,

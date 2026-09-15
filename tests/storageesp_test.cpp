@@ -578,14 +578,24 @@ int main() {
         world.place({8.5f, 64.0f, 8.5f});
         world.setCamera({8.5f, 64.5f, 8.5f});
         for (int i = 0; i < 5; ++i) tick(world);
-        const std::size_t deepProgress = s_scan.cellIndex;
-        check(deepProgress > 3, "a few ticks of the limited budget advance deep into the cell list");
+        check(s_scan.cellIndex > 3, "a few ticks of the limited budget advance deep into the cell list");
+        check(s_scan.visited.size() == 11, "every completed chunk is remembered exactly once");
+        // The cursor chunk: its world coordinates before the move...
+        const std::uint64_t cursorKey =
+            chunkKeyFor(s_scan.region, s_scan.cells[s_scan.cellIndex]);
+        check(!s_scan.visited.count(cursorKey), "the chunk being scanned is still unvisited");
 
         world.place({21.5f, 64.0f, 8.5f}); // 13 blocks: past the reanchor distance, inside the radius
         tick(world);
         check(s_scan.region.anchor.x == 21, "a small move re-centers the sweep");
-        check(s_scan.cellIndex >= deepProgress,
-              "a small move keeps the sweep progress instead of restarting from the nearest cell");
+        // ...must be resumed exactly (920/1280 blocks done, finished within
+        // this tick's budget) instead of restarted: a restart would clear
+        // the pass (3 marks), and resuming anywhere else would leave the
+        // cursor chunk unvisited.
+        check(s_scan.visited.size() == 14, "a small move keeps the pass: only new chunks are marked");
+        check(s_scan.visited.count(cursorKey) != 0,
+              "a small move completes the resumed chunk instead of restarting it");
+        check(!currentChunkVisited(), "the cursor keeps scanning an unvisited chunk");
 
         world.place({321.5f, 64.0f, 8.5f}); // 300 blocks: a teleport-sized jump
         tick(world);
@@ -616,6 +626,50 @@ int main() {
         renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
         check(lineVertices() == 24, "a far container box is drawn from ~56 blocks away");
         setBlock({356, 64, 300}, nullptr);
+
+        std::printf("storage esp max settings while walking\n");
+        // The heaviest realistic setup: max radius and height on the slowest
+        // speed while the player keeps moving. Near containers must still be
+        // found within seconds; farther ones arrive as the preserved sweep
+        // reaches their cells.
+        module.scanRadius = 256;
+        module.scanHeight = 128;
+        module.scanSpeed = 0; // Relaxed: worst-case budget
+        module.maxBoxes = 500;
+        clearWorld();
+        setBlock({308, 64, 300}, "minecraft:chest");  // 8 blocks east
+        setBlock({316, 64, 300}, "minecraft:barrel"); // 16 blocks east
+        setBlock({332, 64, 300}, "minecraft:chest");  // 32 blocks east
+        world.setCamera({300.5f, 64.5f, 300.5f});
+        int found8 = -1, found16 = -1, found32 = -1;
+        float walkZ = 300.5f;
+        int walkDir = 1;
+        for (int i = 0; i < 600; ++i) {
+            // A ~5 m/s walk with a 1-second glance (stand still) every 3
+            // seconds: the human pattern. Reanchors land regularly while the
+            // sweep keeps working through them.
+            if ((i % 80) < 60) {
+                walkZ += 0.25f * walkDir;
+                if (walkZ >= 316.5f) {
+                    walkZ = 316.5f;
+                    walkDir = -1;
+                } else if (walkZ <= 300.5f) {
+                    walkZ = 300.5f;
+                    walkDir = 1;
+                }
+            }
+            world.place({300.5f, 64.0f, walkZ});
+            tick(world);
+            if (found8 < 0 && s_cache.contains({308, 64, 300})) found8 = i;
+            if (found16 < 0 && s_cache.contains({316, 64, 300})) found16 = i;
+            if (found32 < 0 && s_cache.contains({332, 64, 300})) found32 = i;
+        }
+        std::printf("  info max-settings discovery ticks: 8 blocks -> %d, 16 blocks -> %d, 32 blocks -> %d\n",
+                    found8, found16, found32);
+        check(found8 >= 0 && found8 < 120, "an 8-block container is found within seconds on max settings");
+        check(found16 >= 0 && found16 < 300, "a 16-block container follows soon after");
+        check(found32 >= 0, "a 32-block container is eventually reached while walking");
+        clearWorld();
 
         std::printf("storage esp config\n");
         module.showBarrels = false;
