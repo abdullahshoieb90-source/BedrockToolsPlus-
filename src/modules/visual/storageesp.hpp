@@ -60,10 +60,12 @@ public:
     // containers visible through terrain.
     bool throughWalls = true;
 
-    // Tracer pass: one line per highlighted container, drawn from the camera or
-    // from the player's feet to the middle of its box and tinted with that
-    // group's color (Rainbow and Pulse animate tracers too). Off by default
-    // because a storage-heavy base covers the screen in lines.
+    // Tracer pass: one line per highlighted container, drawn from just under the
+    // camera (the classic bottom-of-screen snapline) or from the player's feet
+    // to the middle of its box, tinted with that group's color (Rainbow and
+    // Pulse animate tracers too). Both anchors sit off the eye ray on purpose: a
+    // line that starts at the eye projects onto a single pixel and never shows.
+    // Off by default because a storage-heavy base covers the screen in lines.
     bool tracer = false;
     // Radio index into storageesp::kTracerOriginNames.
     int tracerOrigin = storageesp::kDefaultTracerOrigin;

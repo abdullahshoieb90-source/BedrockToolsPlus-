@@ -270,6 +270,67 @@ bool lineBatchesRunThroughTheCamera() {
     return sawBatch;
 }
 
+// True when every submitted line segment spans a real screen angle: its two
+// camera-relative ends point in different directions, so the segment is a line
+// on screen instead of a single pixel. A tracer anchored to the eye fails this
+// by construction, which is the bug this guards.
+bool lineBatchesSpanScreenAngle(float minimumRadians) {
+    bool sawBatch = false;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 4 || batch.vertices.size() < 2) continue;
+        sawBatch = true;
+        for (std::size_t i = 0; i + 1 < batch.vertices.size(); i += 2) {
+            const Vec3& from = batch.vertices[i];
+            const Vec3& to = batch.vertices[i + 1];
+            const float fromLength = length(from);
+            const float toLength = length(to);
+            if (fromLength < 0.00001f || toLength < 0.00001f) return false;
+            float cosine = (from.x * to.x + from.y * to.y + from.z * to.z) /
+                           (fromLength * toLength);
+            cosine = std::clamp(cosine, -1.0f, 1.0f);
+            if (std::acos(cosine) < minimumRadians) return false;
+        }
+    }
+    return sawBatch;
+}
+
+// True when no submitted camera-facing strip is edge-on. A strip is seen
+// edge-on when its plane holds the eye, i.e. when the plane's normal is
+// perpendicular to the vector reaching one of its corners; such a strip covers
+// no pixels at all, which is how a camera-anchored tracer used to disappear.
+// Corners are emitted near-far-far-near, so the far end is |v2 - v1| and the
+// near |v3 - v0|.
+bool stripsFaceTheCamera() {
+    bool sawBatch = false;
+    for (const auto& batch : g_batches) {
+        if (batch.mode != 1 || batch.vertices.size() < 4) continue;
+        sawBatch = true;
+        for (std::size_t i = 0; i + 4 <= batch.vertices.size(); i += 4) {
+            const Vec3& corner = batch.vertices[i];
+            const Vec3 axis{batch.vertices[i + 1].x + batch.vertices[i + 2].x -
+                                batch.vertices[i].x - batch.vertices[i + 3].x,
+                            batch.vertices[i + 1].y + batch.vertices[i + 2].y -
+                                batch.vertices[i].y - batch.vertices[i + 3].y,
+                            batch.vertices[i + 1].z + batch.vertices[i + 2].z -
+                                batch.vertices[i].z - batch.vertices[i + 3].z};
+            const Vec3 across{batch.vertices[i + 3].x - batch.vertices[i].x,
+                              batch.vertices[i + 3].y - batch.vertices[i].y,
+                              batch.vertices[i + 3].z - batch.vertices[i].z};
+            const Vec3 normal{axis.y * across.z - axis.z * across.y,
+                              axis.z * across.x - axis.x * across.z,
+                              axis.x * across.y - axis.y * across.x};
+            const float normalLength = length(normal);
+            if (normalLength < 0.00001f) return false;
+            const float distanceFromEye =
+                (normal.x * corner.x + normal.y * corner.y + normal.z * corner.z) / normalLength;
+            if (std::fabs(distanceFromEye) <= 0.001f * std::max(1.0f, length(corner))) {
+                return false;
+            }
+        }
+    }
+    return sawBatch;
+}
+
 // True when every camera-facing strip is wider at its far end than at its near
 // end, by more than the distance ratio would suggest is accidental. Corners are
 // emitted near-far-far-near, so the far end is |v2 - v1| and the near |v3 - v0|.
@@ -403,9 +464,13 @@ int main() {
         }
         check(tracerCountsMatch, "tracer batches emit exactly what they reserved");
         check(lineBatchesStartAtDepth(storageesp::kTracerNearPlane, forward),
-              "a camera-anchored tracer starts just in front of the eye plane, never on it");
-        check(lineBatchesRunThroughTheCamera(),
-              "camera-anchored tracers run along the eye ray, so they converge on the crosshair");
+              "the default anchor starts just in front of the eye plane, never on it");
+        check(!lineBatchesRunThroughTheCamera(),
+              "the default anchor is off the eye ray, so the line spans the screen");
+        check(lineBatchesSpanScreenAngle(0.05f),
+              "every submitted tracer spans a real screen angle instead of one pixel");
+        check(stripsFaceTheCamera(),
+              "no submitted tracer strip is edge-on, so it covers pixels");
         check(stripsWidenWithDistance(),
               "the strip widens with distance so a long tracer keeps one width on screen");
 
@@ -417,7 +482,9 @@ int main() {
               "a feet anchor sitting on the eye plane is clipped forward instead of dropped");
         check(!lineBatchesRunThroughTheCamera(),
               "feet-anchored tracers start at the player, not on the eye ray");
-        module.tracerOrigin = 0;
+        check(lineBatchesSpanScreenAngle(0.05f) && stripsFaceTheCamera(),
+              "the feet anchor draws visible lines on screen too");
+        module.tracerOrigin = 0; // back to the default anchor
 
         module.tracerThickness = 1.0f;
         g_batches.clear();
