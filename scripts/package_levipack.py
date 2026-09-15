@@ -5,8 +5,8 @@ import sys
 import zipfile
 from pathlib import Path
 
-VALUE_PATTERN = re.compile(r'^\s*inline\s+constexpr\s+std::string_view\s+(Name|Author|Description|Version)\s*=\s*"((?:\\.|[^"\\])*)";\s*$')
-REQUIRED_VALUES = ("Name", "Author", "Description", "Version")
+VALUE_PATTERN = re.compile(r'^\s*inline\s+constexpr\s+std::string_view\s+(Name|Author|Description|Version|MinecraftVersion)\s*=\s*"((?:\\.|[^"\\])*)";\s*$')
+REQUIRED_VALUES = ("Name", "Author", "Description", "Version", "MinecraftVersion")
 
 
 def parse_version(path: Path) -> dict[str, str]:
@@ -28,6 +28,9 @@ def build_manifest(values: dict[str, str]) -> dict[str, object]:
         "author": values["Author"],
         "description": values["Description"],
         "version": values["Version"],
+        # Preloader ignores unknown manifest fields, while launchers that
+        # manage version compatibility can use this target directly.
+        "minecraft_versions": [values["MinecraftVersion"]],
         "entry": "libBedrockToolsPlus.so",
         "icon": "icon.png",
         "overwrite_files": ["icon.png", "resources/minecraft.ttf"],

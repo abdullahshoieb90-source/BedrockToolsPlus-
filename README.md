@@ -117,12 +117,20 @@ The **Hit Sound** module plays a custom sound of your choice every time you land
 
 The sound is a purely client-side overlay: the victim's own hurt sound is not cancelled or replaced, and nothing is sent to the server. Files whose names contain a comma are ignored (the menu picker cannot represent them), and sounds that fail to decode on your device are simply skipped.
 
+## Compatibility
+
+The current release targets Minecraft Bedrock **26.50** on Android, whose full
+client version is **1.26.50.4**, for the `arm64-v8a` architecture. The native
+signature set uses the stable ARM64 function layouts shared by the 26.x client
+builds, so the version shown in the package metadata and the version used by
+the runtime stay in sync.
+
 ## System Requirements
 
 - Android 9 or newer
 - 64-bit ARM device (`arm64-v8a`)
 - [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid)
-- A Minecraft Bedrock version supported by the BedrockToolsPlus release you are using
+- Minecraft Bedrock 26.50 (`1.26.50.4`) or another version explicitly listed by the BedrockToolsPlus release you are using
 
 ## Installation
 
