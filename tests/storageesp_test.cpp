@@ -568,6 +568,55 @@ int main() {
         tick(world);
         check(s_cache.empty(), "copper chests that were broken stop being highlighted");
 
+        std::printf("storage esp sweep progress while moving\n");
+        // Small moves re-center the sweep without restarting it, so the far
+        // cells of a large radius are still reached while walking; only a
+        // teleport-sized jump restarts from the nearest cell.
+        module.scanRadius = 32;
+        module.scanHeight = 2;
+        module.scanSpeed = 0; // Relaxed: ~2 cells per tick, so progress is visible
+        world.place({8.5f, 64.0f, 8.5f});
+        world.setCamera({8.5f, 64.5f, 8.5f});
+        for (int i = 0; i < 5; ++i) tick(world);
+        const std::size_t deepProgress = s_scan.cellIndex;
+        check(deepProgress > 3, "a few ticks of the limited budget advance deep into the cell list");
+
+        world.place({21.5f, 64.0f, 8.5f}); // 13 blocks: past the reanchor distance, inside the radius
+        tick(world);
+        check(s_scan.region.anchor.x == 21, "a small move re-centers the sweep");
+        check(s_scan.cellIndex >= deepProgress,
+              "a small move keeps the sweep progress instead of restarting from the nearest cell");
+
+        world.place({321.5f, 64.0f, 8.5f}); // 300 blocks: a teleport-sized jump
+        tick(world);
+        check(s_scan.region.anchor.x == 321, "a teleport re-centers the sweep");
+        check(s_scan.cellIndex <= 3, "a teleport restarts the sweep from the nearest cell");
+
+        // Walking while a large radius is still sweeping must not starve the
+        // far cells: every reanchor used to restart the sweep, so a far
+        // container was never visited while the player kept moving. The chest
+        // sits at ring 3+, whose cells always sort after the 9 ring-0/1 cells,
+        // while one walking interval between reanchors only covers ~9 cells —
+        // so without progress preservation it is never reached.
+        module.scanRadius = 64;
+        module.scanHeight = 8;
+        module.scanSpeed = 0;
+        module.maxBoxes = 64;
+        clearWorld();
+        setBlock({356, 64, 300}, "minecraft:chest"); // ~40-56 blocks east, deep in the cell list
+        world.setCamera({300.5f, 64.5f, 300.5f});
+        for (int i = 0; i < 200; ++i) {
+            const int phase = i % 32;
+            world.place({300.5f + (phase < 16 ? phase : 32 - phase), 64.0f, 300.5f});
+            tick(world);
+        }
+        check(s_cache.contains({356, 64, 300}),
+              "a far container is found even while the player keeps walking");
+        g_batches.clear();
+        renderStorageEsp(world.levelRenderer.data(), world.screenContext.data());
+        check(lineVertices() == 24, "a far container box is drawn from ~56 blocks away");
+        setBlock({356, 64, 300}, nullptr);
+
         std::printf("storage esp config\n");
         module.showBarrels = false;
         module.showChestsColor = 0xFF112233u;

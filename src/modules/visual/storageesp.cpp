@@ -286,14 +286,25 @@ bool regionChanged(void* region) {
     return true;
 }
 
-void startSweep(const storageesp::ScanRegion& region) {
+// (Re)builds the chunk list around `region`. When `preserveProgress` is set,
+// the sweep keeps its place instead of restarting from the nearest cell: the
+// cell cursor survives (clamped to the rebuilt list) while the in-cell cursor
+// restarts, so the current cell is always scanned contiguously from its first
+// block and coverage stays complete. Without this, every small move restarts a
+// large-radius sweep from zero and its far cells are never reached while
+// walking, so the visible range stays short no matter how high the slider is.
+void startSweep(const storageesp::ScanRegion& region, bool preserveProgress) {
     s_scan.region = region;
     std::vector<storageesp::ScanCell> cells(storageesp::maxCellCount(region));
     const std::size_t count =
         storageesp::collectScanCells(region, cells.data(), cells.size());
     cells.resize(count);
     s_scan.cells = std::move(cells);
-    s_scan.cellIndex = 0;
+    if (preserveProgress && !s_scan.cells.empty()) {
+        s_scan.cellIndex = std::min(s_scan.cellIndex, s_scan.cells.size() - 1);
+    } else {
+        s_scan.cellIndex = 0;
+    }
     s_scan.blockIndex = 0;
     s_scan.active = !s_scan.cells.empty();
     s_scan.revision = s_scanRevision.load();
@@ -369,7 +380,23 @@ void scanStep(bedrocktools::sdk::Player* player) {
     wanted.verticalRadius = std::clamp(g_storageEsp->scanHeight, kMinScanHeight, kMaxScanHeight);
 
     if (fresh || s_scan.revision != s_scanRevision.load() || needsNewSweep(wanted)) {
-        startSweep(wanted);
+        // Walking re-centers the sweep but keeps its progress, so the far
+        // cells of a large radius are still reached while moving instead of
+        // the sweep restarting from the nearest cell every few steps. Only a
+        // teleport-sized jump (or a new world, or changed radii) restarts
+        // from zero, because then the surroundings are all new.
+        bool preserveProgress = false;
+        if (!fresh && s_scan.revision == s_scanRevision.load() && s_scan.active) {
+            const auto& current = s_scan.region;
+            if (current.blockRadius == wanted.blockRadius &&
+                current.verticalRadius == wanted.verticalRadius) {
+                const int dx = std::abs(current.anchor.x - wanted.anchor.x);
+                const int dy = std::abs(current.anchor.y - wanted.anchor.y);
+                const int dz = std::abs(current.anchor.z - wanted.anchor.z);
+                preserveProgress = std::max({dx, dy, dz}) <= wanted.blockRadius;
+            }
+        }
+        startSweep(wanted, preserveProgress);
     }
     if (!s_scan.active) return;
 
@@ -928,7 +955,7 @@ void StorageEspModule::saveConfig(nlohmann::json& json) {
 
     json["scanRadius"] = std::clamp(scanRadius, kMinScanRadius, kMaxScanRadius);
     json["scanHeight"] = std::clamp(scanHeight, kMinScanHeight, kMaxScanHeight);
-    json["maxBoxes"] = std::clamp(maxBoxes, 1, 200);
+    json["maxBoxes"] = std::clamp(maxBoxes, kMinMaxBoxes, kMaxMaxBoxes);
     json["scanSpeed"] = storageesp::scanSpeedRadioValue(scanSpeed);
     json["tracerOrigin"] = storageesp::tracerOriginRadioValue(tracerOrigin);
 }
