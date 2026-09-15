@@ -199,74 +199,100 @@ inline float screenConstantHalfWidth(float halfWidthAtOneBlock,
     return halfWidthAtOneBlock * std::max(distance, minDistance);
 }
 
-// Camera-facing beam with an independent half width at each end, i.e. a tapered
-// strip. A tracer is a long line seen end-on, so its screen-space perpendicular
-// rotates along its length and its width has to follow the distance of each end;
-// the single-width makeEdgeBeam() is only right for edges about a block long.
-// Corners come back relative to the camera, in one winding, with both ends
-// overshooting by their own half width so the strip stays closed. Returns false
-// only for a zero-length segment.
-inline bool makeTaperedBeam(const Edge& edge,
-                            const Vec3& camera,
-                            float halfWidthFrom,
-                            float halfWidthTo,
-                            std::array<Vec3, 4>& out) {
-    const Vec3 p1{edge.from.x - camera.x, edge.from.y - camera.y, edge.from.z - camera.z};
-    const Vec3 p2{edge.to.x - camera.x, edge.to.y - camera.y, edge.to.z - camera.z};
+// Everything the tapered builder needs: the segment in camera-relative space
+// plus the direction its cross-section widens in.
+struct TaperedAxis {
+    Vec3 from{};
+    Vec3 to{};
+    Vec3 dir{};   // unit, from -> to
+    Vec3 side{};  // unit, perpendicular to dir
+};
 
-    float dx = p2.x - p1.x;
-    float dy = p2.y - p1.y;
-    float dz = p2.z - p1.z;
+// Resolves a segment into that axis. `side` is the direction a viewer sees the
+// line widen in: perpendicular to the segment and to the eye ray that reaches
+// the segment's midpoint, so the ribbon built from it faces the camera. One
+// such direction is used for the whole ribbon rather than one per end, which
+// keeps its four corners coplanar and its two long edges from crossing: a
+// per-end perpendicular is unstable exactly where a tracer lives, because the
+// eye ray to a snapline's own end is nearly parallel to the segment itself.
+inline bool taperedAxis(const Edge& edge, const Vec3& camera, TaperedAxis& axis) {
+    axis.from = {edge.from.x - camera.x, edge.from.y - camera.y, edge.from.z - camera.z};
+    axis.to = {edge.to.x - camera.x, edge.to.y - camera.y, edge.to.z - camera.z};
+
+    float dx = axis.to.x - axis.from.x;
+    float dy = axis.to.y - axis.from.y;
+    float dz = axis.to.z - axis.from.z;
     const float length = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (length < 0.00001f) return false;
     dx /= length;
     dy /= length;
     dz /= length;
+    axis.dir = {dx, dy, dz};
 
-    // The camera is the origin of this space, so dir x (vector to the end) is
-    // perpendicular to both the segment and that end's eye ray: the direction a
-    // viewer sees the line widen in.
-    auto sideAt = [&](const Vec3& point, Vec3& side) {
-        float sx = dy * point.z - dz * point.y;
-        float sy = dz * point.x - dx * point.z;
-        float sz = dx * point.y - dy * point.x;
-        float sideLength = std::sqrt(sx * sx + sy * sy + sz * sz);
-        if (sideLength < 0.00001f) {
-            // Looking straight along the segment: choose a stable arbitrary
-            // perpendicular instead of dropping the strip for one frame.
-            if (std::fabs(dy) < 0.9f) {
-                sx = -dz; sy = 0.0f; sz = dx;
-            } else {
-                sx = 1.0f; sy = 0.0f; sz = 0.0f;
-            }
-            sideLength = std::sqrt(sx * sx + sy * sy + sz * sz);
-            if (sideLength < 0.00001f) return false;
+    // The camera is the origin of this space, so dir x (vector to the midpoint)
+    // is perpendicular to both the segment and the eye ray through it: the
+    // direction a viewer sees the line widen in.
+    const float mx = (axis.from.x + axis.to.x) * 0.5f;
+    const float my = (axis.from.y + axis.to.y) * 0.5f;
+    const float mz = (axis.from.z + axis.to.z) * 0.5f;
+    float sx = dy * mz - dz * my;
+    float sy = dz * mx - dx * mz;
+    float sz = dx * my - dy * mx;
+    float sideLength = std::sqrt(sx * sx + sy * sy + sz * sz);
+    if (sideLength < 0.00001f) {
+        // Looking straight along the segment: choose a stable arbitrary
+        // perpendicular instead of dropping the ribbon for one frame.
+        if (std::fabs(dy) < 0.9f) {
+            sx = -dz; sy = 0.0f; sz = dx;
+        } else {
+            sx = 1.0f; sy = 0.0f; sz = 0.0f;
         }
-        side = {sx / sideLength, sy / sideLength, sz / sideLength};
-        return true;
-    };
+        sideLength = std::sqrt(sx * sx + sy * sy + sz * sz);
+        if (sideLength < 0.00001f) return false;
+    }
+    axis.side = {sx / sideLength, sy / sideLength, sz / sideLength};
+    return true;
+}
 
-    Vec3 sideFrom{};
-    Vec3 sideTo{};
-    if (!sideAt(p1, sideFrom)) return false;
-    if (!sideAt(p2, sideTo)) sideTo = sideFrom;
-
-    const Vec3 overshootFrom{dx * halfWidthFrom, dy * halfWidthFrom, dz * halfWidthFrom};
-    const Vec3 overshootTo{dx * halfWidthTo, dy * halfWidthTo, dz * halfWidthTo};
-    out = {{
-        {p1.x - overshootFrom.x - sideFrom.x * halfWidthFrom,
-         p1.y - overshootFrom.y - sideFrom.y * halfWidthFrom,
-         p1.z - overshootFrom.z - sideFrom.z * halfWidthFrom},
-        {p2.x + overshootTo.x - sideTo.x * halfWidthTo,
-         p2.y + overshootTo.y - sideTo.y * halfWidthTo,
-         p2.z + overshootTo.z - sideTo.z * halfWidthTo},
-        {p2.x + overshootTo.x + sideTo.x * halfWidthTo,
-         p2.y + overshootTo.y + sideTo.y * halfWidthTo,
-         p2.z + overshootTo.z + sideTo.z * halfWidthTo},
-        {p1.x - overshootFrom.x + sideFrom.x * halfWidthFrom,
-         p1.y - overshootFrom.y + sideFrom.y * halfWidthFrom,
-         p1.z - overshootFrom.z + sideFrom.z * halfWidthFrom},
+// One ribbon of a cross-section: the segment widened by `side`, with an
+// independent half width at each end. That independence is what keeps a long
+// line one steady width on screen instead of thinning to a sub-pixel hair at
+// range. Corners come back near-far-far-near in one winding, both ends
+// overshooting by their own half width so the strip stays closed.
+inline std::array<Vec3, 4> taperedRibbon(const TaperedAxis& axis,
+                                         const Vec3& side,
+                                         float halfWidthFrom,
+                                         float halfWidthTo) {
+    const Vec3 overshootFrom{axis.dir.x * halfWidthFrom, axis.dir.y * halfWidthFrom,
+                             axis.dir.z * halfWidthFrom};
+    const Vec3 overshootTo{axis.dir.x * halfWidthTo, axis.dir.y * halfWidthTo,
+                           axis.dir.z * halfWidthTo};
+    return {{
+        {axis.from.x - overshootFrom.x - side.x * halfWidthFrom,
+         axis.from.y - overshootFrom.y - side.y * halfWidthFrom,
+         axis.from.z - overshootFrom.z - side.z * halfWidthFrom},
+        {axis.to.x + overshootTo.x - side.x * halfWidthTo,
+         axis.to.y + overshootTo.y - side.y * halfWidthTo,
+         axis.to.z + overshootTo.z - side.z * halfWidthTo},
+        {axis.to.x + overshootTo.x + side.x * halfWidthTo,
+         axis.to.y + overshootTo.y + side.y * halfWidthTo,
+         axis.to.z + overshootTo.z + side.z * halfWidthTo},
+        {axis.from.x - overshootFrom.x + side.x * halfWidthFrom,
+         axis.from.y - overshootFrom.y + side.y * halfWidthFrom,
+         axis.from.z - overshootFrom.z + side.z * halfWidthFrom},
     }};
+}
+
+// Camera-facing ribbon with an independent half width at each end, i.e. a
+// tapered strip. Returns false only for a zero-length segment.
+inline bool makeTaperedBeam(const Edge& edge,
+                            const Vec3& camera,
+                            float halfWidthFrom,
+                            float halfWidthTo,
+                            std::array<Vec3, 4>& out) {
+    TaperedAxis axis{};
+    if (!taperedAxis(edge, camera, axis)) return false;
+    out = taperedRibbon(axis, axis.side, halfWidthFrom, halfWidthTo);
     return true;
 }
 

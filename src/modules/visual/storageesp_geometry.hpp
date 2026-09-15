@@ -487,17 +487,28 @@ inline Vec3 storageCenter(const BlockPos& position, StorageKind kind, bool model
 }
 
 // Depth a tracer start is pulled to, in blocks in front of the camera. A
-// segment that begins exactly at the eye has zero view depth, and a zero depth
-// is a divide by zero in the projection: mobile GLES drivers drop the primitive
-// instead of clipping it, which is why a tracer anchored to the camera has to
-// start a little way down the line towards its container. The value only has to
-// be comfortably above zero (and above the game's own near plane); it does not
-// move the line on screen, because the start stays on the same eye ray.
+// segment that begins exactly on the eye plane has zero view depth, and a zero
+// depth is a divide by zero in the projection: mobile GLES drivers drop the
+// primitive instead of clipping it, which is why a start that lands there (the
+// feet of a player looking level, or the dropped anchor of a level view) is
+// pulled a little way down the line towards its container. The value only has
+// to be comfortably above zero (and above the game's own near plane); it does
+// not move the line on screen, because the start stays on the line it already
+// had, just closer to its container.
 inline constexpr float kTracerNearPlane = 0.20f;
 
 // Distance the width of a tracer's near end is measured at, so the strip cannot
 // widen into a wedge where it leaves the camera.
 inline constexpr float kTracerWidthFloor = kTracerNearPlane;
+
+// Smallest angle, in radians, between the two eye rays that reach a tracer's
+// ends for the tracer to be drawn at all. Below it the segment has no screen
+// extent to speak of: every point of it lands on the same pixel, and any ribbon
+// widened from it is degenerate, because both of its sides project onto that
+// same point. With the shipped anchors this only happens for a container on the
+// line through the camera and the anchor, which no camera angle could show as
+// anything but a dot.
+inline constexpr float kTracerMinimumSpan = 0.005f;
 
 inline constexpr float kDegreesToRadians = 3.14159265358979323846f / 180.0f;
 
@@ -514,7 +525,14 @@ struct TracerView {
 // rot.y is yaw in degrees, yaw 0 looks towards +Z (south) and grows towards -X
 // (west). The render pass only gets a camera *position* out of the level
 // renderer, so this is how it learns which side of the eye plane a point is on.
+// A rotation that cannot be one (not finite, or a "pitch" outside +-90) comes
+// back as an empty vector, i.e. "unknown": the clipping then repairs a start
+// near the eye instead of culling every line the player is looking at.
 inline Vec3 viewForward(const Vec2& rotation) {
+    if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) ||
+        std::fabs(rotation.x) > 91.0f) {
+        return {};
+    }
     const float yaw = rotation.y * kDegreesToRadians;
     const float pitch = rotation.x * kDegreesToRadians;
     const float cosPitch = std::cos(pitch);
@@ -525,6 +543,25 @@ inline Vec3 viewForward(const Vec2& rotation) {
 inline constexpr float viewDepth(const Vec3& point, const Vec3& camera, const Vec3& forward) {
     return (point.x - camera.x) * forward.x + (point.y - camera.y) * forward.y +
            (point.z - camera.z) * forward.z;
+}
+
+// The angle between the two eye rays that reach a segment's ends, in radians.
+// Zero means both ends sit on the same ray: the projection then puts every
+// point of the segment on one pixel, so the line cannot be seen at all, however
+// it is widened. This is the reason a tracer may not start at the eye, and what
+// the origin table below is checked against.
+inline float viewAngleSpan(const Vec3& from, const Vec3& to, const Vec3& camera) {
+    const float ax = from.x - camera.x;
+    const float ay = from.y - camera.y;
+    const float az = from.z - camera.z;
+    const float bx = to.x - camera.x;
+    const float by = to.y - camera.y;
+    const float bz = to.z - camera.z;
+    const float lengthA = std::sqrt(ax * ax + ay * ay + az * az);
+    const float lengthB = std::sqrt(bx * bx + by * by + bz * bz);
+    if (lengthA < 0.00001f || lengthB < 0.00001f) return 0.0f;
+    const float cosine = (ax * bx + ay * by + az * bz) / (lengthA * lengthB);
+    return std::acos(std::clamp(cosine, -1.0f, 1.0f));
 }
 
 inline Vec3 lerp(const Vec3& from, const Vec3& to, float t) {
@@ -538,7 +575,10 @@ inline bool clipTracerEdge(blockoutline::Edge& edge, const TracerView& view, flo
     const float forwardLength = std::sqrt(view.forward.x * view.forward.x +
                                           view.forward.y * view.forward.y +
                                           view.forward.z * view.forward.z);
-    if (forwardLength < 0.5f) {
+    // Written negated so a non-finite direction also lands here: every
+    // comparison against NaN is false, and a NaN forward would otherwise turn
+    // the clip below into NaN vertices.
+    if (!(forwardLength >= 0.5f)) {
         // No usable view direction: the only case that can be repaired is a
         // start sitting on the camera itself, so push it towards the container.
         const float dx = view.camera.x - edge.from.x;
@@ -583,6 +623,7 @@ inline void collectTracers(const std::vector<OverlayTarget>& targets,
         if (target.kind != kind) continue;
         blockoutline::Edge line{origin, storageCenter(target.position, kind, modelSized)};
         if (!clipTracerEdge(line, view, kTracerNearPlane)) continue;
+        if (viewAngleSpan(line.from, line.to, view.camera) < kTracerMinimumSpan) continue;
         out.push_back(line);
     }
 }
@@ -703,41 +744,63 @@ inline int resolveScanSpeed(std::string_view value) {
     return resolveRadio(kScanSpeedNames, kDefaultScanSpeed, value);
 }
 
-// Where a tracer line starts. "Camera" anchors it to the eye the world is
-// rendered from, so every line converges on the crosshair and points at the
-// container you are looking towards; "Feet" anchors it to the block you stand
-// in, which reads better from a third-person camera and shows direction
-// relative to the player instead of the view.
+// Where a tracer line starts. Both options sit deliberately *off* the eye ray:
+// a segment that starts at the eye lies on a single view ray, so the game's
+// projection collapses every point of it onto one pixel — the line is reduced
+// to a dot, and a camera-facing strip built on that ray is seen edge-on, i.e.
+// it covers no pixels at all. That is why a tracer anchored to the camera never
+// showed up. Starting a little away from the eye is also what puts the line
+// across the screen instead of into the crosshair.
+//
+// "Bottom" is the classic snapline: the line starts just under the eye, so it
+// crosses the lower part of the screen on its way to the container. "Feet"
+// starts it at the block the player stands in, which reads better in third
+// person and shows direction relative to the player instead of the view.
+inline constexpr float kTracerAnchorDrop = 0.45f;
+
 enum class TracerOrigin : std::uint8_t {
-    Camera = 0,
+    Bottom = 0,
     Feet,
     Count,
 };
 
 inline constexpr std::size_t kTracerOriginCount = static_cast<std::size_t>(TracerOrigin::Count);
 inline constexpr std::array<std::string_view, kTracerOriginCount> kTracerOriginNames = {
-    "Camera", "Feet",
+    "Bottom", "Feet",
 };
 
-inline constexpr int kDefaultTracerOrigin = static_cast<int>(TracerOrigin::Camera);
+inline constexpr int kDefaultTracerOrigin = static_cast<int>(TracerOrigin::Bottom);
+
+// What older configs stored for the option that used to sit exactly on the eye.
+// "Camera" is the common one; the rest are the names other clients use for the
+// same anchor, so an imported config keeps pointing where its author meant.
+inline constexpr std::array<std::string_view, 4> kLegacyTracerOriginNames = {
+    "Camera", "Crosshair", "Eye", "Screen",
+};
 
 inline std::string tracerOriginRadioValue(int index) {
     return radioValue(kTracerOriginNames, index, kDefaultTracerOrigin);
 }
 
 inline int resolveTracerOrigin(std::string_view value) {
-    return resolveRadio(kTracerOriginNames, kDefaultTracerOrigin, value);
+    const int resolved = resolveRadio(kTracerOriginNames, -1, value);
+    if (resolved >= 0) return resolved;
+    for (const std::string_view legacy : kLegacyTracerOriginNames) {
+        if (value == legacy) return kDefaultTracerOrigin;
+    }
+    return kDefaultTracerOrigin;
 }
 
 // Resolves the configured origin to the world-space point tracers start from.
 // `feet` is the local player position sampled on the game tick, since the
-// render thread only knows the camera.
+// render thread only knows the camera. The camera itself is never returned: see
+// the note on TracerOrigin above.
 inline Vec3 tracerOriginPoint(TracerOrigin origin, const Vec3& camera, const Vec3& feet) {
     switch (origin) {
         case TracerOrigin::Feet: return feet;
-        case TracerOrigin::Camera:
+        case TracerOrigin::Bottom:
         case TracerOrigin::Count:
-        default: return camera;
+        default: return {camera.x, camera.y - kTracerAnchorDrop, camera.z};
     }
 }
 
