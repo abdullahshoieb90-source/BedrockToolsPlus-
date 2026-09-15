@@ -154,9 +154,11 @@ constexpr int kReanchorDistance = 12;        // blocks the player may move befor
 constexpr int kKeepXMargin = 16;             // cached blocks stay this far past the scan area
 constexpr int kKeepYMargin = 8;
 constexpr int kMinScanRadius = 8;
-constexpr int kMaxScanRadius = 64;
+constexpr int kMaxScanRadius = 256;          // ~16 chunks: boxes stay visible from very far away
 constexpr int kMinScanHeight = 2;
-constexpr int kMaxScanHeight = 64;
+constexpr int kMaxScanHeight = 128;
+constexpr int kMinMaxBoxes = 1;
+constexpr int kMaxMaxBoxes = 500;            // enough for a whole base at long range
 
 std::uintptr_t resolveAdrp(std::uint32_t* instructions,
                            std::size_t count,
@@ -728,7 +730,7 @@ StorageEspModule::~StorageEspModule() {
 void StorageEspModule::clampSettings() {
     scanRadius = std::clamp(scanRadius, kMinScanRadius, kMaxScanRadius);
     scanHeight = std::clamp(scanHeight, kMinScanHeight, kMaxScanHeight);
-    maxBoxes = std::clamp(maxBoxes, 1, 200);
+    maxBoxes = std::clamp(maxBoxes, kMinMaxBoxes, kMaxMaxBoxes);
     lineThickness = std::clamp(lineThickness, 1.0f, 10.0f);
     fillOpacity = std::clamp(fillOpacity, 0.0f, 1.0f);
     tracerThickness = std::clamp(tracerThickness, 1.0f, 10.0f);

@@ -626,7 +626,7 @@ int main() {
         fromLegacy.loadConfig(legacy);
         check(!fromLegacy.outline, "legacy showOutline is imported");
         check(near(fromLegacy.lineThickness, 9.0f), "legacy thickness is imported");
-        check(fromLegacy.scanRadius == 64 && fromLegacy.scanHeight == 2, "the scan area is clamped to a safe size");
+        check(fromLegacy.scanRadius == 256 && fromLegacy.scanHeight == 2, "the scan area is clamped to a safe size");
         check(fromLegacy.maxBoxes == 1, "the box cap never goes below one box");
         check(fromLegacy.throughWalls && !fromLegacy.modelSizedBoxes, "legacy xray/tightBoxes are imported");
         check(near(fromLegacy.fillOpacity, 1.0f), "opacity clamps to fully opaque");
