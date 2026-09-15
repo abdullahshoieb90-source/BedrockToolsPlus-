@@ -77,9 +77,11 @@ public:
     bool pulse = false;
     float pulseSpeed = 0.75f;   // cycles per second, clamped to 0.05..1.
 
-    // World scan. `scanRadius` is how far the sweep reaches horizontally,
-    // `scanHeight` how many blocks above and below the player's layer, and
+    // World scan. `scanRadius` is how far the sweep reaches horizontally
+    // (8..256 blocks, so boxes stay visible from very far away), `scanHeight`
+    // how many blocks above and below the player's layer (2..128), and
     // `scanSpeed` is the radio index (see storageesp::kScanSpeedNames).
+    // `maxBoxes` caps the boxes drawn per frame, nearest first (1..500).
     int scanRadius = 24;
     int scanHeight = 16;
     int scanSpeed = storageesp::kDefaultScanSpeed;
