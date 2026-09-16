@@ -208,20 +208,7 @@ void registerModulesWithLauncher() {
                 } else {
                     int minVal = 0;
                     int maxVal = 200;
-                    if (kLower.find("scanradius") != std::string::npos) {
-                        // Storage ESP horizontal reach: up to ~16 chunks so
-                        // boxes stay visible from very far away.
-                        minVal = 8;
-                        maxVal = 256;
-                    } else if (kLower.find("scanheight") != std::string::npos) {
-                        // Storage ESP vertical reach above/below the player.
-                        minVal = 2;
-                        maxVal = 128;
-                    } else if (kLower.find("maxboxes") != std::string::npos) {
-                        // Storage ESP per-frame box cap, nearest first.
-                        minVal = 1;
-                        maxVal = 500;
-                    } else if (kLower.find("cps") != std::string::npos) {
+                    if (kLower.find("cps") != std::string::npos) {
                         minVal = 1;
                         maxVal = 30;
                     } else if (kLower.find("time") != std::string::npos) {
