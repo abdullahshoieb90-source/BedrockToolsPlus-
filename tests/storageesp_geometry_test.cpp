@@ -30,14 +30,6 @@ bool near(float a, float b, float epsilon = 0.0001f) {
     return std::fabs(a - b) <= epsilon;
 }
 
-float length(float x, float y, float z) {
-    return std::sqrt(x * x + y * y + z * z);
-}
-
-float length(const bedrocktools::sdk::Vec3& v) {
-    return length(v.x, v.y, v.z);
-}
-
 using storageesp::ScanRegion;
 using storageesp::StorageKind;
 
@@ -61,23 +53,6 @@ int main() {
           "trapped chests are their own group");
     check(storageesp::classify("minecraft:ender_chest") == StorageKind::EnderChest,
           "ender chests are not confused with normal chests");
-    check(storageesp::classify("minecraft:copper_chest") == StorageKind::CopperChest,
-          "copper chests are their own group");
-    check(storageesp::classify("minecraft:exposed_copper_chest") == StorageKind::CopperChest &&
-              storageesp::classify("minecraft:weathered_copper_chest") == StorageKind::CopperChest &&
-              storageesp::classify("minecraft:oxidized_copper_chest") == StorageKind::CopperChest,
-          "every copper chest oxidation stage is a copper chest");
-    check(storageesp::classify("minecraft:waxed_copper_chest") == StorageKind::CopperChest &&
-              storageesp::classify("minecraft:waxed_oxidized_copper_chest") == StorageKind::CopperChest,
-          "waxed copper chests keep the copper group");
-    check(storageesp::classify("copper_chest") == StorageKind::CopperChest,
-          "unnamespaced copper chests still match");
-    check(storageesp::classify("minecraft:copper_block") == StorageKind::None &&
-              storageesp::classify("minecraft:oxidized_cut_copper") == StorageKind::None &&
-              storageesp::classify("minecraft:copper_grate") == StorageKind::None,
-          "copper building blocks are not storage");
-    check(storageesp::classify("minecraft:trapped_chest") == StorageKind::TrappedChest,
-          "the copper suffix test does not swallow trapped chests");
     check(storageesp::classify("minecraft:undyed_shulker_box") == StorageKind::ShulkerBox,
           "undyed shulker boxes are shulker boxes");
     check(storageesp::classify("minecraft:light_blue_shulker_box") == StorageKind::ShulkerBox,
@@ -97,15 +72,10 @@ int main() {
 
     storageesp::CategoryFilter filter;
     filter.dispensers = false;
-    filter.copperChests = false;
     check(storageesp::enabled(filter, StorageKind::Chest), "enabled groups are highlighted");
     check(!storageesp::enabled(filter, StorageKind::Dispenser),
           "a group turned off in the menu is skipped");
-    check(!storageesp::enabled(filter, StorageKind::CopperChest),
-          "copper chests can be hidden without hiding wooden chests");
     check(!storageesp::enabled(filter, StorageKind::None), "None is never drawn");
-    check(storageesp::enabled(storageesp::CategoryFilter{}, StorageKind::CopperChest),
-          "copper chests are highlighted by default");
 
     std::printf("storage esp box geometry\n");
     const BlockPos position{-4, 63, 9};
@@ -127,15 +97,6 @@ int main() {
     const blockoutline::Box hopper = storageesp::makeStorageBox(position, StorageKind::Hopper, 0.0f, true);
     check(near(hopper.min.y, 63.15625f) && near(hopper.max.y, 64.0f),
           "a model-sized hopper box starts at the funnel");
-
-    const blockoutline::Box copper =
-        storageesp::makeStorageBox(position, StorageKind::CopperChest, 0.0f, true);
-    check(near(copper.min.x, model.min.x) && near(copper.max.y, model.max.y),
-          "a copper chest follows the chest model instead of filling its voxel");
-    const blockoutline::Box copperVoxel =
-        storageesp::makeStorageBox(position, StorageKind::CopperChest, 0.0f, false);
-    check(near(copperVoxel.min.x, voxel.min.x) && near(copperVoxel.max.y, voxel.max.y),
-          "without model sizing a copper chest fills its voxel like every other group");
 
     const auto edges = blockoutline::boxEdges(voxel);
     check(edges.size() == 12, "every highlighted block has twelve edges");
@@ -283,84 +244,6 @@ int main() {
     check(near(chestBoxes.front().min.x, 0.0605f) && near(chestBoxes.front().max.x, 0.9395f),
           "a highlighted chest keeps its model margin plus the expansion");
 
-    std::printf("storage esp tracers\n");
-    // Straight ahead, straight behind, and ahead in another group: the tracer
-    // pass has to keep the first, drop the second and ignore the third.
-    const std::vector<storageesp::FoundBlock> tracerBlocks = {
-        {{0, 0, 4}, StorageKind::Chest},
-        {{0, 0, -6}, StorageKind::Chest},
-        {{0, 0, 9}, StorageKind::Barrel},
-    };
-    std::vector<storageesp::OverlayTarget> tracerTargets;
-    storageesp::collectVisible(tracerBlocks, camera, 24.0f, 64, storageesp::CategoryFilter{},
-                               tracerTargets);
-    check(tracerTargets.size() == 3, "the scan area keeps all three containers as targets");
-
-    storageesp::TracerView view;
-    view.camera = camera;              // {0.5, 0.5, 0.5}
-    view.forward = {0.0f, 0.0f, 1.0f}; // looking towards +Z
-
-    std::vector<blockoutline::Edge> tracers;
-    storageesp::collectTracers(tracerTargets, StorageKind::Chest, camera, true, view, tracers);
-    check(tracers.size() == 1, "a container behind the eye plane gets no tracer at all");
-    check(near(tracers.front().from.z, 0.5f + storageesp::kTracerNearPlane) &&
-              near(tracers.front().from.x, 0.5f),
-          "a camera-anchored tracer starts just in front of the eye plane, never on it");
-    check(near(tracers.front().to.x, 0.5f) && near(tracers.front().to.y, 0.5f) &&
-              near(tracers.front().to.z, 4.5f),
-          "the tracer still ends in the middle of the box its container is drawn with");
-
-    storageesp::collectTracers(tracerTargets, StorageKind::Barrel, camera, true, view, tracers);
-    check(tracers.size() == 1 && near(tracers.front().to.z, 9.5f),
-          "the reused buffer is refilled for the next group, not appended to");
-
-    storageesp::collectTracers(tracerTargets, StorageKind::Hopper, camera, true, view, tracers);
-    check(tracers.empty(), "a group with no visible container draws no tracer");
-
-    const Vec3 feet{0.5f, -1.1f, 0.5f}; // under the camera, so on the eye plane
-    storageesp::collectTracers(tracerTargets, StorageKind::Chest, feet, true, view, tracers);
-    check(tracers.size() == 1 &&
-              near(tracers.front().from.z, 0.5f + storageesp::kTracerNearPlane),
-          "a feet anchor sitting on the eye plane is clipped forward instead of dropped");
-    check(tracers.front().from.y > feet.y && tracers.front().from.y < 0.5f,
-          "the clipped start stays on the line between the feet and the container");
-
-    storageesp::TracerView blind;
-    blind.camera = camera;
-    blind.forward = {}; // the game did not expose a usable rotation
-    blockoutline::Edge atCamera{camera, {0.5f, 0.5f, 4.5f}};
-    check(storageesp::clipTracerEdge(atCamera, blind, storageesp::kTracerNearPlane),
-          "an unknown view direction still clips instead of dropping the tracer");
-    check(length(atCamera.from.x - camera.x, atCamera.from.y - camera.y,
-                 atCamera.from.z - camera.z) > 0.19f,
-          "the fallback pushes the start off the camera along the segment");
-    blockoutline::Edge zeroLength{camera, camera};
-    check(!storageesp::clipTracerEdge(zeroLength, blind, storageesp::kTracerNearPlane),
-          "a segment with nowhere to go is dropped");
-
-    std::printf("storage esp view direction\n");
-    check(near(storageesp::viewForward({0.0f, 0.0f}).z, 1.0f), "yaw 0 looks towards +Z");
-    check(near(storageesp::viewForward({0.0f, -90.0f}).x, 1.0f), "yaw -90 looks towards +X");
-    check(near(storageesp::viewForward({0.0f, 90.0f}).x, -1.0f), "yaw 90 looks towards -X");
-    check(near(storageesp::viewForward({-90.0f, 0.0f}).y, 1.0f), "negative pitch looks up");
-    check(near(storageesp::viewForward({90.0f, 0.0f}).y, -1.0f), "positive pitch looks down");
-    check(near(length(storageesp::viewForward({37.5f, -142.0f})), 1.0f),
-          "the look vector stays normalized at any pitch and yaw");
-    check(near(storageesp::viewDepth({0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}), 2.0f) &&
-              near(storageesp::viewDepth({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}), -1.0f),
-          "depth is positive in front of the camera and negative behind it");
-
-    const Vec3 modelCenter =
-        storageesp::storageCenter({0, 64, 0}, StorageKind::Chest, true);
-    const Vec3 voxelCenter =
-        storageesp::storageCenter({0, 64, 0}, StorageKind::Chest, false);
-    check(near(modelCenter.y, 64.5f) && near(voxelCenter.y, 64.5f),
-          "a chest is aimed at from the same height either way");
-    const Vec3 hopperCenter =
-        storageesp::storageCenter({0, 64, 0}, StorageKind::Hopper, true);
-    check(near(hopperCenter.y, 64.578125f),
-          "a model-sized hopper is aimed at the middle of its funnel, not of the voxel");
-
     std::printf("storage esp block-type memoization\n");
     storageesp::TypeKindCache types;
     int resolved = 0;
@@ -403,45 +286,6 @@ int main() {
         }
         check(commas == storageesp::kScanSpeedCount,
               "the radio value lists every option after the selected index");
-    }
-
-    std::printf("storage esp tracer origin setting\n");
-    check(storageesp::kTracerOriginCount == 2 &&
-              storageesp::kTracerOriginNames[0] == "Camera" &&
-              storageesp::kTracerOriginNames[1] == "Feet",
-          "the origin picker offers camera and feet");
-    check(storageesp::resolveTracerOrigin("0,Camera,Feet") == 0 &&
-              storageesp::resolveTracerOrigin("1,Camera,Feet") == 1,
-          "the full launcher radio value resolves to its index");
-    check(storageesp::resolveTracerOrigin("Feet") == 1, "a bare origin name resolves");
-    check(storageesp::resolveTracerOrigin("1") == 1, "a bare numeric origin resolves");
-    check(storageesp::resolveTracerOrigin("nonsense") == storageesp::kDefaultTracerOrigin &&
-              storageesp::resolveTracerOrigin("") == storageesp::kDefaultTracerOrigin &&
-              storageesp::resolveTracerOrigin("9") == storageesp::kDefaultTracerOrigin,
-          "an unknown or out-of-range origin falls back to the camera");
-    check(storageesp::resolveTracerOrigin(storageesp::tracerOriginRadioValue(1)) == 1,
-          "the saved origin round-trips");
-    check(storageesp::tracerOriginRadioValue(99) ==
-              storageesp::tracerOriginRadioValue(storageesp::kDefaultTracerOrigin),
-          "an out-of-range index saves as the default origin");
-    {
-        const std::string saved = storageesp::tracerOriginRadioValue(0);
-        std::size_t commas = 0;
-        for (char ch : saved) {
-            if (ch == ',') ++commas;
-        }
-        check(commas == storageesp::kTracerOriginCount,
-              "the origin radio value lists every option after the selected index");
-    }
-    {
-        const Vec3 camera{1.0f, 2.0f, 3.0f};
-        const Vec3 feet{1.0f, 0.0f, 3.0f};
-        check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Camera, camera, feet) == camera,
-              "the camera origin uses the render camera");
-        check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Feet, camera, feet) == feet,
-              "the feet origin uses the player position the tick published");
-        check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Count, camera, feet) == camera,
-              "an out-of-range origin renders from the camera");
     }
 
     std::printf("\n");

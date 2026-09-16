@@ -116,19 +116,6 @@ std::atomic<bool> s_resetRequested{false};
 std::mutex s_publishMutex;
 std::shared_ptr<const FoundBlocks> s_published = std::make_shared<const FoundBlocks>();
 
-// What the tracer pass needs about the local player, sampled on the tick that
-// runs the sweep: the render thread only ever reads a camera *position* out of
-// the level renderer, and a tracer anchored to the player's feet (or clipped
-// against the eye plane) needs a point and a view direction that follow the
-// player between block updates.
-struct PublishedView {
-    bedrocktools::sdk::Vec3 feet{};
-    bedrocktools::sdk::Vec2 rotation{};
-    bool rotationValid = false;
-};
-
-PublishedView s_publishedView{};
-
 // Where the current sweep stands. Restarting it is cheap: the cache survives,
 // only the cursor and the chunk list are rebuilt.
 struct ScanState {
@@ -144,12 +131,6 @@ struct ScanState {
 ScanState s_scan;
 
 constexpr float kBoxExpansion = 0.002f;      // same as Block Outline, avoids z-fighting
-// Camera-facing line widths, in world units per thickness step. Box edges are
-// about a block long and are drawn at this literal width; a tracer's width is
-// this value at one block of range and grows with distance from there, so it
-// keeps a steady width on screen however far the container is.
-constexpr float kBoxHalfWidthPerThickness = 0.005f;
-constexpr float kTracerHalfWidthPerThickness = 0.002f;
 constexpr int kReanchorDistance = 12;        // blocks the player may move before restarting
 constexpr int kKeepXMargin = 16;             // cached blocks stay this far past the scan area
 constexpr int kKeepYMargin = 8;
@@ -242,20 +223,6 @@ void publishSnapshot() {
 void publishCleared() {
     std::lock_guard<std::mutex> lock(s_publishMutex);
     s_published = std::make_shared<const FoundBlocks>();
-}
-
-// Publishes the tracer anchors every tick, on their own: a tracer that only
-// refreshed together with the block snapshot would keep pointing at where the
-// player stood the last time a container was found or lost.
-void publishView(const bedrocktools::sdk::Player* player, const bedrocktools::sdk::Vec3& feet) {
-    PublishedView next;
-    next.feet = feet;
-    if (player->rotationComponent()) {
-        next.rotation = player->rotation();
-        next.rotationValid = true;
-    }
-    std::lock_guard<std::mutex> lock(s_publishMutex);
-    s_publishedView = next;
 }
 
 // Puts the sweep cursor back at the player, and `clearFound` additionally
@@ -357,8 +324,6 @@ void scanStep(bedrocktools::sdk::Player* player) {
     if (requestedReset) restartSweep(true);
 
     const bedrocktools::sdk::Vec3 position = player->position();
-    publishView(player, position);
-
     storageesp::ScanRegion wanted;
     wanted.anchor = {static_cast<int>(std::floor(position.x)),
                      static_cast<int>(std::floor(position.y)),
@@ -439,69 +404,6 @@ void drawFill(void* screenContext,
     flushMesh(screenContext, tessellator, material);
 }
 
-// Draws world-space line segments: box edges and tracer lines share this pass,
-// because both need the same two-step trick on Android.
-//
-// `constantScreenWidth` picks how the camera-facing quads are widened. Box
-// edges are about a block long, so one world-space width reads the same from
-// any distance. A tracer spans tens of blocks and is seen end-on: with a fixed
-// world width its far end is a fraction of a pixel, so its width instead grows
-// with the distance of each end, which keeps one steady width on screen.
-void drawSegments(void* screenContext,
-                  void* tessellator,
-                  void* material,
-                  const std::vector<blockoutline::Edge>& segments,
-                  const bedrocktools::sdk::Vec3& camera,
-                  std::uint32_t rgb,
-                  float alpha,
-                  float thickness,
-                  bool constantScreenWidth) {
-    if (segments.empty() || alpha <= 0.001f) return;
-
-    const float safeThickness = std::clamp(thickness, 1.0f, 10.0f);
-
-    // Above the hairline setting every segment becomes a camera-facing quad, so
-    // the slider has a real effect on GLES drivers that ignore line width.
-    if (safeThickness > 1.05f) {
-        const float halfWidth = safeThickness *
-            (constantScreenWidth ? kTracerHalfWidthPerThickness : kBoxHalfWidthPerThickness);
-        s_tessBegin(tessellator, nullptr, 1, static_cast<int>(segments.size()) * 8, 0);
-        setTessellatorColor(tessellator, rgb, alpha);
-        for (const auto& segment : segments) {
-            std::array<bedrocktools::sdk::Vec3, 4> quad{};
-            const bool built = constantScreenWidth
-                ? blockoutline::makeTaperedBeam(
-                      segment, camera,
-                      blockoutline::screenConstantHalfWidth(halfWidth, segment.from, camera,
-                                                            storageesp::kTracerWidthFloor),
-                      blockoutline::screenConstantHalfWidth(halfWidth, segment.to, camera,
-                                                            storageesp::kTracerWidthFloor),
-                      quad)
-                : blockoutline::makeEdgeBeam(segment, camera, halfWidth, quad);
-            if (!built) continue;
-            for (const auto& vertex : quad) {
-                s_tessVertex(tessellator, vertex.x, vertex.y, vertex.z);
-            }
-            // Both windings keep the strip visible with materials that
-            // enable back-face culling.
-            for (int i = 3; i >= 0; --i) {
-                s_tessVertex(tessellator, quad[i].x, quad[i].y, quad[i].z);
-            }
-        }
-        flushMesh(screenContext, tessellator, material);
-    }
-
-    // A final native line pass keeps distant segments crisp and is the complete
-    // renderer for Thickness = 1.
-    s_tessBegin(tessellator, nullptr, 4, static_cast<int>(segments.size()) * 2, 0);
-    setTessellatorColor(tessellator, rgb, alpha);
-    for (const auto& segment : segments) {
-        emitVertex(tessellator, segment.from, camera);
-        emitVertex(tessellator, segment.to, camera);
-    }
-    flushMesh(screenContext, tessellator, material);
-}
-
 void drawOutline(void* screenContext,
                  void* tessellator,
                  void* material,
@@ -512,34 +414,44 @@ void drawOutline(void* screenContext,
                  float thickness) {
     if (boxes.empty() || alpha <= 0.001f) return;
 
-    static thread_local std::vector<blockoutline::Edge> segments;
-    blockoutline::collectBoxEdges(boxes, segments);
-    drawSegments(screenContext, tessellator, material, segments, camera, rgb, alpha, thickness,
-                 /*constantScreenWidth=*/false);
-}
+    const float safeThickness = std::clamp(thickness, 1.0f, 10.0f);
 
-// One line per container of a highlight group, from the configured tracer
-// origin to the middle of the box that container is drawn with. Segments that
-// cannot be seen (container behind the eye plane) are dropped before anything
-// is submitted, and a start sitting on the camera is pulled down the line, so
-// no degenerate vertex ever reaches the driver.
-void drawTracers(void* screenContext,
-                 void* tessellator,
-                 void* material,
-                 const std::vector<storageesp::OverlayTarget>& targets,
-                 storageesp::StorageKind kind,
-                 const bedrocktools::sdk::Vec3& origin,
-                 const storageesp::TracerView& view,
-                 bool modelSized,
-                 std::uint32_t rgb,
-                 float alpha,
-                 float thickness) {
-    if (targets.empty() || alpha <= 0.001f) return;
+    // Above the hairline setting every edge becomes a camera-facing quad, so
+    // the slider has a real effect on GLES drivers that ignore line width.
+    if (safeThickness > 1.05f) {
+        const float halfWidth = safeThickness * 0.005f;
+        s_tessBegin(tessellator, nullptr, 1, static_cast<int>(boxes.size()) * 12 * 8, 0);
+        setTessellatorColor(tessellator, rgb, alpha);
+        for (const auto& box : boxes) {
+            const auto edges = blockoutline::boxEdges(box);
+            for (const auto& edge : edges) {
+                std::array<bedrocktools::sdk::Vec3, 4> quad{};
+                if (!blockoutline::makeEdgeBeam(edge, camera, halfWidth, quad)) continue;
+                for (const auto& vertex : quad) {
+                    s_tessVertex(tessellator, vertex.x, vertex.y, vertex.z);
+                }
+                // Both windings keep the strip visible with materials that
+                // enable back-face culling.
+                for (int i = 3; i >= 0; --i) {
+                    s_tessVertex(tessellator, quad[i].x, quad[i].y, quad[i].z);
+                }
+            }
+        }
+        flushMesh(screenContext, tessellator, material);
+    }
 
-    static thread_local std::vector<blockoutline::Edge> segments;
-    storageesp::collectTracers(targets, kind, origin, modelSized, view, segments);
-    drawSegments(screenContext, tessellator, material, segments, view.camera, rgb, alpha, thickness,
-                 /*constantScreenWidth=*/true);
+    // A final native line pass keeps distant boxes crisp and is the complete
+    // renderer for Thickness = 1.
+    s_tessBegin(tessellator, nullptr, 4, static_cast<int>(boxes.size()) * 12 * 2, 0);
+    setTessellatorColor(tessellator, rgb, alpha);
+    for (const auto& box : boxes) {
+        const auto edges = blockoutline::boxEdges(box);
+        for (const auto& edge : edges) {
+            emitVertex(tessellator, edge.from, camera);
+            emitVertex(tessellator, edge.to, camera);
+        }
+    }
+    flushMesh(screenContext, tessellator, material);
 }
 
 void renderStorageEsp(void* levelRenderer, void* screenContext) {
@@ -549,7 +461,7 @@ void renderStorageEsp(void* levelRenderer, void* screenContext) {
         return;
     }
     if (!s_tessBegin || !s_tessColor || !s_tessVertex || !s_renderMesh) return;
-    if (!g_storageEsp->outline && !g_storageEsp->fill && !g_storageEsp->tracer) return;
+    if (!g_storageEsp->outline && !g_storageEsp->fill) return;
 
     const auto screenAddress = reinterpret_cast<std::uintptr_t>(screenContext);
     const std::uintptr_t tessellatorAddress = *reinterpret_cast<std::uintptr_t*>(
@@ -566,11 +478,9 @@ void renderStorageEsp(void* levelRenderer, void* screenContext) {
         playerRenderer + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
 
     std::shared_ptr<const FoundBlocks> snapshot;
-    PublishedView view;
     {
         std::lock_guard<std::mutex> lock(s_publishMutex);
         snapshot = s_published;
-        view = s_publishedView;
     }
     if (!snapshot || snapshot->empty()) return;
 
@@ -618,11 +528,6 @@ void renderStorageEsp(void* levelRenderer, void* screenContext) {
 
     // One batch per highlight group, so the colors stay independent while the
     // number of tessellator submissions stays small.
-    storageesp::TracerView tracerView;
-    tracerView.camera = camera;
-    if (view.rotationValid) tracerView.forward = storageesp::viewForward(view.rotation);
-    const auto tracerOrigin = storageesp::tracerOriginPoint(
-        static_cast<storageesp::TracerOrigin>(g_storageEsp->tracerOrigin), camera, view.feet);
     for (std::size_t index = 1; index < storageesp::kindCount; ++index) {
         const auto kind = static_cast<storageesp::StorageKind>(index);
         if (!storageesp::enabled(g_storageEsp->filter(), kind)) continue;
@@ -641,12 +546,6 @@ void renderStorageEsp(void* levelRenderer, void* screenContext) {
         if (g_storageEsp->outline) {
             drawOutline(screenContext, tessellator, outlineMaterial, boxes, camera, rgb,
                         blockoutline::clampedOpacity(1.0f, pulse), g_storageEsp->lineThickness);
-        }
-        if (g_storageEsp->tracer) {
-            drawTracers(screenContext, tessellator, outlineMaterial, targets, kind,
-                        tracerOrigin, tracerView, g_storageEsp->modelSizedBoxes, rgb,
-                        blockoutline::clampedOpacity(g_storageEsp->tracerOpacity, pulse),
-                        g_storageEsp->tracerThickness);
         }
     }
 
@@ -714,7 +613,7 @@ std::string colorString(std::uint32_t color) {
 
 StorageEspModule::StorageEspModule()
     : Module("Storage ESP",
-             "Highlights chests, copper chests, trapped chests, ender chests, shulker boxes, barrels, hoppers, furnaces and dispensers around you with per-category ESP boxes, optional tracer lines, optionally through walls.") {
+             "Highlights chests, trapped chests, ender chests, shulker boxes, barrels, hoppers, furnaces and dispensers around you with per-category ESP boxes, optionally through walls.") {
     showInMenu = true;
     hideInHudEditor = true;
     g_storageEsp = this;
@@ -730,16 +629,10 @@ void StorageEspModule::clampSettings() {
     maxBoxes = std::clamp(maxBoxes, 1, 200);
     lineThickness = std::clamp(lineThickness, 1.0f, 10.0f);
     fillOpacity = std::clamp(fillOpacity, 0.0f, 1.0f);
-    tracerThickness = std::clamp(tracerThickness, 1.0f, 10.0f);
-    tracerOpacity = std::clamp(tracerOpacity, 0.0f, 1.0f);
     rainbowSpeed = std::clamp(rainbowSpeed, 0.05f, 1.0f);
     pulseSpeed = std::clamp(pulseSpeed, 0.05f, 1.0f);
     if (scanSpeed < 0 || static_cast<std::size_t>(scanSpeed) >= storageesp::kScanSpeedCount) {
         scanSpeed = storageesp::kDefaultScanSpeed;
-    }
-    if (tracerOrigin < 0 ||
-        static_cast<std::size_t>(tracerOrigin) >= storageesp::kTracerOriginCount) {
-        tracerOrigin = storageesp::kDefaultTracerOrigin;
     }
 
     // The scan is what these settings describe, so ask for a restart whenever a
@@ -821,8 +714,6 @@ void StorageEspModule::loadConfig(const nlohmann::json& json) {
 
     readFirst(json, {"showChests"}, showChests);
     readColor(json, {"showChestsColor"}, showChestsColor);
-    readFirst(json, {"showCopperChests"}, showCopperChests);
-    readColor(json, {"showCopperChestsColor"}, showCopperChestsColor);
     readFirst(json, {"showTrappedChests"}, showTrappedChests);
     readColor(json, {"showTrappedChestsColor"}, showTrappedChestsColor);
     readFirst(json, {"showEnderChests"}, showEnderChests);
@@ -844,9 +735,6 @@ void StorageEspModule::loadConfig(const nlohmann::json& json) {
     readFirst(json, {"fillOpacity", "opacity"}, fillOpacity);
     readFirst(json, {"modelSizedBoxes", "tightBoxes"}, modelSizedBoxes);
     readFirst(json, {"throughWalls", "xray"}, throughWalls);
-    readFirst(json, {"tracer", "showTracers"}, tracer);
-    readFirst(json, {"tracerThickness", "tracerWidth"}, tracerThickness);
-    readFirst(json, {"tracerOpacity"}, tracerOpacity);
     readFirst(json, {"rainbow"}, rainbow);
     readFirst(json, {"rainbowSpeed"}, rainbowSpeed);
     readFirst(json, {"pulse"}, pulse);
@@ -867,20 +755,9 @@ void StorageEspModule::loadConfig(const nlohmann::json& json) {
         }
     }
 
-    if (json.contains("tracerOrigin")) {
-        const nlohmann::json& origin = json["tracerOrigin"];
-        if (origin.is_string()) {
-            tracerOrigin = storageesp::resolveTracerOrigin(origin.get<std::string>());
-        } else {
-            int index = storageesp::kDefaultTracerOrigin;
-            readFirst(json, {"tracerOrigin"}, index);
-            tracerOrigin = index;
-        }
-    }
-
-    for (std::uint32_t* color : {&showChestsColor, &showCopperChestsColor, &showTrappedChestsColor,
-                                 &showEnderChestsColor, &showShulkerBoxesColor, &showBarrelsColor,
-                                 &showHoppersColor, &showFurnacesColor, &showDispensersColor}) {
+    for (std::uint32_t* color : {&showChestsColor, &showTrappedChestsColor, &showEnderChestsColor,
+                                 &showShulkerBoxesColor, &showBarrelsColor, &showHoppersColor,
+                                 &showFurnacesColor, &showDispensersColor}) {
         *color = 0xFF000000u | (*color & 0x00FFFFFFu);
     }
 
@@ -892,8 +769,6 @@ void StorageEspModule::saveConfig(nlohmann::json& json) {
 
     json["showChests"] = showChests;
     json["showChestsColor"] = colorString(showChestsColor);
-    json["showCopperChests"] = showCopperChests;
-    json["showCopperChestsColor"] = colorString(showCopperChestsColor);
     json["showTrappedChests"] = showTrappedChests;
     json["showTrappedChestsColor"] = colorString(showTrappedChestsColor);
     json["showEnderChests"] = showEnderChests;
@@ -915,9 +790,6 @@ void StorageEspModule::saveConfig(nlohmann::json& json) {
     json["fillOpacity"] = std::clamp(fillOpacity, 0.0f, 1.0f);
     json["modelSizedBoxes"] = modelSizedBoxes;
     json["throughWalls"] = throughWalls;
-    json["tracer"] = tracer;
-    json["tracerThickness"] = std::clamp(tracerThickness, 1.0f, 10.0f);
-    json["tracerOpacity"] = std::clamp(tracerOpacity, 0.0f, 1.0f);
     json["rainbow"] = rainbow;
     json["rainbowSpeed"] = std::clamp(rainbowSpeed, 0.05f, 1.0f);
     json["pulse"] = pulse;
@@ -927,5 +799,4 @@ void StorageEspModule::saveConfig(nlohmann::json& json) {
     json["scanHeight"] = std::clamp(scanHeight, kMinScanHeight, kMaxScanHeight);
     json["maxBoxes"] = std::clamp(maxBoxes, 1, 200);
     json["scanSpeed"] = storageesp::scanSpeedRadioValue(scanSpeed);
-    json["tracerOrigin"] = storageesp::tracerOriginRadioValue(tracerOrigin);
 }

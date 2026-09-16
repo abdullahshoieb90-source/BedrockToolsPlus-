@@ -7,10 +7,8 @@
 #include "modules/visual/blockoutline_geometry.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdio>
-#include <vector>
 
 namespace {
 
@@ -27,13 +25,6 @@ void check(bool condition, const char* message) {
 
 bool near(float a, float b, float epsilon = 0.0001f) {
     return std::fabs(a - b) <= epsilon;
-}
-
-using bedrocktools::sdk::Vec3;
-
-float length(const Vec3& a, const Vec3& b) {
-    return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) +
-                     (a.z - b.z) * (a.z - b.z));
 }
 
 } // namespace
@@ -68,51 +59,6 @@ int main() {
     check(axisAligned, "every outline edge is axis aligned (no diagonal artifacts)");
     check(xEdges == 4 && yEdges == 4 && zEdges == 4,
           "outline contains four edges on each axis");
-
-    std::vector<blockoutline::Edge> segments;
-    blockoutline::collectBoxEdges({box, box}, segments);
-    check(segments.size() == 24, "flattening two boxes yields twenty-four line segments");
-    check(near(segments.front().from.x, edges.front().from.x) &&
-              near(segments[12].from.x, edges.front().from.x),
-          "flattened segments keep the boxEdges order of every box");
-    blockoutline::collectBoxEdges({}, segments);
-    check(segments.empty(), "the reused buffer is cleared instead of growing every frame");
-
-    std::printf("block outline tapered beams\n");
-    check(near(blockoutline::screenConstantHalfWidth(0.01f, {0.0f, 0.0f, 10.0f},
-                                                     {0.0f, 0.0f, 0.0f}, 0.2f), 0.1f),
-          "a screen-constant width grows with the distance from the camera");
-    check(near(blockoutline::screenConstantHalfWidth(0.01f, {0.0f, 0.0f, 0.05f},
-                                                     {0.0f, 0.0f, 0.0f}, 0.2f), 0.002f),
-          "the floor keeps the end nearest the camera from collapsing to nothing");
-
-    const blockoutline::Edge ray{{0.0f, 0.0f, 0.2f}, {0.0f, 0.0f, 10.0f}};
-    std::array<Vec3, 4> strip{};
-    check(blockoutline::makeTaperedBeam(ray, {0.0f, 0.0f, 0.0f}, 0.001f, 0.05f, strip),
-          "a tapered strip builds along an eye ray");
-    check(near(length(strip[3], strip[0]), 0.002f), "the near end keeps its own width");
-    check(near(length(strip[2], strip[1]), 0.1f), "the far end keeps its own, larger width");
-    check(!blockoutline::makeTaperedBeam(
-              blockoutline::Edge{{1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f}},
-              {0.0f, 0.0f, 0.0f}, 0.01f, 0.01f, strip),
-          "a zero-length segment builds no strip");
-
-    // With one width at both ends the tapered builder has to agree with the
-    // plain edge beam the box outlines use.
-    const blockoutline::Edge edge{{0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}};
-    std::array<Vec3, 4> tapered{};
-    std::array<Vec3, 4> plain{};
-    check(blockoutline::makeTaperedBeam(edge, {0.0f, 0.0f, 0.0f}, 0.01f, 0.01f, tapered) &&
-              blockoutline::makeEdgeBeam(edge, {0.0f, 0.0f, 0.0f}, 0.01f, plain),
-          "both beam builders accept the same segment");
-    bool sameCorners = true;
-    for (int i = 0; i < 4; ++i) {
-        if (!near(tapered[i].x, plain[i].x) || !near(tapered[i].y, plain[i].y) ||
-            !near(tapered[i].z, plain[i].z)) {
-            sameCorners = false;
-        }
-    }
-    check(sameCorners, "a uniform width reproduces the plain camera-facing beam");
 
     const auto faces = blockoutline::boxFaces(box);
     check(faces.size() == 6, "full fill contains six faces");
