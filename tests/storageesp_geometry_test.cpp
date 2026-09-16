@@ -301,38 +301,23 @@ int main() {
     view.forward = {0.0f, 0.0f, 1.0f}; // looking towards +Z
 
     std::vector<blockoutline::Edge> tracers;
-
-    // Both ends on one eye ray: the projection puts every point of the segment
-    // on a single pixel, so the pass must not submit it. That is exactly what
-    // the old camera anchor looked like for a container dead ahead, and why the
-    // shipped anchors sit off the eye ray.
     storageesp::collectTracers(tracerTargets, StorageKind::Chest, camera, true, view, tracers);
-    check(tracers.empty(),
-          "a tracer whose ends share one eye ray is dropped instead of collapsing to a pixel");
-
-    const Vec3 feet{0.5f, -1.1f, 0.5f}; // under the camera: eye depth zero, like the eye plane
-    const Vec3 anchor =
-        storageesp::tracerOriginPoint(storageesp::TracerOrigin::Bottom, camera, feet);
-    storageesp::collectTracers(tracerTargets, StorageKind::Chest, anchor, true, view, tracers);
     check(tracers.size() == 1, "a container behind the eye plane gets no tracer at all");
     check(near(tracers.front().from.z, 0.5f + storageesp::kTracerNearPlane) &&
               near(tracers.front().from.x, 0.5f),
-          "a start on the eye plane is pulled up in front of it, never left on it");
-    check(tracers.front().from.y > anchor.y && tracers.front().from.y < camera.y,
-          "the clipped start stays on the line from the anchor to the container");
+          "a camera-anchored tracer starts just in front of the eye plane, never on it");
     check(near(tracers.front().to.x, 0.5f) && near(tracers.front().to.y, 0.5f) &&
               near(tracers.front().to.z, 4.5f),
           "the tracer still ends in the middle of the box its container is drawn with");
-    check(storageesp::viewAngleSpan(tracers.front().from, tracers.front().to, camera) > 0.2f,
-          "the dropped anchor leaves the tracer a screen angle to be seen across, not a dot");
 
-    storageesp::collectTracers(tracerTargets, StorageKind::Barrel, anchor, true, view, tracers);
+    storageesp::collectTracers(tracerTargets, StorageKind::Barrel, camera, true, view, tracers);
     check(tracers.size() == 1 && near(tracers.front().to.z, 9.5f),
           "the reused buffer is refilled for the next group, not appended to");
 
     storageesp::collectTracers(tracerTargets, StorageKind::Hopper, camera, true, view, tracers);
     check(tracers.empty(), "a group with no visible container draws no tracer");
 
+    const Vec3 feet{0.5f, -1.1f, 0.5f}; // under the camera, so on the eye plane
     storageesp::collectTracers(tracerTargets, StorageKind::Chest, feet, true, view, tracers);
     check(tracers.size() == 1 &&
               near(tracers.front().from.z, 0.5f + storageesp::kTracerNearPlane),
@@ -422,32 +407,23 @@ int main() {
 
     std::printf("storage esp tracer origin setting\n");
     check(storageesp::kTracerOriginCount == 2 &&
-              storageesp::kTracerOriginNames[0] == "Bottom" &&
+              storageesp::kTracerOriginNames[0] == "Camera" &&
               storageesp::kTracerOriginNames[1] == "Feet",
-          "the origin picker offers the dropped anchor and the player's feet");
-    check(storageesp::resolveTracerOrigin("0,Bottom,Feet") == 0 &&
-              storageesp::resolveTracerOrigin("1,Bottom,Feet") == 1,
+          "the origin picker offers camera and feet");
+    check(storageesp::resolveTracerOrigin("0,Camera,Feet") == 0 &&
+              storageesp::resolveTracerOrigin("1,Camera,Feet") == 1,
           "the full launcher radio value resolves to its index");
     check(storageesp::resolveTracerOrigin("Feet") == 1, "a bare origin name resolves");
     check(storageesp::resolveTracerOrigin("1") == 1, "a bare numeric origin resolves");
     check(storageesp::resolveTracerOrigin("nonsense") == storageesp::kDefaultTracerOrigin &&
               storageesp::resolveTracerOrigin("") == storageesp::kDefaultTracerOrigin &&
               storageesp::resolveTracerOrigin("9") == storageesp::kDefaultTracerOrigin,
-          "an unknown or out-of-range origin falls back to the default");
+          "an unknown or out-of-range origin falls back to the camera");
     check(storageesp::resolveTracerOrigin(storageesp::tracerOriginRadioValue(1)) == 1,
           "the saved origin round-trips");
     check(storageesp::tracerOriginRadioValue(99) ==
               storageesp::tracerOriginRadioValue(storageesp::kDefaultTracerOrigin),
           "an out-of-range index saves as the default origin");
-    // A config written before the anchor was dropped below the eye names the
-    // first option "Camera" (or a client's name for the same snapline).
-    check(storageesp::resolveTracerOrigin("0,Camera,Feet") == 0,
-          "an old full radio value keeps its anchor");
-    check(storageesp::resolveTracerOrigin("Camera") == 0 &&
-              storageesp::resolveTracerOrigin("Crosshair") == 0 &&
-              storageesp::resolveTracerOrigin("Eye") == 0 &&
-              storageesp::resolveTracerOrigin("Screen") == 0,
-          "every old name for the eye anchor lands on the dropped one");
     {
         const std::string saved = storageesp::tracerOriginRadioValue(0);
         std::size_t commas = 0;
@@ -460,49 +436,12 @@ int main() {
     {
         const Vec3 camera{1.0f, 2.0f, 3.0f};
         const Vec3 feet{1.0f, 0.0f, 3.0f};
-        const Vec3 bottom =
-            storageesp::tracerOriginPoint(storageesp::TracerOrigin::Bottom, camera, feet);
-        check(near(bottom.x, camera.x) && near(bottom.z, camera.z) &&
-                  near(bottom.y, camera.y - storageesp::kTracerAnchorDrop),
-              "the default origin drops the anchor straight below the eye");
+        check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Camera, camera, feet) == camera,
+              "the camera origin uses the render camera");
         check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Feet, camera, feet) == feet,
               "the feet origin uses the player position the tick published");
-        const Vec3 fallback =
-            storageesp::tracerOriginPoint(storageesp::TracerOrigin::Count, camera, feet);
-        check(fallback == bottom, "an out-of-range origin renders from the dropped anchor");
-    }
-
-    std::printf("storage esp tracer screen span\n");
-    {
-        const Vec3 camera{0.0f, 0.0f, 0.0f};
-        const Vec3 container{3.0f, 0.0f, 10.0f};
-        const Vec3 feet{0.0f, -1.6f, 0.0f};
-
-        // The bug this guards: a start sitting on the camera puts both ends of
-        // the segment on one view ray, so the projection collapses the line to
-        // a single pixel and no widening can make it visible.
-        check(storageesp::viewAngleSpan(camera, container, camera) == 0.0f,
-              "a line that starts at the eye spans no screen angle at all");
-
-        storageesp::TracerView looking;
-        looking.camera = camera;
-        // Looking straight at the container: the worst case for a snapline,
-        // because such a segment's own plane holds the eye.
-        looking.forward = {0.287f, 0.0f, 0.958f};
-        for (int index = 0; index < storageesp::kDefaultTracerOrigin + 1; ++index) {
-            const auto origin = static_cast<storageesp::TracerOrigin>(index);
-            const Vec3 anchor = storageesp::tracerOriginPoint(origin, camera, feet);
-            check(storageesp::viewAngleSpan(anchor, container, camera) > 0.2f,
-                  "neither offered origin sits on the eye ray of the container");
-            blockoutline::Edge line{anchor, container};
-            check(storageesp::clipTracerEdge(line, looking, storageesp::kTracerNearPlane),
-                  "the container the player looks at keeps its tracer");
-            check(storageesp::viewAngleSpan(line.from, line.to, camera) > 0.5f,
-                  "the clipped tracer still spans the screen instead of collapsing");
-            check(storageesp::viewDepth(line.from, camera, looking.forward) >=
-                      storageesp::kTracerNearPlane - 0.0001f,
-                  "the clipped start sits on or in front of the near plane");
-        }
+        check(storageesp::tracerOriginPoint(storageesp::TracerOrigin::Count, camera, feet) == camera,
+              "an out-of-range origin renders from the camera");
     }
 
     std::printf("\n");
