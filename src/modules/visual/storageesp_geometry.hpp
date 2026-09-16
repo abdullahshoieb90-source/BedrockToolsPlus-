@@ -9,23 +9,20 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
 // Pure logic for the Storage ESP module: which block names count as storage,
-// how a found block is turned into a box, how tracer lines are anchored to it,
-// how a budgeted world scan walks the chunks around the player, and how found
-// blocks are remembered/expired.
+// how a found block is turned into a box, how a budgeted world scan walks the
+// chunks around the player, and how found blocks are remembered/expired.
 //
 // Nothing here touches Minecraft memory, so every rule the module relies on
 // can be exercised by the host tests (tests/storageesp_geometry_test.cpp).
 namespace storageesp {
 
 using bedrocktools::sdk::BlockPos;
-using bedrocktools::sdk::Vec2;
 using bedrocktools::sdk::Vec3;
 
 // Storage groups the module can highlight. Each group has its own menu toggle
@@ -33,7 +30,6 @@ using bedrocktools::sdk::Vec3;
 enum class StorageKind : std::uint8_t {
     None = 0,
     Chest,
-    CopperChest,
     TrappedChest,
     EnderChest,
     ShulkerBox,
@@ -63,15 +59,6 @@ inline StorageKind classify(std::string_view rawName) {
     if (name == "trapped_chest") return StorageKind::TrappedChest;
     if (name == "ender_chest") return StorageKind::EnderChest;
 
-    // Copper chests ship as one block per oxidation stage ("copper_chest",
-    // "exposed_copper_chest", "weathered_copper_chest", "oxidized_copper_chest")
-    // and again per waxed stage, so a suffix test covers every variant a world
-    // can contain — including builds that keep oxidation in a block property
-    // instead and only ever report the base name.
-    if (name == "copper_chest" || name.ends_with("_copper_chest")) {
-        return StorageKind::CopperChest;
-    }
-
     // Colored boxes are "<color>_shulker_box"; Bedrock also still ships the
     // undyed variant under two different names across versions.
     if (name == "shulker_box" || name == "undyed_shulker_box" ||
@@ -95,7 +82,6 @@ inline StorageKind classify(std::string_view rawName) {
 // the launcher menu can list them) and hands this view to the pure helpers.
 struct CategoryFilter {
     bool chests = true;
-    bool copperChests = true;
     bool trappedChests = true;
     bool enderChests = true;
     bool shulkerBoxes = true;
@@ -108,7 +94,6 @@ struct CategoryFilter {
 inline constexpr bool enabled(const CategoryFilter& filter, StorageKind kind) {
     switch (kind) {
         case StorageKind::Chest: return filter.chests;
-        case StorageKind::CopperChest: return filter.copperChests;
         case StorageKind::TrappedChest: return filter.trappedChests;
         case StorageKind::EnderChest: return filter.enderChests;
         case StorageKind::ShulkerBox: return filter.shulkerBoxes;
@@ -442,7 +427,6 @@ inline constexpr blockoutline::Box makeStorageBox(const BlockPos& position,
     if (modelSized) {
         switch (kind) {
             case StorageKind::Chest:
-            case StorageKind::CopperChest:
             case StorageKind::TrappedChest:
             case StorageKind::EnderChest:
                 inset = 0.0625f;
@@ -474,117 +458,6 @@ inline std::vector<blockoutline::Box> boxesForKind(const std::vector<OverlayTarg
         boxes.push_back(makeStorageBox(target.position, kind, expansion, modelSized));
     }
     return boxes;
-}
-
-// The middle of the box a highlight draws for one container. Tracers aim here
-// rather than at the voxel center so the line still meets the block when model
-// sizing shrinks it (a chest is only 0.875 blocks tall).
-inline Vec3 storageCenter(const BlockPos& position, StorageKind kind, bool modelSized) {
-    const blockoutline::Box box = makeStorageBox(position, kind, 0.0f, modelSized);
-    return {(box.min.x + box.max.x) * 0.5f,
-            (box.min.y + box.max.y) * 0.5f,
-            (box.min.z + box.max.z) * 0.5f};
-}
-
-// Depth a tracer start is pulled to, in blocks in front of the camera. A
-// segment that begins exactly at the eye has zero view depth, and a zero depth
-// is a divide by zero in the projection: mobile GLES drivers drop the primitive
-// instead of clipping it, which is why a tracer anchored to the camera has to
-// start a little way down the line towards its container. The value only has to
-// be comfortably above zero (and above the game's own near plane); it does not
-// move the line on screen, because the start stays on the same eye ray.
-inline constexpr float kTracerNearPlane = 0.20f;
-
-// Distance the width of a tracer's near end is measured at, so the strip cannot
-// widen into a wedge where it leaves the camera.
-inline constexpr float kTracerWidthFloor = kTracerNearPlane;
-
-inline constexpr float kDegreesToRadians = 3.14159265358979323846f / 180.0f;
-
-// What the tracer pass knows about the view, resolved once per frame.
-struct TracerView {
-    Vec3 camera{};
-    // Zero vector when the game did not expose a usable rotation; clipping then
-    // falls back to padding the start away from the camera by distance.
-    Vec3 forward{};
-};
-
-// The camera's look direction from the local player's rotation, using the
-// convention the game itself uses: rot.x is pitch (negative = looking up),
-// rot.y is yaw in degrees, yaw 0 looks towards +Z (south) and grows towards -X
-// (west). The render pass only gets a camera *position* out of the level
-// renderer, so this is how it learns which side of the eye plane a point is on.
-inline Vec3 viewForward(const Vec2& rotation) {
-    const float yaw = rotation.y * kDegreesToRadians;
-    const float pitch = rotation.x * kDegreesToRadians;
-    const float cosPitch = std::cos(pitch);
-    return {-std::sin(yaw) * cosPitch, -std::sin(pitch), std::cos(yaw) * cosPitch};
-}
-
-// How far in front of the camera a world point sits; negative behind it.
-inline constexpr float viewDepth(const Vec3& point, const Vec3& camera, const Vec3& forward) {
-    return (point.x - camera.x) * forward.x + (point.y - camera.y) * forward.y +
-           (point.z - camera.z) * forward.z;
-}
-
-inline Vec3 lerp(const Vec3& from, const Vec3& to, float t) {
-    return {from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, from.z + (to.z - from.z) * t};
-}
-
-// Clips one tracer against the eye plane, in place. Returns false when the
-// container itself is at or behind it — no part of that line could ever be seen,
-// and submitting it would put a degenerate vertex in the batch.
-inline bool clipTracerEdge(blockoutline::Edge& edge, const TracerView& view, float nearPlane) {
-    const float forwardLength = std::sqrt(view.forward.x * view.forward.x +
-                                          view.forward.y * view.forward.y +
-                                          view.forward.z * view.forward.z);
-    if (forwardLength < 0.5f) {
-        // No usable view direction: the only case that can be repaired is a
-        // start sitting on the camera itself, so push it towards the container.
-        const float dx = view.camera.x - edge.from.x;
-        const float dy = view.camera.y - edge.from.y;
-        const float dz = view.camera.z - edge.from.z;
-        if (dx * dx + dy * dy + dz * dz >= nearPlane * nearPlane) return true;
-
-        const float sx = edge.to.x - edge.from.x;
-        const float sy = edge.to.y - edge.from.y;
-        const float sz = edge.to.z - edge.from.z;
-        const float length = std::sqrt(sx * sx + sy * sy + sz * sz);
-        if (length < 0.00001f) return false;
-        const float pad = std::min(nearPlane, length * 0.5f);
-        edge.from = {edge.from.x + sx / length * pad, edge.from.y + sy / length * pad,
-                     edge.from.z + sz / length * pad};
-        return true;
-    }
-
-    const float depthTo = viewDepth(edge.to, view.camera, view.forward);
-    if (depthTo <= nearPlane) return false;
-
-    const float depthFrom = viewDepth(edge.from, view.camera, view.forward);
-    if (depthFrom >= nearPlane) return true;
-
-    // depthTo > nearPlane >= depthFrom, so the span cannot be zero.
-    edge.from = lerp(edge.from, edge.to, (nearPlane - depthFrom) / (depthTo - depthFrom));
-    return true;
-}
-
-// Tracer lines for one highlight group: a segment from the chosen origin to
-// every container of that group, clipped to what the camera can actually see,
-// ready for the same line renderer the box outlines use. `out` is reused across
-// frames, so a busy base costs no allocation once the vector has grown to size.
-inline void collectTracers(const std::vector<OverlayTarget>& targets,
-                           StorageKind kind,
-                           const Vec3& origin,
-                           bool modelSized,
-                           const TracerView& view,
-                           std::vector<blockoutline::Edge>& out) {
-    out.clear();
-    for (const auto& target : targets) {
-        if (target.kind != kind) continue;
-        blockoutline::Edge line{origin, storageCenter(target.position, kind, modelSized)};
-        if (!clipTracerEdge(line, view, kTracerNearPlane)) continue;
-        out.push_back(line);
-    }
 }
 
 // Block types are stable for a whole session, and a sweep looks at the same
@@ -635,45 +508,6 @@ private:
     std::size_t m_misses = 0;
 };
 
-// Menu radios persist as "<selectedIndex>,<Option1>,<Option2>,...". Writing the
-// value out lists every option, which is what the launcher needs to build the
-// picker, and reading it back accepts that whole string, a bare index (older
-// configs stored one) or a bare option name.
-inline std::string radioValue(std::span<const std::string_view> names, int index, int fallback) {
-    if (index < 0 || static_cast<std::size_t>(index) >= names.size()) index = fallback;
-    std::string value = std::to_string(index);
-    for (const std::string_view name : names) {
-        value += ',';
-        value += name;
-    }
-    return value;
-}
-
-inline int resolveRadio(std::span<const std::string_view> names, int fallback, std::string_view value) {
-    if (value.empty() || names.empty()) return fallback;
-    const std::size_t comma = value.find(',');
-    const std::string_view head = value.substr(0, comma);
-
-    bool numeric = !head.empty();
-    for (char ch : head) {
-        if (ch < '0' || ch > '9') {
-            numeric = false;
-            break;
-        }
-    }
-    if (numeric) {
-        int index = 0;
-        for (char ch : head) index = index * 10 + (ch - '0');
-        if (index >= 0 && static_cast<std::size_t>(index) < names.size()) return index;
-        return fallback;
-    }
-
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (head == names[i]) return static_cast<int>(i);
-    }
-    return fallback;
-}
-
 // "Scan Speed" is a menu radio: each option is a number of block positions the
 // sweep is allowed to check per game tick. Keeping it a radio instead of a
 // slider matches how the launcher renders big ranges and keeps the cost
@@ -696,49 +530,40 @@ inline constexpr std::size_t scanSpeedBudget(int index) {
 }
 
 inline std::string scanSpeedRadioValue(int index) {
-    return radioValue(kScanSpeedNames, index, kDefaultScanSpeed);
-}
-
-inline int resolveScanSpeed(std::string_view value) {
-    return resolveRadio(kScanSpeedNames, kDefaultScanSpeed, value);
-}
-
-// Where a tracer line starts. "Camera" anchors it to the eye the world is
-// rendered from, so every line converges on the crosshair and points at the
-// container you are looking towards; "Feet" anchors it to the block you stand
-// in, which reads better from a third-person camera and shows direction
-// relative to the player instead of the view.
-enum class TracerOrigin : std::uint8_t {
-    Camera = 0,
-    Feet,
-    Count,
-};
-
-inline constexpr std::size_t kTracerOriginCount = static_cast<std::size_t>(TracerOrigin::Count);
-inline constexpr std::array<std::string_view, kTracerOriginCount> kTracerOriginNames = {
-    "Camera", "Feet",
-};
-
-inline constexpr int kDefaultTracerOrigin = static_cast<int>(TracerOrigin::Camera);
-
-inline std::string tracerOriginRadioValue(int index) {
-    return radioValue(kTracerOriginNames, index, kDefaultTracerOrigin);
-}
-
-inline int resolveTracerOrigin(std::string_view value) {
-    return resolveRadio(kTracerOriginNames, kDefaultTracerOrigin, value);
-}
-
-// Resolves the configured origin to the world-space point tracers start from.
-// `feet` is the local player position sampled on the game tick, since the
-// render thread only knows the camera.
-inline Vec3 tracerOriginPoint(TracerOrigin origin, const Vec3& camera, const Vec3& feet) {
-    switch (origin) {
-        case TracerOrigin::Feet: return feet;
-        case TracerOrigin::Camera:
-        case TracerOrigin::Count:
-        default: return camera;
+    if (index < 0 || static_cast<std::size_t>(index) >= kScanSpeedCount) index = kDefaultScanSpeed;
+    std::string value = std::to_string(index);
+    for (const std::string_view name : kScanSpeedNames) {
+        value += ',';
+        value += name;
     }
+    return value;
+}
+
+// Accepts the launcher's radio value ("<index>,Relaxed,..."), a bare index or a
+// bare option name, so configs written by either side keep working.
+inline int resolveScanSpeed(std::string_view value) {
+    if (value.empty()) return kDefaultScanSpeed;
+    const std::size_t comma = value.find(',');
+    const std::string_view head = value.substr(0, comma);
+
+    bool numeric = !head.empty();
+    for (char ch : head) {
+        if (ch < '0' || ch > '9') {
+            numeric = false;
+            break;
+        }
+    }
+    if (numeric) {
+        int index = 0;
+        for (char ch : head) index = index * 10 + (ch - '0');
+        if (index >= 0 && static_cast<std::size_t>(index) < kScanSpeedCount) return index;
+        return kDefaultScanSpeed;
+    }
+
+    for (std::size_t i = 0; i < kScanSpeedCount; ++i) {
+        if (head == kScanSpeedNames[i]) return static_cast<int>(i);
+    }
+    return kDefaultScanSpeed;
 }
 
 } // namespace storageesp

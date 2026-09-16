@@ -280,10 +280,9 @@ void registerModulesWithLauncher() {
                 } else if (kLower.find("speed") != std::string::npos || kLower.find("strength") != std::string::npos) {
                     minVal = 0.05f;
                     maxVal = 1.0f;
-                } else if (kLower == "linethickness" || kLower == "tracerthickness") {
-                    // 1.0 == classic hairline box/line, higher values widen the
-                    // hitbox lines (Hitbox), the block edges (Block Outline,
-                    // Storage ESP) or the Storage ESP tracers.
+                } else if (kLower == "linethickness") {
+                    // 1.0 == classic hairline box, higher values widen the
+                    // hitbox lines (Hitbox module).
                     minVal = 1.0f;
                     maxVal = 10.0f;
                 } else if (kLower.find("thick") != std::string::npos) {

@@ -5,9 +5,8 @@
 
 #include <cstdint>
 
-// Highlights storage blocks around the player: chests, copper chests, trapped
-// chests, ender chests, shulker boxes, barrels, hoppers, furnaces and
-// dispensers, with optional tracer lines from the camera or the player's feet.
+// Highlights storage blocks around the player: chests, trapped chests, ender
+// chests, shulker boxes, barrels, hoppers, furnaces and dispensers.
 //
 // The module scans loaded blocks around the player on the client tick with a
 // limited per-tick budget and remembers what it found, so the render pass is
@@ -27,8 +26,6 @@ public:
     // containers still reads at a glance.
     bool showChests = true;
     std::uint32_t showChestsColor = 0xFFFFC34Du;
-    bool showCopperChests = true;
-    std::uint32_t showCopperChestsColor = 0xFF49D6B8u; // oxidized copper teal
     bool showTrappedChests = true;
     std::uint32_t showTrappedChestsColor = 0xFFFF5A5Au;
     bool showEnderChests = true;
@@ -60,16 +57,6 @@ public:
     // containers visible through terrain.
     bool throughWalls = true;
 
-    // Tracer pass: one line per highlighted container, drawn from the camera or
-    // from the player's feet to the middle of its box and tinted with that
-    // group's color (Rainbow and Pulse animate tracers too). Off by default
-    // because a storage-heavy base covers the screen in lines.
-    bool tracer = false;
-    // Radio index into storageesp::kTracerOriginNames.
-    int tracerOrigin = storageesp::kDefaultTracerOrigin;
-    float tracerThickness = 2.0f; // 1 = hairline, 10 = widest.
-    float tracerOpacity = 0.9f;
-
     bool rainbow = false;
     float rainbowSpeed = 0.20f; // cycles per second, clamped to 0.05..1.
     bool pulse = false;
@@ -85,15 +72,13 @@ public:
 
     // Read-only view of the highlight groups for the pure scan/render helpers.
     storageesp::CategoryFilter filter() const {
-        return {showChests,       showCopperChests, showTrappedChests, showEnderChests,
-                showShulkerBoxes, showBarrels,      showHoppers,       showFurnaces,
-                showDispensers};
+        return {showChests, showTrappedChests, showEnderChests, showShulkerBoxes,
+                showBarrels,  showHoppers,       showFurnaces,     showDispensers};
     }
 
     std::uint32_t colorFor(storageesp::StorageKind kind) const {
         switch (kind) {
             case storageesp::StorageKind::Chest: return showChestsColor;
-            case storageesp::StorageKind::CopperChest: return showCopperChestsColor;
             case storageesp::StorageKind::TrappedChest: return showTrappedChestsColor;
             case storageesp::StorageKind::EnderChest: return showEnderChestsColor;
             case storageesp::StorageKind::ShulkerBox: return showShulkerBoxesColor;
