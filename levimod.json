@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "bedrocktoolsplus",
+  "version": "1.5.3",
+  "minecraft_versions": [
+    "1.26.50.4"
+  ],
+  "info": {
+    "name": "BedrockToolsPlus",
+    "author": "VENOM P2 GM",
+    "description": "A collection of utility, HUD, player, and visual modules for Minecraft Bedrock.",
+    "homepage_url": "https://github.com/abdullahshoieb90-source/BedrockToolsPlus-",
+    "icon": "assets/bedrocktoolsplus.png",
+    "tags": [
+      "Utility",
+      "HUD",
+      "Visual"
+    ]
+  },
+  "release_assets": {
+    "include": [
+      "*.levipack",
+      "*.so"
+    ],
+    "labels": {
+      "BedrockToolsPlus.levipack": "LeviPack",
+      "libBedrockToolsPlus.so": "Native library"
+    }
+  }
+}
