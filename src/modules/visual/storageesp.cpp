@@ -521,9 +521,8 @@ void drawOutline(void* screenContext,
 // One line per container of a highlight group, from the configured tracer
 // origin to the middle of the box that container is drawn with. Segments that
 // cannot be seen (container behind the eye plane) are dropped before anything
-// is submitted, and a start sitting on the eye plane — where the dropped anchor
-// and the player's feet both land whenever the view is level — is pulled down
-// the line, so no vertex with zero view depth ever reaches the driver.
+// is submitted, and a start sitting on the camera is pulled down the line, so
+// no degenerate vertex ever reaches the driver.
 void drawTracers(void* screenContext,
                  void* tessellator,
                  void* material,
