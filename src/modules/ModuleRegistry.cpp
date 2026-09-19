@@ -11,6 +11,7 @@
 #include "hud/hotbarslots.hpp"
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
+#include "player/ChestStealer.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -78,4 +79,5 @@ void registerAllModules() {
     registry.emplace<HotbarSlotsModule>();
     registry.emplace<InventoryHudModule>();
     registry.emplace<ArmorModule>();
+    registry.emplace<ChestStealermodule>();
 }
