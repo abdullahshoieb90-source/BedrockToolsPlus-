@@ -589,7 +589,17 @@ void BlockOutlineModule::onInit() {
 }
 
 void BlockOutlineModule::applyPatch() {
-    if (m_patched || !m_patchTarget) return;
+    if (m_patched) return;
+    if (!m_patchTarget) {
+        // Signatures are resolved before the modules are initialized, but
+        // re-check here so a module enabled before the game library was
+        // scanned still hooks on a later toggle instead of staying silently
+        // dead for the rest of the session.
+        const std::uintptr_t renderLevel =
+            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderLevel);
+        if (renderLevel) m_patchTarget = reinterpret_cast<void*>(renderLevel);
+    }
+    if (!m_patchTarget) return;
     const auto handle = bedrocktools::hooks::install(
         m_patchTarget,
         reinterpret_cast<void*>(&renderLevelHook),

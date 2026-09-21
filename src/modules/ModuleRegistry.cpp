@@ -11,7 +11,12 @@
 #include "hud/hotbarslots.hpp"
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
-#include "player/ChestStealer.hpp"
+
+// ChestStealer is not registered yet: it needs two headers that are not in the
+// tree (bedrocktools/sdk/client/ContainerScreenController.hpp and
+// launcher/KeyInjection.hpp), so src/modules/player/cheststealer.cpp is kept
+// out of the build in xmake.lua until they land. Including it here would break
+// the whole library - and with it every module that does compile.
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -79,5 +84,4 @@ void registerAllModules() {
     registry.emplace<HotbarSlotsModule>();
     registry.emplace<InventoryHudModule>();
     registry.emplace<ArmorModule>();
-    registry.emplace<ChestStealermodule>();
 }

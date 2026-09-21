@@ -43,6 +43,18 @@ for source in "${root}"/tests/*_test.cpp; do
             # preloader hook API and the small JSON surface used by configs.
             extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
             ;;
+        hitbox_test)
+            # Includes the production renderer with the host preloader stub.
+            # HitboxModule::loadConfig uses nlohmann's j.value(), which the
+            # minimal tests/fakejson header does not implement, so this one
+            # needs the real JSON headers.
+            extra+=(-I "${root}/tests/fakepl")
+            if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
+                extra+=(-I "${json_inc}")
+            else
+                skip="nlohmann_json headers (set JSON_INCLUDE)"
+            fi
+            ;;
         commandhotkey_test)
             if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
                [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then

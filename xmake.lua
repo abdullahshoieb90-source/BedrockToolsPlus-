@@ -23,6 +23,12 @@ target("BedrockToolsPlus")
     set_languages("c++20")
     set_strip("all")
     add_files("src/main.cpp", "src/core/**.cpp", "src/config/*.cpp", "src/launcher/*.cpp", "src/modules/**.cpp")
+    -- ChestStealer is not wired up yet: it includes two headers that are not in
+    -- the repository (bedrocktools/sdk/client/ContainerScreenController.hpp and
+    -- launcher/KeyInjection.hpp), so compiling it breaks the whole shared
+    -- library and no module can be shipped. Keep the sources in the tree but
+    -- out of the build until those headers land.
+    remove_files("src/modules/player/cheststealer.cpp")
     add_includedirs("include", {public = true})
     add_includedirs("src", "third_party")
     add_packages("preloader", "nlohmann_json", "glm", "entt", "fmt")

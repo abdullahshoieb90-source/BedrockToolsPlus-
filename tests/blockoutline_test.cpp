@@ -188,6 +188,35 @@ int main() {
         g_batches.clear();
         renderBlockOutline(levelRenderer.data(), screenContext.data());
         check(g_batches.empty(), "disabling the module clears its cached target");
+
+        // A tick without a usable level or hit result must not leave a stale
+        // box on screen.
+        module.setMasterEnabled(true);
+        alignas(std::max_align_t) std::array<std::byte, 640> orphanPlayer{};
+        writeAt(orphanPlayer, Actor::mLevel, static_cast<std::uintptr_t>(0));
+        updateTarget(orphanPlayer.data());
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.empty(), "a player without a level clears the overlay");
+
+        writeAt(orphanPlayer, Actor::mLevel, levelPointer);
+        g_hitResult = nullptr;
+        updateTarget(orphanPlayer.data());
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.empty(), "a level without a hit result clears the overlay");
+
+        // The target is sampled on the tick, so the renderer must give up on a
+        // sample that stopped being refreshed (paused game, world change).
+        g_hitResult = hit.data();
+        updateTarget(player.data());
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(!g_batches.empty(), "a fresh block hit draws the overlay");
+        s_target.updated -= std::chrono::seconds(1);
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.empty(), "a target older than the tick timeout stops drawing");
     }
 
     std::printf("block outline config\n");

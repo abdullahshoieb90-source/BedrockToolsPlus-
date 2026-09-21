@@ -274,6 +274,11 @@ static bool rayHitsSolid(void* region,
     float tDeltaX, tDeltaY, tDeltaZ;
     constexpr float kInf = 1e30f;
 
+    // t is measured in units of the whole segment (the camera is t = 0 and the
+    // sampled point is t = 1), so the walk below must stop at t = 1 and not at
+    // the Euclidean length of the ray - the two only agree for a unit vector.
+    constexpr float kSegmentEnd = 1.0f;
+
     if (dx > 0.0f)      { stepX = 1;  tDeltaX = 1.0f / dx;      tMaxX = (x + 1 - ox) * tDeltaX; }
     else if (dx < 0.0f) { stepX = -1; tDeltaX = -1.0f / dx;     tMaxX = (ox - x) * tDeltaX; }
     else                { stepX = 0;  tDeltaX = kInf;           tMaxX = kInf; }
@@ -286,18 +291,23 @@ static bool rayHitsSolid(void* region,
     else if (dz < 0.0f) { stepZ = -1; tDeltaZ = -1.0f / dz;     tMaxZ = (oz - z) * tDeltaZ; }
     else                { stepZ = 0;  tDeltaZ = kInf;           tMaxZ = kInf; }
 
-    while (true) {
+    // A segment crosses at most one voxel per block of length per axis, so this
+    // bound is never reached by a legitimate ray. It only exists so a degenerate
+    // camera or AABB (NaN, huge coordinate) cannot stall the render thread.
+    int stepsRemaining = static_cast<int>(dist * 3.0f) + 8;
+
+    while (stepsRemaining-- > 0) {
         if (tMaxX < tMaxY && tMaxX < tMaxZ) {
             x += stepX;
-            if (tMaxX > dist) break;
+            if (tMaxX > kSegmentEnd) break;
             tMaxX += tDeltaX;
         } else if (tMaxY < tMaxZ) {
             y += stepY;
-            if (tMaxY > dist) break;
+            if (tMaxY > kSegmentEnd) break;
             tMaxY += tDeltaY;
         } else {
             z += stepZ;
-            if (tMaxZ > dist) break;
+            if (tMaxZ > kSegmentEnd) break;
             tMaxZ += tDeltaZ;
         }
 
@@ -571,8 +581,9 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         const float lookY = -sinf(pitchR);
         const float lookZ = cosf(yawR) * cosf(pitchR);
 
-        // Pick the nearest actor along the look ray. No reach limit is
-        // applied: any fetched entity the crosshair touches gets selected.
+        // Pick the nearest actor along the look ray, limited to a short arm's
+        // reach so a distant entity the crosshair happens to touch is not
+        // highlighted as if it were the one being aimed at.
         constexpr float kSelectionRayLength = 3.0f;
 
         float bestDist = 1e9f;
@@ -770,9 +781,21 @@ void HitboxModule::onInit() {
 }
 
 void HitboxModule::applyPatch() {
-    if (m_patched || !m_patchTarget) return;
-    bedrocktools::hooks::install(m_patchTarget, (void*)_renderLevel_hook, (void**)&_renderLevel_orig);
-    m_patched = true;
+    if (m_patched) return;
+    if (!m_patchTarget) {
+        // The signature table is resolved before the modules are initialized,
+        // but re-check here so a module that was enabled before the game
+        // library was scanned still hooks on a later toggle instead of staying
+        // silently dead for the rest of the session.
+        uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderLevel);
+        if (addr != 0) m_patchTarget = (void*)addr;
+    }
+    if (!m_patchTarget) return;
+    auto handle = bedrocktools::hooks::install(m_patchTarget, (void*)_renderLevel_hook, (void**)&_renderLevel_orig);
+    // Only claim the patch when the hook really is in. Marking it patched on
+    // failure would stop every later onEnable() from retrying, which is how a
+    // failed install used to leave the overlay permanently off.
+    m_patched = handle != nullptr;
 }
 
 void HitboxModule::onEnable() {
@@ -780,6 +803,10 @@ void HitboxModule::onEnable() {
 }
 
 void HitboxModule::onDisable() {
+    // Drop the cached player. It points into the world that is going away, and
+    // the render hook dereferences it (AABB, dimension, rotation) - keeping it
+    // would read freed memory after leaving a world.
+    g_localPlayerPtr = nullptr;
 }
 
 void HitboxModule::onFrame() {
@@ -848,14 +875,24 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["lineThickness"] = lineThickness;
     j["hitboxIndicator"] = hitboxIndicator;
 
-    char hexH[12], hexE[12], hexL[12], hexD[12], hexA[12];
-    snprintf(hexH, sizeof(hexH), "#%08X", forceOpaqueColor(hitboxColor));
-    snprintf(hexE, sizeof(hexE), "#%08X", forceOpaqueColor(eyeLineColor));
-    snprintf(hexL, sizeof(hexL), "#%08X", forceOpaqueColor(lookLineColor));
-    snprintf(hexD, sizeof(hexD), "#%08X", forceOpaqueColor(indicatorDefaultColor));
-    snprintf(hexA, sizeof(hexA), "#%08X", forceOpaqueColor(indicatorActiveColor));
+    // Colors are written the way every other module in the mod writes them:
+    // "#RRGGBB". The launcher builds its color picker straight from this
+    // string, and the old "#AARRGGBB" form was the odd one out - the picker
+    // could not show the current value. Alpha is forced opaque at draw time
+    // anyway, so nothing is lost by dropping the byte here.
+    char hexH[12], hexI[12], hexE[12], hexL[12], hexD[12], hexA[12];
+    snprintf(hexH, sizeof(hexH), "#%06X", hitboxColor & 0x00FFFFFFu);
+    snprintf(hexI, sizeof(hexI), "#%06X", showItemsColor & 0x00FFFFFFu);
+    snprintf(hexE, sizeof(hexE), "#%06X", eyeLineColor & 0x00FFFFFFu);
+    snprintf(hexL, sizeof(hexL), "#%06X", lookLineColor & 0x00FFFFFFu);
+    snprintf(hexD, sizeof(hexD), "#%06X", indicatorDefaultColor & 0x00FFFFFFu);
+    snprintf(hexA, sizeof(hexA), "#%06X", indicatorActiveColor & 0x00FFFFFFu);
 
     j["hitboxColor"] = std::string(hexH);
+    // Without this the item color was never written out, so the menu had no
+    // entry for it and every unrelated settings change silently reset it to
+    // white (the menu round-trips the whole config through save -> load).
+    j["showItemsColor"] = std::string(hexI);
     j["eyeLineColor"] = std::string(hexE);
     j["lookLineColor"] = std::string(hexL);
     j["indicatorDefaultColor"] = std::string(hexD);
