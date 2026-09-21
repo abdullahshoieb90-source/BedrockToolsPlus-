@@ -93,6 +93,12 @@ RenderLevelFn s_renderLevelOriginal = nullptr;
 std::uintptr_t s_renderMaterialGroup = 0;
 MaterialPtr s_selectionMaterial;
 MaterialPtr s_throughWallsMaterial;
+// selection_box is a line-only material: its material definition forces
+// primitiveMode=Line, so a quad mesh handed to it collapses back into
+// one-pixel lines. The wide outline pass and the fill therefore need a
+// vertex-colour fill material instead.
+MaterialPtr s_fillMaterial;
+MaterialPtr s_opaqueMaterial;
 
 std::mutex s_targetMutex;
 TargetSnapshot s_target;
@@ -154,7 +160,28 @@ MaterialPtr getMaterial(const char* name) {
 
 void ensureMaterials() {
     if (!s_renderMaterialGroup) return;
+    // Line-only material: used for the crisp hairline pass only.
     if (!s_selectionMaterial) s_selectionMaterial = getMaterial("selection_box");
+
+    // A position-only vertex-colour fill. This is what the wide outline strips
+    // and the translucent block/face fill are drawn with, because feeding
+    // filled quads to selection_box renders them as lines and feeding them to
+    // the selection_overlay family washes the chosen colour out.
+    if (!s_fillMaterial) {
+        static constexpr const char* kFillCandidates[] = {
+            "ui_fill_color",
+            "ui_textured_and_glcolor",
+            "debug_filled_box",
+        };
+        for (const char* candidate : kFillCandidates) {
+            s_fillMaterial = getMaterial(candidate);
+            if (s_fillMaterial) break;
+        }
+    }
+
+    // Depth-tested solid fill, kept as a fallback for builds/resource packs
+    // that expose none of the UI fills.
+    if (!s_opaqueMaterial) s_opaqueMaterial = getMaterial("selection_overlay_opaque");
 
     // ui_fill_color has no terrain-depth test in current Bedrock builds and is
     // therefore suitable for the explicit Through Walls option. If a future
@@ -277,9 +304,13 @@ void drawFill(void* screenContext,
     flushMesh(screenContext, tessellator, material);
 }
 
+// `quadMaterial` renders the camera-facing strips of the thick pass and must
+// accept filled quads; `lineMaterial` renders the hairline pass and is the
+// game's own line-only selection material. They are deliberately different.
 void drawOutline(void* screenContext,
                  void* tessellator,
-                 void* material,
+                 void* quadMaterial,
+                 void* lineMaterial,
                  const blockoutline::Box& box,
                  const bedrocktools::sdk::Vec3& camera,
                  std::uint32_t rgb,
@@ -364,7 +395,7 @@ void drawOutline(void* screenContext,
                 s_tessVertex(tessellator, quad[i].x, quad[i].y, quad[i].z);
             }
         }
-        flushMesh(screenContext, tessellator, material);
+        flushMesh(screenContext, tessellator, quadMaterial);
     }
 
     // A final native line pass keeps distant edges crisp and is the complete
@@ -375,7 +406,7 @@ void drawOutline(void* screenContext,
         emitVertex(tessellator, edge.from, camera);
         emitVertex(tessellator, edge.to, camera);
     }
-    flushMesh(screenContext, tessellator, material);
+    flushMesh(screenContext, tessellator, lineMaterial);
 }
 
 void renderBlockOutline(void* levelRenderer, void* screenContext) {
@@ -408,20 +439,28 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
     ensureMaterials();
     void* embeddedSelectionOverlay = reinterpret_cast<void*>(
         playerRenderer + bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
-    void* normalOutlineMaterial = s_selectionMaterial
+    // Hairline pass: the game's own line-only selection material, which is
+    // always initialised with the level renderer.
+    void* lineMaterial = s_selectionMaterial
         ? static_cast<void*>(&s_selectionMaterial)
         : embeddedSelectionOverlay;
-    // The embedded selection-overlay material blends vertex alpha and is a
-    // better fit for translucent faces than selection_box. Through Walls uses
-    // the same no-depth material for both passes so their occlusion agrees.
-    void* normalFillMaterial = embeddedSelectionOverlay;
-    void* outlineMaterial = normalOutlineMaterial;
-    void* fillMaterial = normalFillMaterial;
+    // Everything that emits filled geometry (the wide outline strips and the
+    // block/face fill) goes through a vertex-colour fill. Never through
+    // selection_box - it forces the Line primitive - and not through the
+    // selection_overlay family either, which turns the picked colour into a
+    // washed-out translucent highlight.
+    void* quadMaterial = s_fillMaterial
+        ? static_cast<void*>(&s_fillMaterial)
+        : (s_opaqueMaterial ? static_cast<void*>(&s_opaqueMaterial) : lineMaterial);
+    void* fillMaterial = quadMaterial;
     if (g_blockOutline->throughWalls && s_throughWallsMaterial) {
-        outlineMaterial = static_cast<void*>(&s_throughWallsMaterial);
+        // Through Walls uses the same no-depth material for every pass so the
+        // outline and the fill are occluded identically.
+        lineMaterial = static_cast<void*>(&s_throughWallsMaterial);
+        quadMaterial = static_cast<void*>(&s_throughWallsMaterial);
         fillMaterial = static_cast<void*>(&s_throughWallsMaterial);
     }
-    if (!outlineMaterial || !fillMaterial) return;
+    if (!lineMaterial || !quadMaterial || !fillMaterial) return;
 
     const std::uintptr_t colorHolderAddress = *reinterpret_cast<std::uintptr_t*>(
         screenAddress + bedrocktools::sdk::offsets::ScreenContext::mColorHolder);
@@ -464,7 +503,8 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
     if (g_blockOutline->outline) {
         drawOutline(screenContext,
                     tessellator,
-                    outlineMaterial,
+                    quadMaterial,
+                    lineMaterial,
                     box,
                     camera,
                     outlineRgb,

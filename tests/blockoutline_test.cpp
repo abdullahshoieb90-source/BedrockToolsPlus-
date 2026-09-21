@@ -26,6 +26,7 @@ struct Batch {
     int mode = -1;
     int reservedVertices = 0;
     int emittedVertices = 0;
+    void* material = nullptr;
 };
 
 std::vector<Batch> g_batches;
@@ -40,7 +41,8 @@ void fakeTessColor(void*, float, float, float, float) {}
 void fakeTessVertex(void*, float, float, float) {
     ++g_currentBatch.emittedVertices;
 }
-void fakeRenderMesh(void*, void*, void*, char*) {
+void fakeRenderMesh(void*, void*, void* material, char*) {
+    g_currentBatch.material = material;
     g_batches.push_back(g_currentBatch);
 }
 void* fakeGetHitResult(void*) {
@@ -217,6 +219,47 @@ int main() {
         g_batches.clear();
         renderBlockOutline(levelRenderer.data(), screenContext.data());
         check(g_batches.empty(), "a target older than the tick timeout stops drawing");
+
+        // The wide outline pass emits filled quads. selection_box forces the
+        // Line primitive, so handing quads to it collapses them back into
+        // one-pixel lines - which is exactly how Line Thickness used to appear
+        // to do nothing. With a vertex-colour fill resolved, the quad pass and
+        // the hairline pass must go through two different materials.
+        std::uint64_t fillMaterialSentinel = 0;
+        s_fillMaterial.data[0] = &fillMaterialSentinel;
+        module.outline = true;
+        module.fill = false;
+        module.lineThickness = 4.0f;
+        updateTarget(player.data());
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2, "thick outline still submits a quad and a hairline batch");
+        check(g_batches.size() == 2 && g_batches[0].mode == 1 &&
+                  g_batches[0].material == static_cast<void*>(&s_fillMaterial),
+              "the quad pass uses the vertex-colour fill, not the line-only material");
+        check(g_batches.size() == 2 && g_batches[1].mode == 4 &&
+                  g_batches[1].material != static_cast<void*>(&s_fillMaterial),
+              "the hairline pass keeps the game's own line material");
+
+        // The translucent block fill is filled geometry too, so it must not go
+        // through the line-only material either.
+        module.fill = true;
+        module.fillFaceOnly = true;
+        updateTarget(player.data());
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        bool fillUsedQuadMaterial = false;
+        for (const auto& batch : g_batches) {
+            if (batch.mode == 1 && batch.material == static_cast<void*>(&s_fillMaterial)) {
+                fillUsedQuadMaterial = true;
+            }
+        }
+        check(fillUsedQuadMaterial, "the block fill renders through a quad-capable material");
+
+        s_fillMaterial.data[0] = nullptr;
+        module.fill = false;
+        module.lineThickness = 2.0f;
+        updateTarget(player.data());
     }
 
     std::printf("block outline config\n");

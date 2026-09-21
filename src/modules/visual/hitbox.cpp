@@ -393,10 +393,12 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     float camY = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos + 4);
     float camZ = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos + 8);
 
-    // Wall occlusion: resolve the dimension's BlockSource once per frame so
-    // hitboxes behind solid blocks are always culled, with no menu setting.
+    // Wall occlusion: resolve the dimension's BlockSource once per frame. Only
+    // done when the setting is on - the cull is opt-in so a build where the
+    // isSolidBlockingBlock resolution is wrong cannot silently suppress every
+    // hitbox in the game.
     void* region = nullptr;
-    if (s_isSolidBlockingBlock) {
+    if (g_hitboxMod->hideBehindWalls && s_isSolidBlockingBlock) {
         uintptr_t dimension = *(uintptr_t*)((uintptr_t)g_localPlayerPtr + bedrocktools::sdk::offsets::Actor::mDimension);
         if (dimension >= 0x1000) {
             uintptr_t blockSource = *(uintptr_t*)(dimension + bedrocktools::sdk::offsets::Dimension::mBlockSource);
@@ -605,11 +607,11 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         if (aabb.min.x == 0.f && aabb.min.y == 0.f && aabb.min.z == 0.f &&
             aabb.max.x == 0.f && aabb.max.y == 0.f && aabb.max.z == 0.f) return;
 
-        // Cull hitboxes that are fully hidden behind solid blocks instead of
-        // drawing them through walls. Skips the eye/look lines too, since
-        // they belong to the same box. The local player's own box is never
-        // culled: a third-person camera often sits inside or against a wall,
-        // which would otherwise hide the player's hitbox from themselves.
+        // With Hide Behind Walls on, cull hitboxes fully hidden behind solid
+        // blocks instead of drawing them through walls. Skips the eye/look
+        // lines too, since they belong to the same box. The local player's own
+        // box is never culled: a third-person camera often sits inside or
+        // against a wall, which would otherwise hide the player's own hitbox.
         if (!skipOcclusion && region && isOccluded(region, camX, camY, camZ, aabb)) return;
 
         uint32_t boxColor = groupColor;
@@ -837,6 +839,9 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("hitboxIndicator")) {
         hitboxIndicator = j["hitboxIndicator"].get<bool>();
     }
+    // Older configs have no such key; the cull used to be hardcoded on, but
+    // the default is now off so the overlay is guaranteed to draw.
+    hideBehindWalls = j.value("hideBehindWalls", hideBehindWalls);
     auto parseColor = [&](const std::string& key, uint32_t& outColor) {
         if (!j.contains(key) || !j[key].is_string()) return;
         std::string hexStr = j[key].get<std::string>();
@@ -874,6 +879,7 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["lookLineLength"] = lookLineLength;
     j["lineThickness"] = lineThickness;
     j["hitboxIndicator"] = hitboxIndicator;
+    j["hideBehindWalls"] = hideBehindWalls;
 
     // Colors are written the way every other module in the mod writes them:
     // "#RRGGBB". The launcher builds its color picker straight from this

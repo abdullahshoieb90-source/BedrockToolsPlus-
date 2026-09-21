@@ -196,6 +196,10 @@ int main() {
 
     std::printf("hitbox render integration\n");
 
+    // Captured up front: constructing a HitboxModule installs it as the global
+    // g_hitboxMod, so this must not be a temporary created mid-test.
+    const bool hideBehindWallsDefault = HitboxModule{}.hideBehindWalls;
+
     alignas(std::max_align_t) std::array<std::byte, 256> screenContext{};
     alignas(std::max_align_t) std::array<std::byte, 0x500> levelRenderer{};
     alignas(std::max_align_t) std::array<std::byte, 0x1100> playerRenderer{};
@@ -294,10 +298,22 @@ int main() {
         module.show3rdPerson = false;
         writeAt(playerRenderer, LevelRendererPlayer::mCamPos, firstPersonCamera);
 
-        // Wall occlusion: a solid block between the camera and the mob culls it.
+        // Wall culling is opt-in now. It used to be hardcoded on, which meant a
+        // build where the isSolidBlockingBlock resolution is wrong silently
+        // suppressed every hitbox with no way to recover.
+        check(!hideBehindWallsDefault, "hide behind walls defaults to off");
         g_fetchedActors[0] = mob.ptr();
         g_fetchedActorCount = 1;
         g_solidBlocks.push_back({12, 65, 10});
+        g_solidBlockQueries = 0;
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_solidBlockQueries == 0, "the block source is not queried while culling is off");
+        check(g_batches.size() == 1, "a mob behind a wall is still drawn by default");
+
+        // With the setting on, a solid block between the camera and the mob
+        // culls it.
+        module.hideBehindWalls = true;
         g_solidBlockQueries = 0;
         g_batches.clear();
         _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
@@ -309,6 +325,7 @@ int main() {
         g_batches.clear();
         _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
         check(g_batches.size() == 1, "the mob is drawn again once the wall is gone");
+        module.hideBehindWalls = false;
 
         // Thick lines add a camera-facing quad pass on top of the hairline.
         module.lineThickness = 6.0f;
@@ -334,6 +351,7 @@ int main() {
         source.showPlayers = false;
         source.showItems = false;
         source.showItemsColor = 0xFF00FF00u;
+        source.hideBehindWalls = false;
         source.show3rdPerson = true;
         source.showEyeLine = true;
         source.showLookLine = true;
@@ -370,6 +388,7 @@ int main() {
               (loaded.indicatorActiveColor & 0xFFFFFFu) == 0xBBCCDDu,
               "all five colors round-trip");
         check(loaded.hitboxIndicator, "the indicator toggle round-trips");
+        check(!loaded.hideBehindWalls, "hide behind walls stays off across a config round-trip");
     }
 
     {
