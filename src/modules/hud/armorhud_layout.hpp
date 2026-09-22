@@ -12,6 +12,7 @@
 #include "slotdecor_layout.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 
 namespace bedrocktools::armorhud {
@@ -88,6 +89,88 @@ inline float columnHeight(const ArmorLayout& layout) {
     if (layout.horizontal) return layout.slotSize;
     return layout.slotSize * static_cast<float>(SlotCount) +
            layout.gap * static_cast<float>(SlotCount - 1);
+}
+
+// Optional background behind the whole element: one hotbar-style strip around
+// all slots (dark fill with a lighter border), instead of the per-slot cells.
+// Like the vanilla hotbar sprite, the frame keeps one GUI pixel (a sixteenth
+// of the slot size) of breathing room between it and the icons.
+
+// Size of one vanilla GUI pixel at the current slot size.
+inline float hotbarUnit(const ArmorLayout& layout) {
+    return std::max(1.0f, layout.slotSize / 16.0f);
+}
+
+// Space between the slots and the inner edge of the border.
+inline float hotbarPadding(const ArmorLayout& layout) {
+    return hotbarUnit(layout);
+}
+
+// Thickness of the border drawn around the strip.
+inline float hotbarBorder(const ArmorLayout& layout) {
+    return hotbarUnit(layout);
+}
+
+// A rectangle in HUD units (the hotbar strip and the editor box use it).
+struct HotbarRect {
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+};
+
+// Outer rectangle of the strip around the first `visibleSlots` slots (the
+// offhand is hidden while it is disabled, and the strip follows). Nothing to
+// wrap collapses to the anchor with no extent.
+inline HotbarRect hotbarRect(const ArmorLayout& layout, std::size_t visibleSlots = SlotCount) {
+    if (visibleSlots == 0 || layout.slotSize <= 0.0f) return {layout.x, layout.y, 0.0f, 0.0f};
+    if (visibleSlots > SlotCount) visibleSlots = SlotCount;
+
+    const SlotRect first = slotRect(layout, 0);
+    const SlotRect last = slotRect(layout, visibleSlots - 1);
+    const float slotsWidth = layout.horizontal ? last.x + last.size - first.x : first.size;
+    const float slotsHeight = layout.horizontal ? first.size : last.y + last.size - first.y;
+
+    const float frame = hotbarPadding(layout) + hotbarBorder(layout);
+    return {first.x - frame, first.y - frame, slotsWidth + 2.0f * frame, slotsHeight + 2.0f * frame};
+}
+
+// The five rectangles the strip is painted with: the inner fill plus the four
+// border edges, in top, bottom, left, right order.
+struct HotbarFrame {
+    HotbarRect fill;
+    std::array<HotbarRect, 4> edges;
+};
+
+inline HotbarFrame hotbarFrame(const ArmorLayout& layout, std::size_t visibleSlots = SlotCount) {
+    const HotbarRect outer = hotbarRect(layout, visibleSlots);
+    const float border = hotbarBorder(layout);
+    HotbarFrame frame;
+    frame.fill = {outer.x + border, outer.y + border,
+                  std::max(0.0f, outer.width - 2.0f * border),
+                  std::max(0.0f, outer.height - 2.0f * border)};
+    frame.edges[0] = {outer.x, outer.y, outer.width, border};                            // top
+    frame.edges[1] = {outer.x, outer.y + outer.height - border, outer.width, border};    // bottom
+    frame.edges[2] = {outer.x, outer.y + border, border, frame.fill.height};             // left
+    frame.edges[3] = {outer.x + outer.width - border, outer.y + border, border, frame.fill.height}; // right
+    return frame;
+}
+
+// Outer box the HUD editor should cover: the slots and their durability
+// labels, grown to include the strip when it is drawn.
+inline HotbarRect elementBounds(const ArmorLayout& layout, bool hotbarStrip,
+                                std::size_t visibleSlots = SlotCount) {
+    HotbarRect bounds{layout.x, layout.y, columnWidth(layout), columnHeight(layout)};
+    if (hotbarStrip) {
+        const HotbarRect strip = hotbarRect(layout, visibleSlots);
+        const float x2 = std::max(bounds.x + bounds.width, strip.x + strip.width);
+        const float y2 = std::max(bounds.y + bounds.height, strip.y + strip.height);
+        bounds.x = std::min(bounds.x, strip.x);
+        bounds.y = std::min(bounds.y, strip.y);
+        bounds.width = std::max(0.0f, x2 - bounds.x);
+        bounds.height = std::max(0.0f, y2 - bounds.y);
+    }
+    return bounds;
 }
 
 } // namespace bedrocktools::armorhud

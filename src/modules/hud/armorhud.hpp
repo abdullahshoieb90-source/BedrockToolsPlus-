@@ -11,6 +11,7 @@
 
 // Shows the player's armor pieces and the offhand slot as item icons on the
 // HUD, with optional durability bars and remaining/maximum durability numbers.
+// Slots can be backed by per-slot cells or by a single hotbar-style strip.
 //
 // This used to be the "Armor & Offhand" option of the Inventory HUD module; it
 // is now a module of its own, with its own toggle, keybind, HUD element and
@@ -65,6 +66,10 @@ private:
         bool hideInContainer = true;
         bool slotBackground = true;
         std::uint32_t slotBgColor = 0x73000000u; // "#000000" at 45%
+        bool hotbarBackground = false;
+        std::uint32_t hotbarBgColor = 0x7F000000u; // "#000000" at 50%
+        bool hotbarBorder = true;
+        std::uint32_t hotbarBorderColor = 0xD88B8B8Bu; // "#8B8B8B" at 85%
         float countTextSize = 12.0f;
         std::uint32_t countColor = 0xFFFFFFFFu;
         float gridSize = 16.0f;
@@ -96,6 +101,12 @@ private:
     bool m_slotBackground = true;
     float m_slotBgOpacity = 0.45f;
     std::string m_slotBgColor = "#000000";
+    bool m_hotbarBackground = false;
+    float m_hotbarBgOpacity = 0.50f;
+    std::string m_hotbarBgColor = "#000000";
+    bool m_hotbarBorder = true;
+    float m_hotbarBorderOpacity = 0.85f;
+    std::string m_hotbarBorderColor = "#8B8B8B";
     float m_countTextSize = 12.0f;
     std::string m_countColor = "#FFFFFF";
 

@@ -303,7 +303,7 @@ int main() {
     check(near(fills[4].area.y0, 200.0f + 4.0f * 36.0f) && near(fills[4].area.x0, 24.0f),
           "the offhand slot has its own cell below the boots");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 114,
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 114,
           "default cells are black at the configured 45% opacity");
     const auto* label = findText("220/363");
     check(label && near(label->h, 32.0f) && near(label->size, 12.0f), "armor label is centered within its row");
@@ -429,8 +429,81 @@ int main() {
     check(fills.size() == 5 && near(fills[0].area.x0, 500.0f),
           "styled backgrounds still cover every visible slot");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 1.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 204,
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 204,
           "background color and opacity are applied to the cells");
+
+    // The hotbar background is off by default; enabling it wraps all visible
+    // slots in one strip: an inner fill plus four border edges, painted before
+    // the cells and the icons so everything stays visible on top of it.
+    config["m_slotBackground"] = false;
+    config["m_hotbarBackground"] = true;
+    config["m_hotbarBgColor"] = "#001122";
+    config["m_hotbarBgOpacity"] = 0.5f;
+    config["m_hotbarBorderColor"] = "#FF0000";
+    config["m_hotbarBorderOpacity"] = 1.0f;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 5, "the hotbar strip is one inner fill plus four border edges");
+    check(near(fills[0].area.x0, 498.0f) && near(fills[0].area.y0, 10.0f) &&
+              near(fills[0].area.x1, 534.0f) && near(fills[0].area.y1, 190.0f) &&
+              near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0x11 / 255.0f) &&
+              near(fills[0].color.b, 0x22 / 255.0f) &&
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 127,
+          "the strip's inner area uses its own color and opacity");
+    check(near(fills[1].area.x0, 496.0f) && near(fills[1].area.x1, 536.0f) &&
+              near(fills[1].area.y0, 8.0f) && near(fills[1].area.y1, 10.0f) && near(fills[1].color.r, 1.0f),
+          "the top border edge frames the strip in its own color");
+    check(near(fills[2].area.y0, 190.0f) && near(fills[3].area.x0, 496.0f) && near(fills[4].area.x0, 534.0f),
+          "bottom, left and right border edges close the frame");
+    check(static_cast<int>(fills[1].alpha * 255.0f + 0.5f) == 255, "border opacity is applied");
+
+    // With both options on, the strip is drawn first so the per-slot cells
+    // and every icon stay on top of it.
+    config["m_slotBackground"] = true;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 10 && near(fills[0].area.x0, 498.0f) && near(fills[5].area.x0, 500.0f),
+          "the strip is painted below the slot cells");
+
+    // A disabled offhand slot shrinks the strip to the four armor pieces.
+    config["m_showOffhand"] = false;
+    config["m_slotBackground"] = false;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 5 && near(fills[0].area.y1, 8.0f + 148.0f - 2.0f),
+          "a hidden offhand slot shrinks the strip");
+    config["m_showOffhand"] = true;
+
+    // The border can be switched off, leaving just the translucent strip.
+    config["m_hotbarBorder"] = false;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 1, "the strip works without its border");
+    config["m_hotbarBorder"] = true;
+
+    // The editor box grows so the strip can be dragged as part of the element.
+    config["m_horizontal"] = true;
+    module.loadConfig(config);
+    frame();
+    const auto* stripElement = findElement(ArmorElementId);
+    check(stripElement && near(stripElement->x, 496.0f) && near(stripElement->y, 8.0f) &&
+              near(stripElement->width, 184.0f) && near(stripElement->height, 40.0f),
+          "the editor box covers the strip in a horizontal layout");
+    config["m_horizontal"] = false;
+    config["m_hotbarBackground"] = false;
+    config["m_slotBackground"] = true;
+    module.loadConfig(config);
+    frame();
+    check(fills.size() == 5 && near(fills[0].area.x0, 500.0f),
+          "switching the strip off restores the plain column");
+
+    nlohmann::json hotbarSaved;
+    module.saveConfig(hotbarSaved);
+    check(hotbarSaved.contains("m_hotbarBackground") && !hotbarSaved["m_hotbarBackground"].get<bool>() &&
+              hotbarSaved.contains("m_hotbarBgOpacity") && hotbarSaved.contains("m_hotbarBgColor") &&
+              hotbarSaved.contains("m_hotbarBorder") && hotbarSaved.contains("m_hotbarBorderOpacity") &&
+              hotbarSaved.contains("m_hotbarBorderColor"),
+          "hotbar background options are saved");
 
     config["m_showArmorDurability"] = true;
     config["m_slotSize"] = 8.0f;
@@ -457,6 +530,13 @@ int main() {
               schemaJson.find("m_slotBgColor") != std::string::npos &&
               schemaJson.find("Slot Background") != std::string::npos,
           "menu exposes the slot background option");
+    check(schemaJson.find("m_hotbarBackground") != std::string::npos &&
+              schemaJson.find("Hotbar Background") != std::string::npos &&
+              schemaJson.find("m_hotbarBgOpacity") != std::string::npos &&
+              schemaJson.find("m_hotbarBorder") != std::string::npos &&
+              schemaJson.find("m_hotbarBorderOpacity") != std::string::npos &&
+              schemaJson.find("m_hotbarBorderColor") != std::string::npos,
+          "menu exposes the hotbar background option");
 
     // Old configs stored these settings inside Inventory HUD; the migration
     // turns such a section into a config for this module.

@@ -87,6 +87,66 @@ int main() {
     expectNear("labeled row width", columnWidth(labeledRow), 5 * 120.0f + 4 * 4.0f);
     expectNear("labeled row height", columnHeight(labeledRow), 32.0f);
 
+    // Hotbar background: one strip around all slots. With 32 px slots one
+    // vanilla GUI pixel is 2 px, so the frame sits 4 px (padding + border)
+    // outside the slots on every side.
+    expectNear("hotbar unit", hotbarUnit(armor), 2.0f);
+    expectNear("hotbar padding", hotbarPadding(armor), 2.0f);
+    expectNear("hotbar border", hotbarBorder(armor), 2.0f);
+    HotbarRect bar = hotbarRect(armor);
+    expectNear("strip x", bar.x, 96.0f);
+    expectNear("strip y", bar.y, 46.0f);
+    expectNear("strip width", bar.width, 40.0f);
+    expectNear("strip height", bar.height, 5 * 32.0f + 4 * 4.0f + 8.0f);
+    HotbarFrame frame = hotbarFrame(armor);
+    expectNear("strip fill x", frame.fill.x, 98.0f);
+    expectNear("strip fill y", frame.fill.y, 48.0f);
+    expectNear("strip fill width", frame.fill.width, 36.0f);
+    expectNear("strip fill height", frame.fill.height, 180.0f);
+    expectNear("strip top edge", frame.edges[0].y, 46.0f);
+    expectNear("strip top edge height", frame.edges[0].height, 2.0f);
+    expectNear("strip bottom edge y", frame.edges[1].y, 228.0f);
+    expectNear("strip left edge width", frame.edges[2].width, 2.0f);
+    expectNear("strip left edge height", frame.edges[2].height, 180.0f);
+    expectNear("strip right edge x", frame.edges[3].x, 134.0f);
+
+    // A disabled offhand slot is not part of the strip, which then only wraps
+    // the four armor pieces.
+    bar = hotbarRect(armor, ArmorSlotCount);
+    expectNear("offhand-free strip height", bar.height, 4 * 32.0f + 3 * 4.0f + 8.0f);
+    expectNear("offhand-free strip width", bar.width, 40.0f);
+
+    // Tiny slots keep at least a 1 px frame so the strip stays visible.
+    expectNear("tiny hotbar unit", hotbarUnit(tiny), 1.0f);
+    bar = hotbarRect(tiny);
+    expectNear("tiny strip x", bar.x, 98.0f);
+    expectNear("tiny strip width", bar.width, 8.0f + 4.0f);
+
+    // Horizontal layouts wrap the row, labels included (they sit between the
+    // icons in that orientation).
+    bar = hotbarRect(row);
+    expectNear("row strip width", bar.width, 5 * 32.0f + 4 * 4.0f + 8.0f);
+    expectNear("row strip height", bar.height, 40.0f);
+    bar = hotbarRect(labeledRow);
+    // The strip hugs the icons plus the labels between them; it does not
+    // include the label reserve behind the last icon (nothing is drawn there).
+    expectNear("labeled row strip width", bar.width, 4 * 124.0f + 32.0f + 8.0f);
+    expectNear("labeled row strip height", bar.height, 40.0f);
+
+    // The editor box covers slots, labels and — when drawn — the strip.
+    HotbarRect bounds = elementBounds(labeled, false);
+    expectNear("editor bounds without strip x", bounds.x, 100.0f);
+    expectNear("editor bounds without strip width", bounds.width, 32.0f + 4.0f + 84.0f);
+    expectNear("editor bounds without strip height", bounds.height, 5 * 32.0f + 4 * 4.0f);
+    bounds = elementBounds(labeled, true);
+    expectNear("editor bounds with strip x", bounds.x, 96.0f);
+    expectNear("editor bounds with strip width", bounds.width, (32.0f + 4.0f + 84.0f) + 4.0f);
+    expectNear("editor bounds with strip height", bounds.height, 5 * 32.0f + 4 * 4.0f + 8.0f);
+    bounds = elementBounds(labeledRow, true);
+    // Column width (with the trailing label reserve) and strip width union.
+    expectNear("labeled row editor bounds width", bounds.width, 5 * 120.0f + 4 * 4.0f + 4.0f);
+    expectNear("labeled row editor bounds height", bounds.height, 40.0f);
+
     if (failures == 0) {
         std::printf("armorhud_layout_test: all checks passed\n");
         return 0;

@@ -108,6 +108,11 @@ ArmorModule::ConfigSnapshot ArmorModule::snapshotConfig() const {
     config.hideInContainer = m_hideInContainer;
     config.slotBackground = m_slotBackground;
     config.slotBgColor = huditems::withOpacity(huditems::parseColor(m_slotBgColor, 0xFF000000u), m_slotBgOpacity);
+    config.hotbarBackground = m_hotbarBackground;
+    config.hotbarBgColor = huditems::withOpacity(huditems::parseColor(m_hotbarBgColor, 0xFF000000u), m_hotbarBgOpacity);
+    config.hotbarBorder = m_hotbarBorder;
+    config.hotbarBorderColor =
+        huditems::withOpacity(huditems::parseColor(m_hotbarBorderColor, 0xFF8B8B8Bu), m_hotbarBorderOpacity);
     config.countTextSize = m_countTextSize;
     config.countColor = huditems::parseColor(m_countColor, 0xFFFFFFFFu);
     config.gridSize = m_gridSize;
@@ -167,6 +172,20 @@ void ArmorModule::renderNative(void* context, void* client) {
 
     if (!painter.ready()) return;
 
+    // The hotbar strip is painted before the slot cells of the same pass, so
+    // the cells and the icons always stay on top of it. It wraps only the
+    // visible slots, shrinking when the offhand slot is disabled.
+    if (config.hotbarBackground) {
+        const std::size_t visibleSlots = config.showOffhand ? SlotCount : layout::ArmorSlotCount;
+        const layout::HotbarFrame strip = layout::hotbarFrame(config.layout, visibleSlots);
+        painter.fillRect(strip.fill.x, strip.fill.y, strip.fill.width, strip.fill.height, config.hotbarBgColor);
+        if (config.hotbarBorder) {
+            for (const layout::HotbarRect& edge : strip.edges) {
+                painter.fillRect(edge.x, edge.y, edge.width, edge.height, config.hotbarBorderColor);
+            }
+        }
+    }
+
     // The slot cells are painted before the icons of the same pass, so the
     // item always stays on top of its background. Cells cover empty slots
     // too, keeping the element's shape steady while equipment changes.
@@ -204,19 +223,22 @@ void ArmorModule::onFrame() {
 
     const ConfigSnapshot config = snapshotConfig();
 
-    // The editor box always covers the full column so the element can be
+    // The editor box always covers the full element — slots, durability
+    // labels and, when drawn, the hotbar strip around them — so it can be
     // placed even while every slot is empty.
     std::vector<pl::modmenu::HudEditorElement> elements;
     {
+        const std::size_t visibleSlots = config.showOffhand ? SlotCount : layout::ArmorSlotCount;
+        const layout::HotbarRect bounds = layout::elementBounds(config.layout, config.hotbarBackground, visibleSlots);
         pl::modmenu::HudEditorElement element;
         element.elementId = ArmorElementId;
         element.displayName = "Armor & Offhand";
         element.positionKeyX = "hudPosX";
         element.positionKeyY = "hudPosY";
-        element.x = config.layout.x;
-        element.y = config.layout.y;
-        element.width = std::max(1.0f, layout::columnWidth(config.layout));
-        element.height = std::max(1.0f, layout::columnHeight(config.layout));
+        element.x = bounds.x;
+        element.y = bounds.y;
+        element.width = std::max(1.0f, bounds.width);
+        element.height = std::max(1.0f, bounds.height);
         element.gridSize = config.gridSize;
         element.snapThreshold = config.snapThreshold;
         element.gridGap = config.gridGap;
@@ -399,6 +421,50 @@ void ArmorModule::onMenuRegistered() {
         schema.node(std::move(color));
     }
 
+    section("hotbar_background", "Hotbar Background", "details");
+    {
+        auto toggle = node("m_hotbarBackground", "Hotbar Background", "details", ConfigControlTypeV2::Toggle);
+        toggle.section = "hotbar_background";
+        toggle.description = "Draws one hotbar-style bar with a border behind all visible slots, instead of (or next to) the per-slot cells.";
+        schema.node(std::move(toggle));
+
+        auto opacity = node("m_hotbarBgOpacity", "Background Opacity", "details", ConfigControlTypeV2::SliderFloat);
+        opacity.section = "hotbar_background";
+        opacity.minValue = "0.05";
+        opacity.maxValue = "1";
+        opacity.step = "0.05";
+        opacity.visibleWhen = {{"m_hotbarBackground", ConfigConditionOpV2::Truthy, {}}};
+        schema.node(std::move(opacity));
+
+        auto color = node("m_hotbarBgColor", "Background Color", "details", ConfigControlTypeV2::Color);
+        color.section = "hotbar_background";
+        color.defaultValue = "#000000";
+        color.visibleWhen = {{"m_hotbarBackground", ConfigConditionOpV2::Truthy, {}}};
+        color.description = "Color of the strip behind the slots; the opacity slider above sets how strongly it shows.";
+        schema.node(std::move(color));
+
+        auto border = node("m_hotbarBorder", "Border", "details", ConfigControlTypeV2::Toggle);
+        border.section = "hotbar_background";
+        border.description = "Draws a frame around the strip, like the edge of the vanilla hotbar.";
+        border.visibleWhen = {{"m_hotbarBackground", ConfigConditionOpV2::Truthy, {}}};
+        schema.node(std::move(border));
+
+        auto borderOpacity = node("m_hotbarBorderOpacity", "Border Opacity", "details", ConfigControlTypeV2::SliderFloat);
+        borderOpacity.section = "hotbar_background";
+        borderOpacity.minValue = "0.05";
+        borderOpacity.maxValue = "1";
+        borderOpacity.step = "0.05";
+        borderOpacity.visibleWhen = {{"m_hotbarBackground", ConfigConditionOpV2::Truthy, {}}};
+        schema.node(std::move(borderOpacity));
+
+        auto borderColor = node("m_hotbarBorderColor", "Border Color", "details", ConfigControlTypeV2::Color);
+        borderColor.section = "hotbar_background";
+        borderColor.defaultValue = "#8B8B8B";
+        borderColor.visibleWhen = {{"m_hotbarBackground", ConfigConditionOpV2::Truthy, {}}};
+        borderColor.description = "Color of the frame around the strip; vanilla hotbars use a light gray.";
+        schema.node(std::move(borderColor));
+    }
+
     section("auto_hide", "Automatic Hiding", "visibility");
     {
         auto hide = node("m_hideInContainer", "Hide While Inventory Is Open", "visibility", ConfigControlTypeV2::Toggle);
@@ -484,6 +550,14 @@ void ArmorModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_slotBackground")) m_slotBackground = j["m_slotBackground"].get<bool>();
     if (j.contains("m_slotBgOpacity")) m_slotBgOpacity = std::clamp(j["m_slotBgOpacity"].get<float>(), 0.05f, 1.0f);
     if (j.contains("m_slotBgColor")) m_slotBgColor = j["m_slotBgColor"].get<std::string>();
+    if (j.contains("m_hotbarBackground")) m_hotbarBackground = j["m_hotbarBackground"].get<bool>();
+    if (j.contains("m_hotbarBgOpacity")) m_hotbarBgOpacity = std::clamp(j["m_hotbarBgOpacity"].get<float>(), 0.05f, 1.0f);
+    if (j.contains("m_hotbarBgColor")) m_hotbarBgColor = j["m_hotbarBgColor"].get<std::string>();
+    if (j.contains("m_hotbarBorder")) m_hotbarBorder = j["m_hotbarBorder"].get<bool>();
+    if (j.contains("m_hotbarBorderOpacity")) {
+        m_hotbarBorderOpacity = std::clamp(j["m_hotbarBorderOpacity"].get<float>(), 0.05f, 1.0f);
+    }
+    if (j.contains("m_hotbarBorderColor")) m_hotbarBorderColor = j["m_hotbarBorderColor"].get<std::string>();
     if (j.contains("m_countTextSize")) m_countTextSize = std::clamp(j["m_countTextSize"].get<float>(), 6.0f, 40.0f);
     if (j.contains("m_countColor")) m_countColor = j["m_countColor"].get<std::string>();
     if (j.contains("m_gridSize")) m_gridSize = std::clamp(j["m_gridSize"].get<float>(), 1.0f, 100.0f);
@@ -511,6 +585,12 @@ void ArmorModule::saveConfig(nlohmann::json& j) {
     j["m_slotBackground"] = m_slotBackground;
     j["m_slotBgOpacity"] = m_slotBgOpacity;
     j["m_slotBgColor"] = m_slotBgColor;
+    j["m_hotbarBackground"] = m_hotbarBackground;
+    j["m_hotbarBgOpacity"] = m_hotbarBgOpacity;
+    j["m_hotbarBgColor"] = m_hotbarBgColor;
+    j["m_hotbarBorder"] = m_hotbarBorder;
+    j["m_hotbarBorderOpacity"] = m_hotbarBorderOpacity;
+    j["m_hotbarBorderColor"] = m_hotbarBorderColor;
     j["m_countTextSize"] = m_countTextSize;
     j["m_countColor"] = m_countColor;
     j["m_gridSize"] = m_gridSize;
