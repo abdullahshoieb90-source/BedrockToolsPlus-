@@ -13,7 +13,7 @@ inline constexpr std::size_t mBaseFogStart = 0x434;
 inline constexpr std::size_t mBaseFogEnd = 0x438;
 inline constexpr std::size_t mCurrentFogDensityMax = 0x464;
 inline constexpr std::size_t mCamPos = 0x61C;
-inline constexpr std::size_t mSelectionOverlayMaterial = 0x1030;
+inline constexpr std::size_t mSelectionOverlayMaterial = 0x1048;
 }
 
 namespace ScreenContext {
