@@ -108,7 +108,7 @@ The sound is a purely client-side overlay: the victim's own hurt sound is not ca
 - Android 9 or newer
 - 64-bit ARM device (`arm64-v8a`)
 - [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid)
-- Minecraft Bedrock **1.26.50** (`1.26.50.4`) — the version declared in `levimod.json`; other builds may work but are untested
+- Minecraft Bedrock **1.26.51** (`1.26.5X.X` wildcard, same as upstream QYCottage/BedrockTools v1.5.6) — the version declared in `levimod.json`; other builds may work but are untested
 
 ## Installation
 

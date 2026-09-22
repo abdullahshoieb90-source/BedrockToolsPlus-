@@ -29,6 +29,16 @@ public:
     bool showLookLine = false;
     float lookLineLength = 2.0f;
 
+    // Cull hitboxes that are fully hidden behind solid blocks.
+    //
+    // Off by default: the cull runs a voxel raycast per actor per frame
+    // through BlockSource::isSolidBlockingBlock, and if that resolution is
+    // wrong for the running build it suppresses *every* box, which reads as
+    // "the module does nothing" with no way to recover. It was hardcoded on
+    // before; making it a setting means the overlay always draws out of the
+    // box and the cull is opt-in.
+    bool hideBehindWalls = false;
+
     // Line thickness (menu slider units). 1.0 keeps the classic hairline
     // look; anything above that is drawn as real geometry (beams around
     // every edge) whose world-space width is lineThickness * 0.01 blocks,
