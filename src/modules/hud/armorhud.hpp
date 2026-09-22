@@ -64,6 +64,7 @@ private:
         bool armorDurability = true;
         bool hideInContainer = true;
         bool slotBackground = true;
+        bool hotbarBackground;
         std::uint32_t slotBgColor = 0x73000000u; // "#000000" at 45%
         float countTextSize = 12.0f;
         std::uint32_t countColor = 0xFFFFFFFFu;
@@ -94,7 +95,8 @@ private:
     bool m_showArmorDurability = true;
     bool m_hideInContainer = true;
     bool m_slotBackground = true;
-    float m_slotBgOpacity = 0.45f;
+    bool m_hotbarBackground = true;
+    float m_slotBgOpacity = 0.45f; 
     std::string m_slotBgColor = "#000000";
     float m_countTextSize = 12.0f;
     std::string m_countColor = "#FFFFFF";
