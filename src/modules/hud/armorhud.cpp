@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <memory>
 
 namespace {
 
@@ -29,6 +30,70 @@ constexpr const char* ArmorElementId = "bedrocktools.armorhud.column";
 
 struct EquipmentStacks {
     std::array<void*, SlotCount> stacks{};
+
+constexpr std::size_t SlotCount = 6;
+constexpr std::size_t FillingContainerItemsOffset = bedrocktools::sdk::offsets::Inventory::FillingContainerItems;
+constexpr std::size_t ItemStackSize = bedrocktools::sdk::offsets::Inventory::ItemStackSize;
+constexpr std::size_t MaxContainerSlots = 64;
+constexpr float VanillaItemSize = 16.0f;
+constexpr float HotbarCellWidth = 20.0f;
+constexpr float HotbarCellHeight = 22.0f;
+constexpr float HotbarItemInsetX = 2.0f;
+constexpr float HotbarItemInsetY = 3.0f;
+constexpr const char* HotbarTexturePath = "textures/ui/hotbar_1";
+constexpr const char* MinecraftLibrary = "libminecraftpe.so";
+
+};
+
+struct UiVec2 {
+    float x;
+    float y;
+};
+
+struct ClientTexture {
+    std::byte storage[24]{};
+};
+
+struct BedrockTextureData {
+    ClientTexture clientTexture;
+};
+
+enum class ResourceFileSystem : int {
+    UserPackage = 0
+};
+
+class ResourceLocation {
+public:
+    ResourceFileSystem fileSystem;
+    std::string path;
+    std::uint64_t pathHash;
+    std::uint64_t fullHash;
+
+    explicit ResourceLocation(std::string_view value)
+        : fileSystem(ResourceFileSystem::UserPackage),
+          path(value),
+          pathHash(computeHash(path)),
+          fullHash(pathHash ^ static_cast<std::uint64_t>(fileSystem)) {}
+
+private:
+    static std::uint64_t computeHash(std::string_view value) {
+        constexpr std::uint64_t offset = 1469598103934665603ULL;
+        constexpr std::uint64_t prime = 1099511628211ULL;
+        std::uint64_t hash = offset;
+        for (unsigned char ch : value) hash = static_cast<std::uint64_t>(ch) ^ (prime * hash);
+        return hash;
+    }
+};
+
+class TexturePtr {
+public:
+    std::shared_ptr<const BedrockTextureData> clientTexture;
+    std::shared_ptr<ResourceLocation> resourceLocation;
+
+    const ClientTexture& getClientTexture() const {
+        static const ClientTexture empty{};
+        return clientTexture ? clientTexture->clientTexture : empty;
+    }
 };
 
 // Helmet, chestplate, leggings, boots, offhand.
@@ -176,7 +241,24 @@ void ArmorModule::renderNative(void* context, void* client) {
             const SlotRect rect = layout::slotRect(config.layout, i);
             painter.fillRect(rect.x, rect.y, rect.size, rect.size, config.slotBgColor);
         }
-    }
+    TexturePtr getTexture(void* context, const ResourceLocation& location) {
+    void** vtable = getVtable(context);
+    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextGetTexture]) return {};
+    using Fn = TexturePtr (*)(void*, const ResourceLocation&, bool);
+    return reinterpret_cast<Fn>(vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextGetTexture])(context, location, false);
+}
+
+void drawImage(void* context, const ClientTexture& texture, const UiVec2& position, const UiVec2& size) {
+    void** vtable = getVtable(context);
+    if (!vtable || !vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextDrawImage]) return;
+    using Fn = void (*)(void*, const ClientTexture&, const UiVec2&, const UiVec2&, const UiVec2&, const UiVec2&, bool);
+    static constexpr UiVec2 uv{0.0f, 0.0f};
+    static constexpr UiVec2 uvSize{1.0f, 1.0f};
+    reinterpret_cast<Fn>(vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextDrawImage])(
+        context, texture, position, size, uv, uvSize, false);
+}
+
+
 
     // Dyed leather armor (and a few other tinted items) need the HUD opacity
     // fix pass first, otherwise their tinted pixels come out transparent.
@@ -224,6 +306,12 @@ void ArmorModule::onFrame() {
         elements.push_back(std::move(element));
     }
     pl::modmenu::submitHudEditorElements(moduleId, elements);
+
+    section("appearance", "Appearance", "equipment");
+    auto hotbarBackground = node("m_hotbarBackground", "Hotbar Background", "equipment", ConfigControlTypeV2::Toggle);
+    hotbarBackground.section = "appearance";
+    hotbarBackground.defaultValue = "true";
+    schema.node(std::move(hotbarBackground));
 
     std::vector<pl::modmenu::DrawCommand> commands;
     const bool hidden = config.hideInContainer && hiddenByScreen();
@@ -461,7 +549,7 @@ nlohmann::json ArmorModule::migratedFromInventoryHud(const nlohmann::json& inven
     for (const char* key : {"m_slotSize", "m_slotGap", "m_countTextSize", "m_gridSize", "m_gridGap",
                             "m_snapThreshold", "m_countColor", "m_showStackCount", "m_showDurability",
                             "m_showArmorDurability", "m_hideInContainer", "m_snapToGrid",
-                            "m_snapToElements", "m_snapToScreenCenter"}) {
+                            "m_snapToElements", "m_snapToScreenCenter", "m_hotbarBackground"}) {
         if (inventoryHud.contains(key)) migrated[key] = inventoryHud[key];
     }
     return migrated;
@@ -492,6 +580,7 @@ void ArmorModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_snapToGrid")) m_snapToGrid = j["m_snapToGrid"].get<bool>();
     if (j.contains("m_snapToElements")) m_snapToElements = j["m_snapToElements"].get<bool>();
     if (j.contains("m_snapToScreenCenter")) m_snapToScreenCenter = j["m_snapToScreenCenter"].get<bool>();
+    if (j.contains("m_hotbarBackground")) m_hotbarBackground = j["m_hotbarBackground"].get<bool>();
 }
 
 void ArmorModule::saveConfig(nlohmann::json& j) {
@@ -518,5 +607,84 @@ void ArmorModule::saveConfig(nlohmann::json& j) {
     j["m_snapThreshold"] = m_snapThreshold;
     j["m_snapToGrid"] = m_snapToGrid;
     j["m_snapToElements"] = m_snapToElements;
-    j["m_snapToScreenCenter"] = m_snapToScreenCenter;
+    j["m_snapToScreenCenter"] = m_snapToScreenCenter; 
+    j["m_hotbarBackground"] = m_hotbarBackground;
+    m_hotbarBackground,
 }
+
+void ArmorHudModule::submitEditorElements(const ConfigSnapshot& config) {
+    std::vector<pl::modmenu::HudEditorElement> elements;
+    elements.reserve(SlotCount);
+    for (std::size_t i = 0; i < SlotCount; ++i) {
+        const SlotConfig& slot = config.slots[i];
+        if (!slot.enabled) continue;
+        pl::modmenu::HudEditorElement element;
+        element.elementId = HudElementIds[i];
+        element.displayName = HudElementNames[i];
+        element.positionKeyX = HudXKeys[i];
+        element.positionKeyY = HudYKeys[i];
+        element.x = slot.x;
+        element.y = slot.y;
+        const float widthScale = config.hotbarBackground ? HotbarCellWidth / VanillaItemSize : 1.0f;
+        const float heightScale = config.hotbarBackground ? HotbarCellHeight / VanillaItemSize : 1.0f;
+        element.width = std::max(1.0f, slot.size * widthScale);
+        element.height = std::max(1.0f, slot.size * heightScale);
+        element.gridSize = config.gridSize;
+        element.snapThreshold = config.snapThreshold;
+        element.gridGap = config.gridGap;
+        element.snapFlags = config.snapFlags;
+        elements.push_back(std::move(element));
+    }
+    pl::modmenu::submitHudEditorElements(moduleId, elements);
+}
+
+    if (config.hotbarBackground && canRender) {
+        TexturePtr hotbarTexture = getTexture(context, ResourceLocation(HotbarTexturePath));
+        if (hotbarTexture.clientTexture) {
+            bool renderedBackground = false;
+            for (std::size_t i = 0; i < SlotCount; ++i) {
+                const SlotConfig& slot = config.slots[i];
+                if (!slot.enabled || slot.size <= 0.0f || !getStackItem(stacks[i])) continue;
+
+                const float x = full.x0 + slot.x * uiWidth / surface.width;
+                const float y = full.y0 + slot.y * uiHeight / surface.height;
+                const float width = slot.size * uiWidth / surface.width;
+                const float height = slot.size * uiHeight / surface.height;
+                const float iconSize = std::max(1.0f, std::min(width, height));
+                const float backgroundWidth = iconSize * HotbarCellWidth / VanillaItemSize;
+                const float backgroundHeight = iconSize * HotbarCellHeight / VanillaItemSize;
+                const float backgroundX = x - iconSize * HotbarItemInsetX / VanillaItemSize;
+                const float backgroundY = y - iconSize * HotbarItemInsetY / VanillaItemSize;
+                if (!std::isfinite(backgroundX) || !std::isfinite(backgroundY) ||
+                    !std::isfinite(backgroundWidth) || !std::isfinite(backgroundHeight)) continue;
+
+                drawImage(
+                    context,
+                    hotbarTexture.getClientTexture(),
+                    {backgroundX, backgroundY},
+                    {backgroundWidth, backgroundHeight});
+                renderedBackground = true;
+            }
+            if (renderedBackground) flushImages(context);
+        }
+    }
+const float backgroundLeft = config.hotbarBackground ? slot.x - slot.size * HotbarItemInsetX / VanillaItemSize : slot.x;
+        const float backgroundTop = config.hotbarBackground ? slot.y - slot.size * HotbarItemInsetY / VanillaItemSize : slot.y;
+        const float backgroundWidth = config.hotbarBackground ? slot.size * HotbarCellWidth / VanillaItemSize : slot.size;
+        const float backgroundHeight = config.hotbarBackground ? slot.size * HotbarCellHeight / VanillaItemSize : slot.size;
+        const float verticalCenterBaseline = backgroundTop + backgroundHeight * 0.5f + config.durabilityTextSize * 0.35f;
+        if (config.durabilityTextPosition == 1) {
+            durability.x = backgroundLeft - config.durabilityTextGap;
+            durability.y = verticalCenterBaseline;
+            durability.w = -1.0f;
+        } else if (config.durabilityTextPosition == 2) {
+            durability.x = backgroundLeft + backgroundWidth * 0.5f;
+            durability.y = backgroundTop + backgroundHeight + config.durabilityTextGap + config.durabilityTextSize;
+            durability.w = -2.0f;
+        } else {
+            durability.x = backgroundLeft + backgroundWidth + config.durabilityTextGap;
+            durability.y = verticalCenterBaseline;
+            durability.w = 0.0f;
+}
+
+
