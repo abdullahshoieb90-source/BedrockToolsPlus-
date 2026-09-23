@@ -600,6 +600,24 @@ int main() {
         check(g_submitted.empty(), "a live world pass keeps the HUD layer clear");
         s_lastWorldDrawUs = 0;
 
+        // Forcing it on draws the HUD boxes even while the world pass says it
+        // is alive - the escape hatch for a pass that runs but stays invisible.
+        module.hudFallbackAlways = true;
+        s_lastWorldDrawUs = nowUs();
+        g_submitted.clear();
+        module.onFrame();
+        check(!g_submitted.empty(),
+              "the always-on fallback draws while the world pass reports live");
+        module.hudFallbackAlways = false;
+        s_lastWorldDrawUs = nowUs();
+        g_submitted.clear();
+        module.onFrame();
+        check(g_submitted.empty(), "the always-on fallback is off by default");
+        s_lastWorldDrawUs = 0;
+        g_submitted.clear();
+        module.onFrame();
+        check(!g_submitted.empty(), "the automatic fallback takes over again");
+
         // Turning the fallback off draws nothing at all on such a build.
         module.hudFallback = false;
         module.onFrame();
@@ -763,6 +781,7 @@ int main() {
         source.lineThickness = 6.0f;
         source.hitboxIndicator = true;
         source.hudFallback = false;
+        source.hudFallbackAlways = true;
         source.hudDiagnostics = true;
         source.hudFov = 95.0f;
         source.hitboxColor = 0xFF123456u;
@@ -800,6 +819,7 @@ int main() {
         check(!loaded.hudFallback, "the screen-space fallback round-trips");
         check(loaded.hudDiagnostics, "the status readout setting round-trips");
         check(near(loaded.hudFov, 95.0f), "the fallback field of view round-trips");
+        check(loaded.hudFallbackAlways, "the always-on fallback round-trips");
     }
 
     {

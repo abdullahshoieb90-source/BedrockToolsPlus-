@@ -1252,11 +1252,13 @@ static void appendDiagnostics(std::vector<pl::modmenu::DrawCommand>& commands, b
                               bool fallbackActive, bool capped, size_t drawnBoxes,
                               const FrameInputs& inputs) {
     std::string headline;
-    if (worldAlive) {
-        headline = "Hitbox: world pass live";
-    } else if (fallbackActive) {
-        headline = "Hitbox: HUD fallback, " + std::to_string(drawnBoxes) + " box(es)";
+    if (fallbackActive) {
+        headline = worldAlive ? "Hitbox: world pass live + HUD overlay, "
+                              : "Hitbox: HUD fallback, ";
+        headline += std::to_string(drawnBoxes) + " box(es)";
         if (capped) headline += " (capped, nearest first)";
+    } else if (worldAlive) {
+        headline = "Hitbox: world pass live";
     } else if (!g_hitboxMod || !g_hitboxMod->hudFallback) {
         headline = "Hitbox: world pass silent, HUD fallback off";
     } else {
@@ -1317,7 +1319,7 @@ void HitboxModule::onFrame() {
     // No tick ever handed us a player? Ask the client instance instead. Walking
     // the level is not free, so this runs every few frames, and only while the
     // world pass is not drawing either.
-    if (hudFallback && !worldAlive && !inputs.valid) {
+    if (hudFallback && (hudFallbackAlways || !worldAlive) && !inputs.valid) {
         constexpr int kClientProbeFrames = 15; // ~4 probes a second at 60 fps
         static int s_framesSinceProbe = kClientProbeFrames;
         if (s_framesSinceProbe >= kClientProbeFrames) {
@@ -1332,7 +1334,8 @@ void HitboxModule::onFrame() {
     }
 
     const bool fallbackActive =
-        hudFallback && !worldAlive && inputs.valid && !inputs.actors.empty();
+        hudFallback && (hudFallbackAlways || !worldAlive) && inputs.valid &&
+        !inputs.actors.empty();
 
     std::vector<pl::modmenu::DrawCommand> commands;
     size_t drawnBoxes = 0;
@@ -1450,6 +1453,7 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     hideInvisible = j.value("hideInvisible", hideInvisible);
     hudFallback = j.value("hudFallback", hudFallback);
     hudDiagnostics = j.value("hudDiagnostics", hudDiagnostics);
+    hudFallbackAlways = j.value("hudFallbackAlways", hudFallbackAlways);
     hudFov = j.value("hudFov", hudFov);
     if (hudFov < 30.0f) hudFov = 30.0f;
     if (hudFov > 120.0f) hudFov = 120.0f;
@@ -1494,6 +1498,7 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["hideInvisible"] = hideInvisible;
     j["hudFallback"] = hudFallback;
     j["hudDiagnostics"] = hudDiagnostics;
+    j["hudFallbackAlways"] = hudFallbackAlways;
     j["hudFov"] = hudFov;
 
     // Colors are written the way every other module in the mod writes them:

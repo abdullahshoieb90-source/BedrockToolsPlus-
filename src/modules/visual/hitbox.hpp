@@ -46,6 +46,12 @@ public:
     // empty screen and a working overlay on such a build.
     bool hudFallback = true;
 
+    // Draw the boxes on the HUD layer even while the world pass says it is
+    // drawing. Off by default. It exists for the case HUD Diagnostics shows
+    // "world pass live" and the screen is still empty: the pass is running and
+    // its output is not visible, and this takes the overlay off it entirely.
+    bool hudFallbackAlways = false;
+
     // Vertical field of view (degrees) the fallback projects with. 70 is the
     // game's default; it only has to line the boxes up with the entities.
     float hudFov = 70.0f;
