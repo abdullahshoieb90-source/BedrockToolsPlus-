@@ -25,6 +25,19 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, Hit Sound, ForceGlobalRP, CommentKey, Command Hotkey, Hive Utils
 
+## Hitbox
+
+**Hitbox** draws a world-space box around every entity the client knows about, straight out of the box — no setting has to be found first. Boxes are drawn in the game's own render pass, so they follow the entity exactly and are hidden by terrain by default.
+
+- **Show Entities**, **Show Players** and **Show Items** pick which groups are boxed (mobs, other players, and everything else such as dropped items). **Items Color** styles the last group.
+- **Hitbox Color** styles mob and player boxes. **Eye Line** (+ **Eye Line Color**) draws the eye-height ring and **Look Line** (+ **Look Line Color** and **Look Line Length**) draws the direction an entity is facing.
+- **Hitbox Indicator** recolors the boxes from **Indicator Color** to **Active Color** while an entity is under the crosshair. It shares those two colors with Crosshair's **Indicator**, so both modules agree on what "aimed at" looks like.
+- **Show 3Rd Person** draws your own box while the camera is behind or in front of you. It is off by default, like vanilla, and the game's camera mode is read from the client so an interpolated first-person camera never fills the screen with your own box.
+- **Line Thickness** starts at the classic hairline. Above that, every edge is drawn as real camera-facing geometry, because GL line width is ignored by most mobile GLES drivers.
+- **Hide Behind Walls** is **off** by default: boxes are drawn even through terrain so the overlay always shows something. Turn it on to cull a box that is fully hidden behind solid blocks (it raycasts through `BlockSource::isSolidBlockingBlock` for every actor, so it is opt-in).
+
+Colors are saved as the `#RRGGBB` the launcher's color picker reads, and alpha is forced opaque at draw time, so raising the line thickness never washes a color out. Settings are persisted in `config.json`.
+
 ## Block Outline
 
 **Block Outline** draws a configurable world-space overlay over the hard-to-see selected-block border. It only follows the block currently under the crosshair and is entirely client-side.
