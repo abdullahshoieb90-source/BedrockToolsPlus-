@@ -173,6 +173,33 @@ EventBus& bus() {
 }
 } // namespace bedrocktools::events
 
+// The client-instance route the fallback uses when no tick ever delivered a
+// player pointer: GameHooks' ClientInstanceUpdate hook in production, a plain
+// stand-in here.
+namespace bedrocktools::core::gamehooks {
+void* g_client = nullptr;
+void* clientInstance() { return g_client; }
+} // namespace bedrocktools::core::gamehooks
+
+namespace {
+void* g_fakeClientPlayer = nullptr;
+void* fakeGetLocalPlayer(void*) { return g_fakeClientPlayer; }
+
+// A stand-in ClientInstance: its first word is the vtable the production code
+// indexes into for getLocalPlayer().
+void** fakeClientObject() {
+    static void** vtable = nullptr;
+    static void* object[4] = {nullptr};
+    if (!vtable) {
+        vtable = new void*[64]();
+        vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetLocalPlayer] =
+            reinterpret_cast<void*>(&fakeGetLocalPlayer);
+        object[0] = vtable;
+    }
+    return reinterpret_cast<void**>(object);
+}
+} // namespace
+
 // The launcher HUD layer. The fallback submits its boxes there instead of
 // tessellating them into the world pass, so the test installs the shared
 // fake's draw sink and reads the commands back out of it.
@@ -249,6 +276,7 @@ int main() {
 
     // Everything the module submits to the HUD layer lands in g_submitted.
     hudSink();
+
 
     std::printf("hitbox render integration\n");
 
@@ -627,6 +655,36 @@ int main() {
         module.onFrame(); // no tick in between
         check(!g_submitted.empty() && g_submitted.size() == frameOne,
               "a frame without a new tick redraws the same boxes");
+
+        // The tick hook is not the only way to the player pointer: when it never
+        // delivered one, the fallback asks the client instance instead (a
+        // vtable slot, the version-independent route the HUD modules use).
+        module.onDisable(); // drop the tick cache
+        g_localPlayerPtr = nullptr;
+        g_fetchedActors[0] = mob.ptr();
+        g_fetchedActorCount = 1;
+        writeAt(localPlayer.rotation, 0, Vec2{0.0f, -90.0f});
+        g_submitted.clear();
+        module.onFrame();
+        check(g_submitted.empty(),
+              "with no player from the tick the fallback draws nothing (the client is silent)");
+
+        bedrocktools::core::gamehooks::g_client = fakeClientObject();
+        g_fakeClientPlayer = localPlayer.ptr();
+        g_submitted.clear();
+        // The client is only asked every so often (asking means walking the
+        // level), so a few frames may pass before it is picked up.
+        for (int frame = 0; frame < 32 && g_submitted.empty(); ++frame) module.onFrame();
+        check(!g_submitted.empty(),
+              "the fallback reaches the player through the client instance when the tick does not");
+        check(g_submitted.size() >= 12, "the client-instance route boxes the same actors");
+        bool allLines = true;
+        for (const auto& command : g_submitted) {
+            if (command.type != pl::modmenu::DrawCommandType::Line) allLines = false;
+        }
+        check(allLines, "the client-instance route submits box edges");
+        bedrocktools::core::gamehooks::g_client = nullptr;
+        g_fakeClientPlayer = nullptr;
 
         // A crowded world: the launcher rejects a draw batch that is too long,
         // so the fallback has to stay under its own budget instead of losing

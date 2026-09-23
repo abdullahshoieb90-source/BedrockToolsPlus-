@@ -6,6 +6,7 @@
 #include <bedrocktools/sdk/Memory.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
+#include "core/GameHooks.hpp"
 #include <pl/ModMenu.hpp>
 #include <algorithm>
 #include <chrono>
@@ -249,6 +250,8 @@ struct CachedActor {
 // and iterates its own copy. Nothing the game owns is touched while the lock
 // is held.
 struct FrameInputs {
+    bool valid = false;      // a local player was found
+    bool fromClient = false; // ... through ClientInstance rather than the tick
     bedrocktools::sdk::Vec3 eye{0.0f, 0.0f, 0.0f};
     bedrocktools::sdk::Vec2 rotation{0.0f, 0.0f};
     size_t nearbyCount = 0;
@@ -271,6 +274,8 @@ static void publishFrameInputs(FrameInputs& built) {
 static FrameInputs frameInputs() {
     FrameInputs copy;
     std::lock_guard<std::mutex> lock(s_frameInputsMutex);
+    copy.valid = s_publishedInputs.valid;
+    copy.fromClient = s_publishedInputs.fromClient;
     copy.eye = s_publishedInputs.eye;
     copy.rotation = s_publishedInputs.rotation;
     copy.nearbyCount = s_publishedInputs.nearbyCount;
@@ -289,12 +294,35 @@ static void clearFrameInputs() {
 
 static bool hasCategory(void* actor, uint32_t categoryBit);
 
-static void cacheFrameInputs(void* localPlayer);
+static void cacheFrameInputs(void* localPlayer, bool fromClient);
+
+// ClientInstance::getLocalPlayer() through the vtable.
+//
+// The actor tick is the primary source of the player pointer, but it comes from
+// a signature - and if that one does not resolve on a build, the fallback would
+// have nothing to draw from. This route is version-independent (a vtable slot,
+// not an offset or a pattern) and is what the HUD modules already use to find
+// the player, so it is tried whenever no tick has delivered one.
+static void* localPlayerFromClient() {
+    void* client = bedrocktools::core::gamehooks::clientInstance();
+    if (!client || (uintptr_t)client < 0x1000) return nullptr;
+
+    void** vtable = *reinterpret_cast<void***>(client);
+    if (!vtable) return nullptr;
+
+    void* getLocalPlayer =
+        vtable[bedrocktools::sdk::offsets::VTable::ClientInstanceGetLocalPlayer];
+    if (!getLocalPlayer) return nullptr;
+
+    void* player = reinterpret_cast<void* (*)(void*)>(getLocalPlayer)(client);
+    if (!player || (uintptr_t)player < 0x1000) return nullptr;
+    return player;
+}
 
 static void s_hitboxTickCallback(void* _this) {
     if (!g_hitboxMod || !g_hitboxMod->enabled) return;
     g_localPlayerPtr = _this;
-    cacheFrameInputs(_this);
+    cacheFrameInputs(_this, false);
 }
 
 static MaterialPtr getMaterial(const char* name) {
@@ -613,15 +641,16 @@ static void collectActors(void* localPlayer, float camX, float camY, float camZ,
 // position, the look angles and one entry per actor that passes the module's
 // filters. Runs on the client tick, so no game state is read while the
 // renderer is walking the same structures.
-static void cacheFrameInputs(void* localPlayer) {
+static void cacheFrameInputs(void* localPlayer, bool fromClient = false) {
     FrameInputs& built = s_tickInputs;
-    built.actors.clear();
-    built.nearbyCount = 0;
-    built.managerCount = 0;
+    built = FrameInputs{};
     if (!localPlayer || !g_hitboxMod) return;
 
     const AABB localBox = getActorAABB(localPlayer);
     if (!isUsableBox(localBox)) return;
+
+    built.valid = true;
+    built.fromClient = fromClient;
 
     // Eye height above the feet, the same 1.62 the original module uses.
     built.eye = {localBox.min.x + (localBox.max.x - localBox.min.x) * 0.5f,
@@ -1238,9 +1267,11 @@ static void appendDiagnostics(std::vector<pl::modmenu::DrawCommand>& commands, b
     detail += s_actorFetchNearby ? "ok" : "n/a";
     detail += ", level list " + std::to_string(inputs.managerCount);
     detail += ", boxed " + std::to_string(inputs.actors.size());
-    if (inputs.actors.empty()) {
-        detail += g_localPlayerPtr == nullptr ? " (no player seen yet)"
-                                              : " (nothing in range)";
+    if (!inputs.valid) {
+        detail += " (no player yet: tick and client instance both silent)";
+    } else {
+        detail += inputs.fromClient ? " (player via client)" : " (player via tick)";
+        if (inputs.actors.empty()) detail += " - nothing in range";
     }
     detail += " | fns: box ";
     detail += s_hitResultGetEntity ? "ok" : "n/a";
@@ -1279,11 +1310,29 @@ void HitboxModule::onFrame() {
     // This frame's own copy of what the tick thread cached; iterating a copy is
     // what keeps the render thread from walking a list the tick thread is
     // rebuilding.
-    const FrameInputs inputs = frameInputs();
+    FrameInputs inputs = frameInputs();
     const bool worldAlive =
         s_lastWorldDrawUs != 0 && (nowUs() - s_lastWorldDrawUs) <= kWorldGraceUs;
+
+    // No tick ever handed us a player? Ask the client instance instead. Walking
+    // the level is not free, so this runs every few frames, and only while the
+    // world pass is not drawing either.
+    if (hudFallback && !worldAlive && !inputs.valid) {
+        constexpr int kClientProbeFrames = 15; // ~4 probes a second at 60 fps
+        static int s_framesSinceProbe = kClientProbeFrames;
+        if (s_framesSinceProbe >= kClientProbeFrames) {
+            s_framesSinceProbe = 0;
+            if (void* player = localPlayerFromClient()) {
+                cacheFrameInputs(player, true);
+                inputs = frameInputs();
+            }
+        } else {
+            ++s_framesSinceProbe;
+        }
+    }
+
     const bool fallbackActive =
-        hudFallback && !worldAlive && g_localPlayerPtr != nullptr && !inputs.actors.empty();
+        hudFallback && !worldAlive && inputs.valid && !inputs.actors.empty();
 
     std::vector<pl::modmenu::DrawCommand> commands;
     size_t drawnBoxes = 0;
