@@ -16,8 +16,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#include <pl/ModMenu.hpp>
 
 #include "bedrocktools/events/EventBus.hpp"
 #include "bedrocktools/events/LocalPlayerTickEvent.hpp"
@@ -48,9 +53,24 @@ Batch g_currentBatch;
 std::vector<std::array<int, 3>> g_solidBlocks;
 int g_solidBlockQueries = 0;
 
-void* g_fetchedActors[8] = {nullptr};
+// Mirrors the production ActorVec / DistanceSortedActor layout.
+struct FakeSortedActor {
+    void* actor;
+    float distance;
+    float pad;
+};
+struct FakeActorVec {
+    FakeSortedActor* begin;
+    FakeSortedActor* end;
+    FakeSortedActor* cap;
+};
+
+void* g_fetchedActors[512] = {nullptr};
 int g_fetchedActorCount = 0;
-std::vector<void*> g_fetchedStorage;
+// Laid out exactly like the game's DistanceSortedActor: the production code
+// walks this with its own 12-byte stride, so a plain pointer array here would
+// be read out of bounds.
+std::vector<FakeSortedActor> g_fetchedStorage;
 bool g_reportPlayer = false;
 bool g_reportInvisible = false;
 int g_perspective = 0;
@@ -76,28 +96,15 @@ void fakeRenderMesh(void*, void*, void* material, char*) {
 bool fakeIsPlayer(void*) { return g_reportPlayer; }
 bool fakeIsInvisible(void*) { return g_reportInvisible; }
 
-// Mirrors the production ActorVec / DistanceSortedActor layout.
-struct FakeSortedActor {
-    void* actor;
-    float distance;
-    float pad;
-};
-struct FakeActorVec {
-    FakeSortedActor* begin;
-    FakeSortedActor* end;
-    FakeSortedActor* cap;
-};
-
 FakeActorVec fakeFetchNearby(void*, void*, int) {
     g_fetchedStorage.clear();
     for (int i = 0; i < g_fetchedActorCount; ++i) {
-        g_fetchedStorage.push_back(g_fetchedActors[i]);
+        g_fetchedStorage.push_back(FakeSortedActor{g_fetchedActors[i], 0.0f, 0.0f});
     }
     FakeActorVec out{};
     if (g_fetchedStorage.empty()) return out;
-    // The production code only reads the actor pointer out of each element,
-    // so a vector of pointers is enough to stand in for the sorted list.
-    out.begin = reinterpret_cast<FakeSortedActor*>(g_fetchedStorage.data());
+    // The production code only reads the actor pointer out of each element.
+    out.begin = g_fetchedStorage.data();
     out.end = out.begin + g_fetchedStorage.size();
     out.cap = out.end;
     return out;
@@ -166,6 +173,17 @@ EventBus& bus() {
 }
 } // namespace bedrocktools::events
 
+// The launcher HUD layer. The fallback submits its boxes there instead of
+// tessellating them into the world pass, so the test installs the shared
+// fake's draw sink and reads the commands back out of it.
+namespace {
+std::vector<pl::modmenu::DrawCommand> g_submitted;
+std::vector<pl::modmenu::DrawCommand>& hudSink() {
+    pl::modmenu::drawCommandSink() = &g_submitted;
+    return g_submitted;
+}
+} // namespace
+
 // Include the production implementation so this test can drive its internal
 // render hook and tick callback without adding a test-only API to the module.
 #include "modules/visual/hitbox.cpp"
@@ -228,6 +246,9 @@ struct FakeActor {
 
 int main() {
     using namespace bedrocktools::sdk::offsets;
+
+    // Everything the module submits to the HUD layer lands in g_submitted.
+    hudSink();
 
     std::printf("hitbox render integration\n");
 
@@ -502,12 +523,171 @@ int main() {
         check(g_batches.empty(), "an unusable material stops the draw instead of rendering garbage");
         installEmbeddedMaterial(LevelRendererPlayer::mSelectionOverlayMaterial);
 
+        // A camera that does not sit near the player means the player-renderer
+        // layout is not the one this build was written for. Nothing is drawn in
+        // world space then (the boxes would land in empty space), which is what
+        // lets the HUD fallback take over.
+        const Vec3 savedCamera = thirdPersonCamera;
+        s_lastWorldDrawUs = 0;
+        writeAt(playerRenderer, LevelRendererPlayer::mCamPos, Vec3{5000.0f, 5000.0f, 5000.0f});
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.empty(), "a camera that is not near the player stops the world-space draw");
+        check(s_lastWorldDrawUs == 0, "an unusable camera does not count as a live world pass");
+        writeAt(playerRenderer, LevelRendererPlayer::mCamPos, savedCamera);
+
+        // With the world pass silent the boxes are projected onto the HUD layer
+        // instead, which is how the overlay stays visible on a build where the
+        // level-renderer signatures or offsets do not match. The fallback reads
+        // what the client tick cached, so tick first.
+        module.hudFallback = true;
+        s_lastWorldDrawUs = 0;
+        auto tick = [&] {
+            bedrocktools::events::LocalPlayerTickEvent tickEvent{
+                reinterpret_cast<bedrocktools::sdk::Player*>(localPlayer.ptr())};
+            bedrocktools::events::bus().publish(tickEvent);
+        };
+        g_fetchedActors[0] = mob.ptr();
+        g_fetchedActorCount = 1;
+        // Yaw -90 looks towards +X, which is where the stand-in mob stands, so
+        // the box is inside the fallback's view frustum.
+        writeAt(localPlayer.rotation, 0, Vec2{0.0f, -90.0f});
+        tick();
+        g_submitted.clear();
+        module.onFrame();
+        check(!g_submitted.empty(), "the HUD fallback submits box edges");
+        check(g_submitted.size() == 12 &&
+                  g_submitted[0].type == pl::modmenu::DrawCommandType::Line,
+              "one visible actor is twelve projected line edges");
+        check(g_submitted.empty() ||
+                  (g_submitted[0].w == g_submitted[0].w &&
+                   std::isfinite(g_submitted[0].x) &&
+                   std::isfinite(g_submitted[0].w)),
+              "projected edges are finite surface coordinates");
+
+        // While the world pass is alive the HUD layer is cleared again, so the
+        // overlay is never drawn twice.
+        s_lastWorldDrawUs = nowUs();
+        module.onFrame();
+        check(g_submitted.empty(), "a live world pass keeps the HUD layer clear");
+        s_lastWorldDrawUs = 0;
+
+        // Turning the fallback off draws nothing at all on such a build.
+        module.hudFallback = false;
+        module.onFrame();
+        check(g_submitted.empty(), "hide the fallback and nothing is submitted");
+        module.hudFallback = true;
+
+        // The fallback honors the same color rule as the world pass.
+        module.hitboxColor = 0x00000000u;
+        tick();
+        module.onFrame();
+        check(!g_submitted.empty() &&
+                  (g_submitted[0].color & 0x00FFFFFFu) == 0x00FFFFFFu,
+              "the fallback also falls back to white for a black box color");
+        module.hitboxColor = 0xFFFFFFFFu;
+
+        // Disabling the module clears the HUD layer.
+        g_submitted.clear();
+        module.setMasterEnabled(true);
+        tick();
+        module.onFrame();
+        check(!g_submitted.empty(), "the fallback is drawing before the module is disabled");
+
+        // The on-screen status readout is off by default (it is a debug line),
+        // and when it is on it rides along in the same submission.
+        auto countText = [] {
+            size_t n = 0;
+            for (const auto& command : g_submitted) {
+                if (command.type == pl::modmenu::DrawCommandType::Text) ++n;
+            }
+            return n;
+        };
+        check(countText() == 0, "the status readout is off by default");
+
+        module.hudDiagnostics = true;
+        module.onFrame();
+        check(countText() == 2, "the status readout adds its two lines");
+        bool describes = false;
+        for (const auto& command : g_submitted) {
+            if (command.type != pl::modmenu::DrawCommandType::Text) continue;
+            if (command.text.find("fallback") != std::string::npos &&
+                command.text.find("box") != std::string::npos) {
+                describes = true;
+            }
+        }
+        check(describes, "the readout names the pass that is drawing");
+        module.hudDiagnostics = false;
+
+        // onFrame works off its own copy of what the tick cached: a frame that
+        // runs without a new tick still draws the same boxes (and the tick
+        // thread can never be walking the list the render thread is reading).
+        module.onFrame(); // back to box edges only
+        const size_t frameOne = g_submitted.size();
+        module.onFrame(); // no tick in between
+        check(!g_submitted.empty() && g_submitted.size() == frameOne,
+              "a frame without a new tick redraws the same boxes");
+
+        // A crowded world: the launcher rejects a draw batch that is too long,
+        // so the fallback has to stay under its own budget instead of losing
+        // every box at once.
+        {
+            std::vector<std::unique_ptr<FakeActor>> crowd;
+            g_fetchedActorCount = 0;
+            // 300 mobs packed inside the module's 30-block radius, so the edge
+            // count (12 each) runs past the batch budget.
+            for (int i = 0; i < 300; ++i) {
+                const float x = 12.0f + static_cast<float>(i % 20) * 0.5f;
+                const float z = 8.0f + static_cast<float>(i / 20) * 0.5f;
+                crowd.push_back(std::make_unique<FakeActor>(Vec3{x, 64.0f, z},
+                                                            Vec3{x + 0.6f, 65.8f, z + 0.6f},
+                                                            ActorCategories::IsMob));
+                g_fetchedActors[g_fetchedActorCount++] = crowd.back()->ptr();
+            }
+            tick();
+            g_submitted.clear();
+            module.onFrame();
+            check(!g_submitted.empty(), "a crowded world still draws");
+            check(g_submitted.size() <= 3072,
+                  "the fallback stays under the launcher's batch budget");
+            bool allFinite = true;
+            for (const auto& command : g_submitted) {
+                allFinite = allFinite && std::isfinite(command.x) && std::isfinite(command.y) &&
+                            std::isfinite(command.w) && std::isfinite(command.h) &&
+                            std::isfinite(command.size);
+            }
+            check(allFinite, "every submitted command is finite (one bad one drops the batch)");
+
+            // The nearest actors are the ones that survive the cap.
+            tick();
+            module.hudDiagnostics = true;
+            module.onFrame();
+            bool cappedLine = false;
+            for (const auto& command : g_submitted) {
+                if (command.type == pl::modmenu::DrawCommandType::Text &&
+                    command.text.find("capped") != std::string::npos) {
+                    cappedLine = true;
+                }
+            }
+            check(g_fetchedActorCount == 300 && g_submitted.size() <= 3076,
+                  "the readout reports the capped frame");
+            check(cappedLine, "the readout says the frame was capped");
+            module.hudDiagnostics = false;
+
+            g_fetchedActorCount = 1;
+            g_fetchedActors[0] = mob.ptr();
+            tick();
+            module.onFrame();
+        }
+        writeAt(localPlayer.rotation, 0, Vec2{0.0f, 0.0f});
+
         // A disabled module draws nothing even with actors in range.
         module.setMasterEnabled(false);
         g_batches.clear();
         _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
         check(g_batches.empty(), "disabling the module stops the overlay");
         check(g_localPlayerPtr == nullptr, "disabling the module drops the cached player pointer");
+        check(g_submitted.empty(), "disabling the module clears the HUD layer");
     }
 
     std::printf("hitbox config\n");
@@ -524,6 +704,9 @@ int main() {
         source.lookLineLength = 3.5f;
         source.lineThickness = 6.0f;
         source.hitboxIndicator = true;
+        source.hudFallback = false;
+        source.hudDiagnostics = true;
+        source.hudFov = 95.0f;
         source.hitboxColor = 0xFF123456u;
         source.eyeLineColor = 0xFF223344u;
         source.lookLineColor = 0xFF556677u;
@@ -556,6 +739,9 @@ int main() {
         check(loaded.hitboxIndicator, "the indicator toggle round-trips");
         check(!loaded.hideBehindWalls, "hide behind walls stays off across a config round-trip");
         check(!loaded.hideInvisible, "invisible actors stay boxed across a config round-trip");
+        check(!loaded.hudFallback, "the screen-space fallback round-trips");
+        check(loaded.hudDiagnostics, "the status readout setting round-trips");
+        check(near(loaded.hudFov, 95.0f), "the fallback field of view round-trips");
     }
 
     {

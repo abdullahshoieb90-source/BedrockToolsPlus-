@@ -39,9 +39,18 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 Actors come from the same nearby-actor scan the module has always used. When that scan comes back empty — the case a build lands in when its signature does not resolve — the level's actor manager is walked instead (the list Tablist and the Debug Menu read), and the entity under the crosshair is always boxed from the game's own hit result.
 
+### When the world pass cannot draw
+
+Boxes are drawn inside the game's level-render pass, which is what makes them follow an entity pixel for pixel. On a build where that pass cannot be reached at all — an unresolved `RenderLevel` signature, a player-renderer layout that does not match this fork's headers — every world-space module draws nothing, no matter how correct its own logic is. Hitbox is the one module that does not have to accept that:
+
+- **HUD Fallback** (on by default) watches the world pass. If it has not drawn a single box for two seconds, the same boxes are projected onto the launcher's HUD layer instead — a completely different route (the `eglSwapBuffers` frame hook plus `submitDrawCommands`, the path the Crosshair, Armor and Hotbar modules use). The moment the world pass draws again, the fallback clears itself, so the two never double up.
+- The projections are clipped at the camera plane and clamped, and the batch is kept under the launcher's limit: the launcher validates a whole draw batch before drawing any of it, so one bad coordinate or an oversized batch would have cost every box at once. Boxes are submitted nearest-first, so a crowded frame keeps the closest ones.
+- **HUD FOV** (70° by default) is the field of view the fallback projects with; the game's default is a good starting point, and it only has to line the boxes up with the entities on screen. Because the HUD has no depth buffer, the fallback draws through terrain — the boxes are still exactly where the entities are.
+- **HUD Diagnostics** (off by default) prints the overlay's own status on the HUD surface: which pass is drawing, how many actors each source handed back, and which game functions resolved. It needs no adb, no logcat and no second device — if Hitbox still shows nothing, switch this on and the screen itself says why.
+
 Colors are saved as the `#RRGGBB` the launcher's color picker reads, and alpha is forced opaque at draw time, so raising the line thickness never washes a color out. A color with no RGB at all (pure black, which is what a launcher color picker leaves behind when it cannot parse its value) falls back to white instead of drawing an invisible box. The material fallback probes both offsets the game builds use for the embedded selection-overlay material and refuses a slot that is not a material, rather than handing the renderer a foreign pointer. Settings are persisted in `config.json`.
 
-The module logs one line per state change so "it draws nothing" can be told apart from "nothing is nearby" — `adb logcat -s BedrockToolsPlus`:
+The module logs one line per state change so "it draws nothing" can be told apart from "nothing is nearby" — `adb logcat -s BedrockToolsPlus` (with **HUD Diagnostics** the same information is readable on the device itself):
 
 ```
 Hitbox: init - tess 1, material group 1, actor manager 1, nearby 1, hit result 1
@@ -132,7 +141,7 @@ The sound is a purely client-side overlay: the victim's own hurt sound is not ca
 - Android 9 or newer
 - 64-bit ARM device (`arm64-v8a`)
 - [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid)
-- Minecraft Bedrock **1.26.50** (`1.26.50.4`) — the version declared in `levimod.json`; other builds may work but are untested
+- Minecraft Bedrock **1.26.5X.X** — the version range declared in `levimod.json` (1.26.50 and 1.26.51 both ship the same signature table); other builds may work but are untested
 
 ## Installation
 

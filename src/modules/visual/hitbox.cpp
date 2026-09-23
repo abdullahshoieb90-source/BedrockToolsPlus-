@@ -1,11 +1,17 @@
 #include "hitbox.hpp"
 #include "hitbox_camera.hpp"
+#include "hitbox_projection.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/sdk/Memory.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
+#include <pl/ModMenu.hpp>
+#include <algorithm>
+#include <chrono>
+#include <mutex>
 #include <cmath>
+#include <span>
 #include <string>
 #include <cstring>
 #include <vector>
@@ -162,6 +168,25 @@ static MaterialPtr s_matSelection;
 static MaterialPtr s_matFill;
 static uintptr_t    s_renderMaterialGroup = 0;
 
+// Timestamp of the last frame the world-space pass actually drew something.
+// The HUD fallback only takes over while this is stale: an overlay that is
+// alive should not be drawn twice.
+static int64_t s_lastWorldDrawUs = 0;
+
+// The launcher validates a whole batch before drawing any of it and rejects one
+// that is too long (kMaxDrawCommandCount = 4096 in its ModMenuBridge), so the
+// fallback keeps a margin under that instead of losing every box at once.
+static constexpr size_t kMaxSurfaceCommands = 3072;
+// True while the module's HUD layer currently has commands on it, so a frame
+// with nothing to draw submits an empty batch once (instead of every frame) to
+// clear the last one.
+static bool    s_surfaceDrawn = false;
+
+static int64_t nowUs() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 static uint32_t forceOpaqueColor(uint32_t color) {
     return color | 0xFF000000u;
 }
@@ -206,11 +231,70 @@ struct AABB {
     bedrocktools::sdk::Vec3 max;
 };
 
+// One actor as the HUD fallback needs it. Filled on the client tick, where the
+// game is not mid-render, so a frame only has to project cached numbers.
+struct CachedActor {
+    AABB box{};
+    bool isPlayer = false;
+    bool isMob = false;
+};
+
+// What the fallback needs to draw a frame: where the eyes are, which way they
+// look and one box per actor that passed the module's filters.
+//
+// The tick thread builds it and the render thread (onFrame, driven by the
+// swap-buffers hook) reads it, so it is published under a lock: the writer only
+// swaps two already-built objects in (O(1) - it never holds the lock while
+// walking the game's actor list), and the reader copies the small result out
+// and iterates its own copy. Nothing the game owns is touched while the lock
+// is held.
+struct FrameInputs {
+    bedrocktools::sdk::Vec3 eye{0.0f, 0.0f, 0.0f};
+    bedrocktools::sdk::Vec2 rotation{0.0f, 0.0f};
+    size_t nearbyCount = 0;
+    size_t managerCount = 0;
+    std::vector<CachedActor> actors;
+};
+
+static std::mutex s_frameInputsMutex;
+static FrameInputs s_publishedInputs; // guarded by s_frameInputsMutex
+static FrameInputs s_tickInputs;      // tick-thread scratch
+static std::vector<hitboxhud::Segment> s_cachedSegments; // frame thread only
+
+// Publishes what the tick thread just built and hands the previous list back
+// for reuse.
+static void publishFrameInputs(FrameInputs& built) {
+    std::lock_guard<std::mutex> lock(s_frameInputsMutex);
+    std::swap(s_publishedInputs, built);
+}
+
+static FrameInputs frameInputs() {
+    FrameInputs copy;
+    std::lock_guard<std::mutex> lock(s_frameInputsMutex);
+    copy.eye = s_publishedInputs.eye;
+    copy.rotation = s_publishedInputs.rotation;
+    copy.nearbyCount = s_publishedInputs.nearbyCount;
+    copy.managerCount = s_publishedInputs.managerCount;
+    copy.actors = s_publishedInputs.actors;
+    return copy;
+}
+
+// Only the published copy is dropped: the tick thread's own scratch is
+// harmless (it is never read until a later tick publishes it) and is not
+// touched here without the lock.
+static void clearFrameInputs() {
+    std::lock_guard<std::mutex> lock(s_frameInputsMutex);
+    s_publishedInputs = FrameInputs{};
+}
+
 static bool hasCategory(void* actor, uint32_t categoryBit);
+
+static void cacheFrameInputs(void* localPlayer);
 
 static void s_hitboxTickCallback(void* _this) {
     if (!g_hitboxMod || !g_hitboxMod->enabled) return;
     g_localPlayerPtr = _this;
+    cacheFrameInputs(_this);
 }
 
 static MaterialPtr getMaterial(const char* name) {
@@ -525,6 +609,64 @@ static void collectActors(void* localPlayer, float camX, float camY, float camZ,
     }
 }
 
+// Caches what the HUD fallback needs for the frame it is drawn on: the eye
+// position, the look angles and one entry per actor that passes the module's
+// filters. Runs on the client tick, so no game state is read while the
+// renderer is walking the same structures.
+static void cacheFrameInputs(void* localPlayer) {
+    FrameInputs& built = s_tickInputs;
+    built.actors.clear();
+    built.nearbyCount = 0;
+    built.managerCount = 0;
+    if (!localPlayer || !g_hitboxMod) return;
+
+    const AABB localBox = getActorAABB(localPlayer);
+    if (!isUsableBox(localBox)) return;
+
+    // Eye height above the feet, the same 1.62 the original module uses.
+    built.eye = {localBox.min.x + (localBox.max.x - localBox.min.x) * 0.5f,
+                 localBox.min.y + 1.62f,
+                 localBox.min.z + (localBox.max.z - localBox.min.z) * 0.5f};
+    built.rotation = getActorRotation(localPlayer);
+
+    std::vector<void*> actors;
+    collectActors(localPlayer, built.eye.x, built.eye.y, built.eye.z,
+                  actors, built.managerCount, built.nearbyCount);
+
+    built.actors.reserve(actors.size());
+    for (void* ent : actors) {
+        if (!ent || ent == localPlayer) continue;
+        if (g_hitboxMod->hideInvisible && s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
+
+        CachedActor cached;
+        cached.isPlayer = s_actorIsPlayer && s_actorIsPlayer(ent);
+        cached.isMob = hasCategory(ent, bedrocktools::sdk::offsets::ActorCategories::IsMob);
+
+        if (cached.isPlayer) {
+            if (!g_hitboxMod->showPlayers) continue;
+        } else if (cached.isMob) {
+            if (!g_hitboxMod->showEntities) continue;
+        } else if (!g_hitboxMod->showItems) {
+            continue;
+        }
+
+        cached.box = getActorAABB(ent);
+        built.actors.push_back(cached);
+    }
+
+    // Nearest first: the fallback caps how many edges it submits per frame (the
+    // launcher rejects a batch that is too long), so the boxes that survive the
+    // cap should be the ones the player is closest to.
+    std::sort(built.actors.begin(), built.actors.end(),
+              [&](const CachedActor& a, const CachedActor& b) {
+                  const float da = distanceSqToBox(a.box, built.eye.x, built.eye.y, built.eye.z);
+                  const float db = distanceSqToBox(b.box, built.eye.x, built.eye.y, built.eye.z);
+                  return da < db;
+              });
+
+    publishFrameInputs(built);
+}
+
 static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (_renderLevel_orig) {
         _renderLevel_orig(_this, screenContext, a3);
@@ -565,6 +707,26 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     float camX = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
     float camY = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos + 4);
     float camZ = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos + 8);
+
+    // The camera sits at the local player's eyes, or a few blocks behind them
+    // in third person. A player-renderer layout that does not match this header
+    // yields a camera somewhere else entirely, and every box is then translated
+    // out of the world - which looks exactly like the module drawing nothing.
+    // Those frames are skipped so the HUD fallback can take over instead of
+    // silently painting the overlay into empty space.
+    {
+        const AABB localBox = getActorAABB(g_localPlayerPtr);
+        constexpr float kCameraSlack = 12.0f;
+        const bool finite = std::isfinite(camX) && std::isfinite(camY) && std::isfinite(camZ);
+        const bool nearPlayer = isUsableBox(localBox) &&
+            camX >= localBox.min.x - kCameraSlack && camX <= localBox.max.x + kCameraSlack &&
+            camY >= localBox.min.y - kCameraSlack && camY <= localBox.max.y + kCameraSlack &&
+            camZ >= localBox.min.z - kCameraSlack && camZ <= localBox.max.z + kCameraSlack;
+        if (!finite || !nearPlayer) {
+            bail(5, "camera position does not match the player renderer layout");
+            return;
+        }
+    }
 
     // Wall occlusion: resolve the dimension's BlockSource once per frame. Only
     // done when the setting is on - the cull is opt-in so a build where the
@@ -901,6 +1063,12 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         ++drawn;
     }
 
+    // Tell the HUD fallback the world pass is alive: it stays out of the way
+    // while this keeps running.
+    if (drawn > 0 || aimed) {
+        s_lastWorldDrawUs = nowUs();
+    }
+
     // One line per frame while the state is unchanged, so a log tells whether
     // actors were found at all and whether they survived the filters.
     static size_t s_lastManager = size_t(-1);
@@ -1039,9 +1207,167 @@ void HitboxModule::onDisable() {
     // the render hook dereferences it (AABB, dimension, rotation) - keeping it
     // would read freed memory after leaving a world.
     g_localPlayerPtr = nullptr;
+    clearFrameInputs();
+    s_surfaceDrawn = false;
+    // Leave no stale overlay behind: onFrame stops running for a disabled
+    // module, so this is the only chance to clear the HUD layer.
+    pl::modmenu::submitDrawCommands(moduleId, std::span<const pl::modmenu::DrawCommand>{});
 }
 
+// The on-screen status readout (hudDiagnostics). Two short lines on the top
+// left of the HUD surface: which pass is drawing, and what the actor sources
+// and the resolved game functions look like. Written for a device with no
+// adb available - it turns "the module does nothing" into a sentence that can
+// be read straight off the screen.
+static void appendDiagnostics(std::vector<pl::modmenu::DrawCommand>& commands, bool worldAlive,
+                              bool fallbackActive, bool capped, size_t drawnBoxes,
+                              const FrameInputs& inputs) {
+    std::string headline;
+    if (worldAlive) {
+        headline = "Hitbox: world pass live";
+    } else if (fallbackActive) {
+        headline = "Hitbox: HUD fallback, " + std::to_string(drawnBoxes) + " box(es)";
+        if (capped) headline += " (capped, nearest first)";
+    } else if (!g_hitboxMod || !g_hitboxMod->hudFallback) {
+        headline = "Hitbox: world pass silent, HUD fallback off";
+    } else {
+        headline = "Hitbox: nothing drawn";
+    }
+
+    std::string detail = "actors: scan ";
+    detail += s_actorFetchNearby ? "ok" : "n/a";
+    detail += ", level list " + std::to_string(inputs.managerCount);
+    detail += ", boxed " + std::to_string(inputs.actors.size());
+    if (inputs.actors.empty()) {
+        detail += g_localPlayerPtr == nullptr ? " (no player seen yet)"
+                                              : " (nothing in range)";
+    }
+    detail += " | fns: box ";
+    detail += s_hitResultGetEntity ? "ok" : "n/a";
+    detail += ", list ";
+    detail += s_getRuntimeActorList ? "ok" : "n/a";
+
+    auto text = [](float y, uint32_t color, std::string message) {
+        pl::modmenu::DrawCommand command{};
+        command.type = pl::modmenu::DrawCommandType::Text;
+        command.x = 8.0f;
+        command.y = y;
+        command.w = -1.0f; // natural width, left-aligned
+        command.color = color;
+        command.size = 18.0f;
+        command.text = std::move(message);
+        return command;
+    };
+
+    commands.push_back(text(8.0f, 0xFFFFFFFFu, std::move(headline)));
+    commands.push_back(text(30.0f, 0xFFB0BEC5u, std::move(detail)));
+}
+
+// The HUD fallback: the same boxes, projected onto the launcher's overlay.
+//
+// Used while the world-space pass has not drawn for a while - the state a
+// build lands in when the level-renderer signatures or the player-renderer
+// layout do not match the ones this header was written for. The launcher HUD
+// layer does not go through that pass, so the overlay stays usable; the boxes
+// are drawn over terrain, since the HUD has no depth buffer.
+//
+// Everything is built into one command list and submitted once, so turning the
+// fallback off (or having nothing to show) removes the previous frame's boxes
+// instead of leaving them on screen.
 void HitboxModule::onFrame() {
+    constexpr int64_t kWorldGraceUs = 2 * 1000 * 1000; // 2 s, ~120 frames
+    // This frame's own copy of what the tick thread cached; iterating a copy is
+    // what keeps the render thread from walking a list the tick thread is
+    // rebuilding.
+    const FrameInputs inputs = frameInputs();
+    const bool worldAlive =
+        s_lastWorldDrawUs != 0 && (nowUs() - s_lastWorldDrawUs) <= kWorldGraceUs;
+    const bool fallbackActive =
+        hudFallback && !worldAlive && g_localPlayerPtr != nullptr && !inputs.actors.empty();
+
+    std::vector<pl::modmenu::DrawCommand> commands;
+    size_t drawnBoxes = 0;
+    bool capped = false;
+
+    if (fallbackActive) {
+        const pl::modmenu::HudSurfaceSize surface = pl::modmenu::getHudSurfaceSize();
+        if (surface.width <= 1.0f || surface.height <= 1.0f) return;
+
+        const hitboxhud::Camera camera = hitboxhud::computeCamera(inputs.eye, inputs.rotation);
+        const hitboxhud::Projection projection =
+            hitboxhud::makeProjection(surface.width, surface.height, hudFov);
+        // Keeps an entity straddling the camera plane from producing
+        // coordinates in the tens of thousands.
+        const float limit =
+            (surface.width > surface.height ? surface.width : surface.height) * 4.0f;
+
+        const float thickness = lineThickness > 1.05f ? lineThickness : 1.5f;
+
+        commands.reserve(std::min<size_t>(inputs.actors.size() * hitboxhud::kBoxEdgeCount,
+                                          kMaxSurfaceCommands));
+
+        for (const CachedActor& actor : inputs.actors) {
+            if (commands.size() >= kMaxSurfaceCommands) {
+                capped = true;
+                break;
+            }
+
+            const uint32_t color = drawableColor(actor.isPlayer || actor.isMob
+                                                     ? hitboxColor
+                                                     : showItemsColor);
+
+            s_cachedSegments.clear();
+            hitboxhud::projectBox(camera, projection, actor.box.min, actor.box.max,
+                                  s_cachedSegments, limit);
+
+            size_t edges = 0;
+            for (const hitboxhud::Segment& segment : s_cachedSegments) {
+                if (commands.size() >= kMaxSurfaceCommands) {
+                    capped = true;
+                    break;
+                }
+                // Off-screen edges still cost a command, so they are dropped.
+                if ((segment.x1 < 0.0f && segment.x2 < 0.0f) ||
+                    (segment.x1 > surface.width && segment.x2 > surface.width) ||
+                    (segment.y1 < 0.0f && segment.y2 < 0.0f) ||
+                    (segment.y1 > surface.height && segment.y2 > surface.height)) {
+                    continue;
+                }
+
+                const float w = segment.x2 - segment.x1; // the launcher reads w/h as the end delta
+                const float h = segment.y2 - segment.y1;
+                // One bad coordinate makes the launcher drop the whole batch
+                // (it validates every command before drawing any), so a
+                // segment that is not fully finite never leaves the module.
+                if (!std::isfinite(segment.x1) || !std::isfinite(segment.y1) ||
+                    !std::isfinite(w) || !std::isfinite(h)) {
+                    continue;
+                }
+
+                pl::modmenu::DrawCommand command{};
+                command.type = pl::modmenu::DrawCommandType::Line;
+                command.x = segment.x1;
+                command.y = segment.y1;
+                command.w = w;
+                command.h = h;
+                command.size = thickness;
+                command.color = color;
+                commands.push_back(std::move(command));
+                ++edges;
+            }
+            if (edges != 0) ++drawnBoxes;
+        }
+    }
+
+    if (hudDiagnostics) {
+        appendDiagnostics(commands, worldAlive, fallbackActive, capped, drawnBoxes, inputs);
+    }
+
+    // Drawing nothing on a layer that already shows nothing: leave it alone.
+    if (commands.empty() && !s_surfaceDrawn) return;
+
+    pl::modmenu::submitDrawCommands(moduleId, commands);
+    s_surfaceDrawn = !commands.empty();
 }
 
 void HitboxModule::loadConfig(const nlohmann::json& j) {
@@ -1073,6 +1399,11 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     // the default is now off so the overlay is guaranteed to draw.
     hideBehindWalls = j.value("hideBehindWalls", hideBehindWalls);
     hideInvisible = j.value("hideInvisible", hideInvisible);
+    hudFallback = j.value("hudFallback", hudFallback);
+    hudDiagnostics = j.value("hudDiagnostics", hudDiagnostics);
+    hudFov = j.value("hudFov", hudFov);
+    if (hudFov < 30.0f) hudFov = 30.0f;
+    if (hudFov > 120.0f) hudFov = 120.0f;
     auto parseColor = [&](const std::string& key, uint32_t& outColor) {
         if (!j.contains(key) || !j[key].is_string()) return;
         std::string hexStr = j[key].get<std::string>();
@@ -1112,6 +1443,9 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["hitboxIndicator"] = hitboxIndicator;
     j["hideBehindWalls"] = hideBehindWalls;
     j["hideInvisible"] = hideInvisible;
+    j["hudFallback"] = hudFallback;
+    j["hudDiagnostics"] = hudDiagnostics;
+    j["hudFov"] = hudFov;
 
     // Colors are written the way every other module in the mod writes them:
     // "#RRGGBB". The launcher builds its color picker straight from this

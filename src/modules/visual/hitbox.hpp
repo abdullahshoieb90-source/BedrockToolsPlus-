@@ -39,6 +39,25 @@ public:
     // box and the cull is opt-in.
     bool hideBehindWalls = false;
 
+    // Screen-space fallback: the same boxes, projected onto the launcher's HUD
+    // layer, used while the world render pass has not drawn for a while (an
+    // unresolved level-renderer signature, a player-renderer layout that does
+    // not match this header). On by default - it is the difference between an
+    // empty screen and a working overlay on such a build.
+    bool hudFallback = true;
+
+    // Vertical field of view (degrees) the fallback projects with. 70 is the
+    // game's default; it only has to line the boxes up with the entities.
+    float hudFov = 70.0f;
+
+    // Print the overlay's own status on the HUD surface: which pass is drawing,
+    // how many actors each source handed back and which game functions
+    // resolved. Off by default (it is a debug readout) - but it is the only
+    // end-user-visible diagnostic the mod has: it needs no adb, no logcat and
+    // no second device, and it says on screen whether the world pass, the HUD
+    // fallback, or neither of them is running.
+    bool hudDiagnostics = false;
+
     // Skip actors the game reports as invisible.
     //
     // Off by default: this is a hitbox overlay, and on a build where the

@@ -54,9 +54,30 @@ struct DrawCommand {
     std::string imageId;
 };
 
+// The size of the surface the launcher draws overlay commands on, as the real
+// header reports it. A stand-in size is used here so HUD layout code can be
+// exercised on the host.
+struct HudSurfaceSize {
+    float width{800.0f};
+    float height{450.0f};
+};
+
+inline HudSurfaceSize getHudSurfaceSize() { return HudSurfaceSize{}; }
+
+// Tests that want to see what a module draws install a sink here; the default
+// sink keeps this a no-op, so production code paths are unaffected.
+inline std::vector<DrawCommand>*& drawCommandSink() {
+    static std::vector<DrawCommand>* sink = nullptr;
+    return sink;
+}
+
 // Mirrors the real header (span-based) so the ModuleRegistry.hpp wrapper —
 // which is an exact-match overload for std::vector — stays unambiguous.
-inline void submitDrawCommands(std::string_view, std::span<const DrawCommand>) {}
+inline void submitDrawCommands(std::string_view, std::span<const DrawCommand> commands) {
+    if (std::vector<DrawCommand>* sink = drawCommandSink()) {
+        sink->assign(commands.begin(), commands.end());
+    }
+}
 
 inline bool registerImage(std::string_view, std::span<const unsigned char>,
                           int, int) {
