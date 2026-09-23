@@ -27,7 +27,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Hitbox
 
-**Hitbox** draws a world-space box around every entity the client knows about, straight out of the box — no setting has to be found first. Boxes are drawn in the game's own render pass, so they follow the entity exactly and are hidden by terrain by default.
+**Hitbox** draws a world-space box around every entity the client knows about, straight out of the box — no setting has to be found first. Boxes are drawn in the game's own render pass, so they follow the entity exactly.
 
 - **Show Entities**, **Show Players** and **Show Items** pick which groups are boxed (mobs, other players, and everything else such as dropped items). **Items Color** styles the last group.
 - **Hitbox Color** styles mob and player boxes. **Eye Line** (+ **Eye Line Color**) draws the eye-height ring and **Look Line** (+ **Look Line Color** and **Look Line Length**) draws the direction an entity is facing.
@@ -35,8 +35,19 @@ The source is public so people can study how a real LeviLauncher mod is structur
 - **Show 3Rd Person** draws your own box while the camera is behind or in front of you. It is off by default, like vanilla, and the game's camera mode is read from the client so an interpolated first-person camera never fills the screen with your own box.
 - **Line Thickness** starts at the classic hairline. Above that, every edge is drawn as real camera-facing geometry, because GL line width is ignored by most mobile GLES drivers.
 - **Hide Behind Walls** is **off** by default: boxes are drawn even through terrain so the overlay always shows something. Turn it on to cull a box that is fully hidden behind solid blocks (it raycasts through `BlockSource::isSolidBlockingBlock` for every actor, so it is opt-in).
+- **Hide Invisible** is **off** by default too, so an entity the game reports as invisible keeps its box. This is a hitbox overlay, and on a build where that query mis-resolves it answers "true" for everything — which would hide every box in the game.
 
-Colors are saved as the `#RRGGBB` the launcher's color picker reads, and alpha is forced opaque at draw time, so raising the line thickness never washes a color out. Settings are persisted in `config.json`.
+Actors come from the same nearby-actor scan the module has always used. When that scan comes back empty — the case a build lands in when its signature does not resolve — the level's actor manager is walked instead (the list Tablist and the Debug Menu read), and the entity under the crosshair is always boxed from the game's own hit result.
+
+Colors are saved as the `#RRGGBB` the launcher's color picker reads, and alpha is forced opaque at draw time, so raising the line thickness never washes a color out. A color with no RGB at all (pure black, which is what a launcher color picker leaves behind when it cannot parse its value) falls back to white instead of drawing an invisible box. The material fallback probes both offsets the game builds use for the embedded selection-overlay material and refuses a slot that is not a material, rather than handing the renderer a foreign pointer. Settings are persisted in `config.json`.
+
+The module logs one line per state change so "it draws nothing" can be told apart from "nothing is nearby" — `adb logcat -s BedrockToolsPlus`:
+
+```
+Hitbox: init - tess 1, material group 1, actor manager 1, nearby 1, hit result 1
+Hitbox: actor manager 12 (fallback), nearby 12, boxes 3 (aimed no)
+Hitbox: skipped - no material resolved (material group and embedded overlay both unusable)
+```
 
 ## Block Outline
 

@@ -39,6 +39,13 @@ public:
     // box and the cull is opt-in.
     bool hideBehindWalls = false;
 
+    // Skip actors the game reports as invisible.
+    //
+    // Off by default: this is a hitbox overlay, and on a build where the
+    // invisibility query resolves to the wrong function it answers "true" for
+    // every actor, which hides every box in the game.
+    bool hideInvisible = false;
+
     // Line thickness (menu slider units). 1.0 keeps the classic hairline
     // look; anything above that is drawn as real geometry (beams around
     // every edge) whose world-space width is lineThickness * 0.01 blocks,

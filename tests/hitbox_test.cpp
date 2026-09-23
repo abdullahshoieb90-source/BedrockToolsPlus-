@@ -34,6 +34,10 @@ struct Batch {
     int mode = -1;
     int reservedVertices = 0;
     int emittedVertices = 0;
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    float a = 0.0f;
 };
 
 std::vector<Batch> g_batches;
@@ -56,9 +60,18 @@ void fakeRenderLevel(void*, void*, void*) {}
 void fakeTessBegin(void*, void*, int mode, int vertexCount, int) {
     g_currentBatch = {mode, vertexCount, 0};
 }
-void fakeTessColor(void*, float, float, float, float) {}
+void fakeTessColor(void*, float r, float g, float b, float a) {
+    g_currentBatch.r = r;
+    g_currentBatch.g = g;
+    g_currentBatch.b = b;
+    g_currentBatch.a = a;
+}
 void fakeTessVertex(void*, float, float, float) { ++g_currentBatch.emittedVertices; }
-void fakeRenderMesh(void*, void*, void*, char*) { g_batches.push_back(g_currentBatch); }
+void* g_lastMaterial = nullptr;
+void fakeRenderMesh(void*, void*, void* material, char*) {
+    g_lastMaterial = material;
+    g_batches.push_back(g_currentBatch);
+}
 
 bool fakeIsPlayer(void*) { return g_reportPlayer; }
 bool fakeIsInvisible(void*) { return g_reportInvisible; }
@@ -101,9 +114,26 @@ bool fakeIsSolidBlockingBlock(void*, const void* pos) {
 
 int fakeGetPerspective(void*) { return g_perspective; }
 
+// ActorManager::getRuntimeActorList(): every actor in the level.
+std::vector<void*> g_managerActors;
+int g_managerCalls = 0;
+std::vector<void*> fakeRuntimeActorList(void*) {
+    ++g_managerCalls;
+    return g_managerActors;
+}
+
+// Level::getHitResult() + HitResult::getEntity(): what the crosshair is on.
+std::array<std::byte, 64> g_hitResult{};
+void* g_hitResultEntity = nullptr;
+void* fakeLevelGetHitResult(void*) { return g_hitResult.data(); }
+void* fakeHitResultGetEntity(void*) { return g_hitResultEntity; }
+
 std::uintptr_t fakeResolve(bedrocktools::memory::SignatureId id) {
     using bedrocktools::memory::SignatureId;
     switch (id) {
+        case SignatureId::ActorManagerList: return reinterpret_cast<std::uintptr_t>(&fakeRuntimeActorList);
+        case SignatureId::LevelGetHitResult: return reinterpret_cast<std::uintptr_t>(&fakeLevelGetHitResult);
+        case SignatureId::HitResultGetEntity: return reinterpret_cast<std::uintptr_t>(&fakeHitResultGetEntity);
         case SignatureId::RenderLevel: return reinterpret_cast<std::uintptr_t>(&fakeRenderLevel);
         case SignatureId::TessellatorBegin: return reinterpret_cast<std::uintptr_t>(&fakeTessBegin);
         case SignatureId::TessellatorColor: return reinterpret_cast<std::uintptr_t>(&fakeTessColor);
@@ -186,6 +216,11 @@ struct FakeActor {
                 reinterpret_cast<std::uintptr_t>(dimension));
     }
 
+    void attachLevel(void* level) {
+        writeAt(actor, bedrocktools::sdk::offsets::Actor::mLevel,
+                reinterpret_cast<std::uintptr_t>(level));
+    }
+
     void* ptr() { return actor.data(); }
 };
 
@@ -210,6 +245,20 @@ int main() {
     writeAt(screenContext, ScreenContext::mColorHolder, static_cast<void*>(colorHolder.data()));
     writeAt(levelRenderer, LevelRenderer::mLevelRendererPlayer, static_cast<void*>(playerRenderer.data()));
 
+    // The embedded selection-overlay material the module falls back to when
+    // the material group is unavailable. It is a MaterialPtr: data + control
+    // block whose first word is a code pointer. A build gets an unusable slot
+    // when its offset is wrong (the module probes every known offset), so the
+    // stand-in has to look real for the fallback to be accepted.
+    alignas(std::max_align_t) std::array<std::byte, 32> materialData{};
+    alignas(std::max_align_t) std::array<std::byte, 32> materialControl{};
+    writeAt(materialControl, 0, static_cast<void*>(materialData.data()));
+    auto installEmbeddedMaterial = [&](std::size_t offset) {
+        writeAt(playerRenderer, offset, static_cast<void*>(materialData.data()));
+        writeAt(playerRenderer, offset + sizeof(void*), static_cast<void*>(materialControl.data()));
+    };
+    installEmbeddedMaterial(LevelRendererPlayer::mSelectionOverlayMaterial);
+
     // The local player stands at (10.0, 64.0, 10.0) with the standard 1.8 tall
     // box; the camera sits at its eyes in first person.
     FakeActor localPlayer({10.0f, 64.0f, 10.0f}, {10.6f, 65.8f, 10.6f});
@@ -225,6 +274,13 @@ int main() {
     writeAt(dimension, Dimension::mBlockSource, static_cast<void*>(blockSource.data()));
     localPlayer.attachWorld(dimension.data());
     mob.attachWorld(dimension.data());
+
+    // The level the local player belongs to, with its actor manager: the
+    // second (and primary) actor source the module now uses.
+    alignas(std::max_align_t) std::array<std::byte, 0x500> level{};
+    alignas(std::max_align_t) std::array<std::byte, 64> actorManager{};
+    writeAt(level, Level::mActorManager, static_cast<void*>(actorManager.data()));
+    localPlayer.attachLevel(level.data());
 
     {
         HitboxModule module;
@@ -271,11 +327,14 @@ int main() {
         check(g_batches.empty(), "disabling showEntities hides nearby mobs");
         module.showEntities = true;
 
-        // Invisible actors are skipped.
+        // Invisible actors are boxed by default (see the dedicated checks
+        // below) and skipped once Hide Invisible is on.
         g_reportInvisible = true;
+        module.hideInvisible = true;
         g_batches.clear();
         _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
-        check(g_batches.empty(), "invisible actors are skipped");
+        check(g_batches.empty(), "invisible actors are skipped while hide invisible is on");
+        module.hideInvisible = false;
         g_reportInvisible = false;
 
         // The local player's own box is hidden in first person.
@@ -336,6 +395,113 @@ int main() {
               "the crisp hairline pass still runs at every thickness");
         module.lineThickness = 1.0f;
 
+        // The actor manager is a second, independent source: with the
+        // nearby-actor scan returning nothing at all, boxes still appear. This
+        // is the regression the module kept being reported with - one broken
+        // enumeration signature left the whole overlay empty.
+        g_fetchedActorCount = 0;
+        g_managerActors = {mob.ptr()};
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.size() == 1,
+              "the level's actor manager alone is enough to draw a box");
+
+        // ... and the two sources merge instead of drawing the same actor twice.
+        g_fetchedActors[0] = mob.ptr();
+        g_fetchedActorCount = 1;
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.size() == 1, "an actor found by both sources is boxed once");
+        g_managerActors.clear();
+        g_fetchedActorCount = 0;
+
+        // The entity under the crosshair is boxed even when no list has it,
+        // and it is the one the indicator highlights.
+        module.hitboxIndicator = true;
+        g_hitResultEntity = mob.ptr();
+        writeAt(g_hitResult, HitResult::mType, HitResult::TypeEntity);
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.size() == 1, "the entity from the game's hit result is boxed");
+        check(g_batches.size() == 1 && near(g_batches[0].r, 1.0f) && near(g_batches[0].g, 0.0f),
+              "the aimed entity uses the active indicator color");
+        module.hitboxIndicator = false;
+        g_hitResultEntity = nullptr;
+        writeAt(g_hitResult, HitResult::mType, HitResult::TypeNoHit);
+
+        // A color with no RGB (what a launcher color picker leaves behind when
+        // it cannot parse its value) would draw an invisible box, so it falls
+        // back to white instead of leaving the module looking dead.
+        module.hitboxColor = 0x00000000u;
+        module.showItemsColor = 0x00000000u;
+        module.showEntities = true;
+        g_fetchedActors[0] = mob.ptr();
+        g_fetchedActorCount = 1;
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.size() == 1 && near(g_batches[0].r, 1.0f) &&
+              near(g_batches[0].g, 1.0f) && near(g_batches[0].b, 1.0f),
+              "a black box color falls back to white instead of drawing nothing");
+        module.hitboxColor = 0xFFFFFFFFu;
+        module.showItemsColor = 0xFFFFFFFFu;
+
+        // Invisible actors are boxed by default (this is a hitbox overlay), and
+        // skipped once the option is turned on.
+        g_reportInvisible = true;
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.size() == 1, "invisible actors keep their box by default");
+        module.hideInvisible = true;
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.empty(), "hide invisible turns the box off");
+        module.hideInvisible = false;
+        g_reportInvisible = false;
+
+        // A box that is not finite cannot be tessellated: it would poison the
+        // whole mesh, so it is dropped before any vertex is emitted.
+        FakeActor nanActor({0.0f / 0.0f, 64.0f, 10.0f}, {1.0f, 65.0f, 11.0f},
+                           ActorCategories::IsMob);
+        g_fetchedActors[0] = nanActor.ptr();
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.empty(), "an unusable (NaN) box is never tessellated");
+        g_fetchedActors[0] = mob.ptr();
+
+        // The embedded selection material is used when the material group
+        // could not be resolved (the stand-in build has no material group), and
+        // its address is the probed slot rather than a pointer into unrelated
+        // memory. Both known offsets are checked because the offset differs
+        // between game builds.
+        g_fetchedActors[0] = mob.ptr();
+        g_fetchedActorCount = 1;
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.size() == 1 && g_lastMaterial ==
+                  reinterpret_cast<void*>(playerRenderer.data() + LevelRendererPlayer::mSelectionOverlayMaterial),
+              "the embedded material slot is used when no material group resolved");
+
+        // The upstream offset is probed too, so a build whose header disagrees
+        // still draws instead of handing the renderer a foreign pointer.
+        writeAt(playerRenderer, LevelRendererPlayer::mSelectionOverlayMaterial, static_cast<void*>(nullptr));
+        writeAt(playerRenderer, LevelRendererPlayer::mSelectionOverlayMaterial + sizeof(void*),
+                static_cast<void*>(nullptr));
+        installEmbeddedMaterial(0x1030);
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.size() == 1 && g_lastMaterial ==
+                  reinterpret_cast<void*>(playerRenderer.data() + 0x1030),
+              "the upstream material offset is used when the header offset is empty");
+
+        // With no usable material anywhere the module stops instead of
+        // tessellating with a pointer that is not a material at all.
+        writeAt(playerRenderer, 0x1030, static_cast<void*>(nullptr));
+        writeAt(playerRenderer, 0x1030 + sizeof(void*), static_cast<void*>(nullptr));
+        g_batches.clear();
+        _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
+        check(g_batches.empty(), "an unusable material stops the draw instead of rendering garbage");
+        installEmbeddedMaterial(LevelRendererPlayer::mSelectionOverlayMaterial);
+
         // A disabled module draws nothing even with actors in range.
         module.setMasterEnabled(false);
         g_batches.clear();
@@ -389,6 +555,7 @@ int main() {
               "all five colors round-trip");
         check(loaded.hitboxIndicator, "the indicator toggle round-trips");
         check(!loaded.hideBehindWalls, "hide behind walls stays off across a config round-trip");
+        check(!loaded.hideInvisible, "invisible actors stay boxed across a config round-trip");
     }
 
     {

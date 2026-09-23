@@ -11,6 +11,17 @@
 #include <vector>
 #include <utility>
 
+// The module logs one line per state change so "it does nothing" can be told
+// apart from "nothing is nearby": which of the required game functions are
+// missing, how many actors each source handed back, and how many boxes were
+// drawn. Host tests compile this out.
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define HITBOX_LOG(...) __android_log_print(ANDROID_LOG_INFO, "BedrockToolsPlus", __VA_ARGS__)
+#else
+#define HITBOX_LOG(...) ((void)0)
+#endif
+
 typedef void (*Tessellator_begin_t)(void* tessellator, void* debugCallback, int primitiveMode, int vertexCount, int noIndices);
 typedef void (*Tessellator_color_t)(void* tessellator, float r, float g, float b, float a);
 typedef void (*Tessellator_vertex_t)(void* tessellator, float x, float y, float z);
@@ -31,6 +42,15 @@ struct ActorVec {
 };
 
 typedef ActorVec (*Actor_fetchNearbyActorsSorted_t)(void* actor, void* extent, int actorType);
+
+// ActorManager::getRuntimeActorList() -- every actor in the level. Tablist and
+// the Debug Menu already enumerate entities this way.
+typedef std::vector<void*> (*ActorManager_getRuntimeActorList_t)(void* actorManager);
+
+// Level::getHitResult() + HitResult::getEntity() -- what the crosshair is
+// actually pointing at. The same pair the Crosshair module's indicator uses.
+typedef void* (*Level_getHitResult_t)(void* level);
+typedef void* (*HitResult_getEntity_t)(void* hitResult);
 
 // BlockSource::isSolidBlockingBlock(BlockPos const&) -- true for full opaque
 // blocks that block movement and sight (stone, dirt, planks...), false for
@@ -133,6 +153,9 @@ static MeshHelpers_renderMeshImmediately_t s_renderMesh = nullptr;
 static Actor_isPlayer_t                   s_actorIsPlayer = nullptr;
 static Actor_isInvisible_t                s_actorIsInvisible = nullptr;
 static Actor_fetchNearbyActorsSorted_t    s_actorFetchNearby = nullptr;
+static ActorManager_getRuntimeActorList_t s_getRuntimeActorList = nullptr;
+static Level_getHitResult_t               s_levelGetHitResult = nullptr;
+static HitResult_getEntity_t              s_hitResultGetEntity = nullptr;
 static BlockSource_isSolidBlockingBlock_t s_isSolidBlockingBlock = nullptr;
 
 static MaterialPtr s_matSelection;
@@ -141,6 +164,18 @@ static uintptr_t    s_renderMaterialGroup = 0;
 
 static uint32_t forceOpaqueColor(uint32_t color) {
     return color | 0xFF000000u;
+}
+
+// Radius (blocks) around the camera a box is drawn for. The nearby-actor scan
+// uses it as its extent, and the whole-level actor list is filtered by it so a
+// busy world does not tessellate hundreds of distant boxes.
+static constexpr float kActorRadius = 30.0f;
+
+// A color with no RGB at all (pure black) draws an invisible box. That is what
+// a launcher color picker leaves behind when it cannot parse the value it was
+// given, and the module then looks dead. Such a value is treated as unset.
+static uint32_t drawableColor(uint32_t color) {
+    return (color & 0x00FFFFFFu) == 0 ? 0xFFFFFFFFu : forceOpaqueColor(color);
 }
 
 static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
@@ -188,6 +223,33 @@ static MaterialPtr getMaterial(const char* name) {
 
     using getMat_t = MaterialPtr(*)(void*, const HashedString*);
     return reinterpret_cast<getMat_t>(vtable[2])((void*)s_renderMaterialGroup, &hs);
+}
+
+// The game's own selection-overlay material, embedded in the player renderer.
+// It is the fallback for builds where the material-group lookup returns
+// nothing, and its offset differs between game builds - the header here says
+// 0x1048 while upstream's says 0x1030. A wrong offset hands the renderer a
+// pointer into unrelated memory, which draws nothing at all, so every known
+// offset is probed and only a slot that looks like the two-pointer MaterialPtr
+// of a shared_ptr (data + control block whose first word is a code pointer) is
+// accepted. Guessing instead can hand the renderer garbage.
+static void* embeddedOverlayMaterial(uintptr_t lrpPtr) {
+    static const size_t kCandidates[] = {
+        bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial,
+        0x1030,
+    };
+
+    for (size_t offset : kCandidates) {
+        void** slot = (void**)(lrpPtr + offset);
+        uintptr_t data = (uintptr_t)slot[0];
+        uintptr_t control = (uintptr_t)slot[1];
+        if (data < 0x1000 || control < 0x1000) continue;
+        if ((data & 0xF) != 0 || (control & 0xF) != 0) continue;
+        const uintptr_t vtable = *(uintptr_t*)control;
+        if (vtable < 0x1000 || (vtable & 0xF) != 0) continue;
+        return (void*)slot;
+    }
+    return nullptr;
 }
 
 static void ensureMaterials() {
@@ -370,7 +432,98 @@ static bool hasCategory(void* actor, uint32_t categoryBit) {
     return (categories & categoryBit) != 0;
 }
 
+// A box the renderer can actually use. getActorAABB walks two component
+// pointers, so a build where that chain is off returns garbage; a single NaN
+// vertex poisons the whole tessellated mesh and no box is drawn at all.
+static bool isUsableBox(const AABB& box) {
+    if (!std::isfinite(box.min.x) || !std::isfinite(box.min.y) || !std::isfinite(box.min.z)) return false;
+    if (!std::isfinite(box.max.x) || !std::isfinite(box.max.y) || !std::isfinite(box.max.z)) return false;
+    const bool empty = box.min.x == 0.0f && box.min.y == 0.0f && box.min.z == 0.0f &&
+                       box.max.x == 0.0f && box.max.y == 0.0f && box.max.z == 0.0f;
+    return !empty;
+}
 
+static float distanceSqToBox(const AABB& box, float x, float y, float z) {
+    const float dx = x < box.min.x ? box.min.x - x : (x > box.max.x ? x - box.max.x : 0.0f);
+    const float dy = y < box.min.y ? box.min.y - y : (y > box.max.y ? y - box.max.y : 0.0f);
+    const float dz = z < box.min.z ? box.min.z - z : (z > box.max.z ? z - box.max.z : 0.0f);
+    return dx * dx + dy * dy + dz * dz;
+}
+
+// The entity the game says the crosshair is on, or nullptr. Straight from the
+// level's stored hit result, exactly like the Crosshair module's indicator.
+static void* aimedEntity(void* localPlayer) {
+    if (!localPlayer || !s_levelGetHitResult || !s_hitResultGetEntity) return nullptr;
+
+    uintptr_t level = *(uintptr_t*)((uintptr_t)localPlayer + bedrocktools::sdk::offsets::Actor::mLevel);
+    if (level < 0x1000) return nullptr;
+
+    void* hit = s_levelGetHitResult((void*)level);
+    if (!hit || (uintptr_t)hit < 0x1000) return nullptr;
+
+    const int type = *(int*)((uintptr_t)hit + bedrocktools::sdk::offsets::HitResult::mType);
+    if (type != bedrocktools::sdk::offsets::HitResult::TypeEntity) return nullptr;
+
+    void* entity = s_hitResultGetEntity(hit);
+    if (!entity || entity == localPlayer) return nullptr;
+    return entity;
+}
+
+// Collects the actors to box from every source the current build provides.
+//
+// The nearby-actor scan used to be the only source, and when that one
+// signature does not resolve on a build the whole module draws nothing - the
+// failure the module kept being reported with. The level's actor manager is
+// queried as well (Tablist and the Debug Menu read the same list), and the
+// aimed entity is always kept so the crosshair indicator works even when both
+// lists come back empty.
+static void collectActors(void* localPlayer, float camX, float camY, float camZ,
+                          std::vector<void*>& out, size_t& managerCount, size_t& nearbyCount) {
+    out.clear();
+    managerCount = 0;
+    nearbyCount = 0;
+
+    auto append = [&](void* actor) {
+        if (!actor || actor == localPlayer) return;
+        if ((uintptr_t)actor < 0x1000) return;
+        for (void* existing : out) {
+            if (existing == actor) return;
+        }
+        const AABB box = getActorAABB(actor);
+        if (!isUsableBox(box)) return;
+        if (distanceSqToBox(box, camX, camY, camZ) > kActorRadius * kActorRadius) return;
+        out.push_back(actor);
+    };
+
+    // 1) The nearby-actor scan, exactly what the original module does.
+    if (s_actorFetchNearby) {
+        bedrocktools::sdk::Vec3 extent = {kActorRadius, kActorRadius, kActorRadius};
+        ActorVec actors = s_actorFetchNearby(localPlayer, &extent, 1);
+        if (actors.begin && actors.end) {
+            for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
+                if (it->mActor) ++nearbyCount;
+                append(it->mActor);
+            }
+        }
+    }
+
+    // 2) Nothing came back? Fall back to the level's actor manager, which is
+    // how Tablist and the Debug Menu enumerate entities. This is what keeps
+    // the module alive on a build where the nearby-actor signature does not
+    // resolve: instead of drawing nothing at all, every actor in the level is
+    // walked and the ones inside the radius are boxed.
+    if (out.empty() && s_getRuntimeActorList) {
+        uintptr_t level = *(uintptr_t*)((uintptr_t)localPlayer + bedrocktools::sdk::offsets::Actor::mLevel);
+        if (level >= 0x1000) {
+            uintptr_t manager = *(uintptr_t*)(level + bedrocktools::sdk::offsets::Level::mActorManager);
+            if (manager >= 0x1000) {
+                std::vector<void*> all = s_getRuntimeActorList((void*)manager);
+                managerCount = all.size();
+                for (void* actor : all) append(actor);
+            }
+        }
+    }
+}
 
 static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (_renderLevel_orig) {
@@ -379,15 +532,35 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 
     if (!g_hitboxMod || !g_hitboxMod->enabled) return;
     if (!g_localPlayerPtr) return;
-    if (!s_tessBegin || !s_tessColor || !s_tessVertex || !s_renderMesh) return;
+
+    // Reported once per state change: "the module does nothing" is otherwise
+    // impossible to tell apart from "nothing is on screen".
+    static int s_lastBail = -1;
+    auto bail = [](int reason, const char* message) {
+        (void)message; // only read by the Android log macro
+        if (s_lastBail == reason) return;
+        s_lastBail = reason;
+        HITBOX_LOG("Hitbox: skipped - %s", message);
+    };
+
+    if (!s_tessBegin || !s_tessColor || !s_tessVertex || !s_renderMesh) {
+        bail(1, "tessellator helpers unresolved");
+        return;
+    }
     if (!screenContext || (uintptr_t)screenContext < 0x1000) return;
 
     uintptr_t tessellatorPtr = *(uintptr_t*)((uintptr_t)screenContext + bedrocktools::sdk::offsets::ScreenContext::mTessellator);
-    if (!tessellatorPtr || tessellatorPtr < 0x1000) return;
+    if (!tessellatorPtr || tessellatorPtr < 0x1000) {
+        bail(2, "screen context has no tessellator");
+        return;
+    }
     void* tessellator = (void*)tessellatorPtr;
 
     uintptr_t lrpPtr = *(uintptr_t*)((uintptr_t)_this + bedrocktools::sdk::offsets::LevelRenderer::mLevelRendererPlayer);
-    if (!lrpPtr || lrpPtr < 0x1000) return;
+    if (!lrpPtr || lrpPtr < 0x1000) {
+        bail(3, "level renderer has no player renderer");
+        return;
+    }
 
     float camX = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
     float camY = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos + 4);
@@ -408,13 +581,19 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 
     ensureMaterials();
 
-    void* overlayMaterial = (void*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
+    void* overlayMaterial = embeddedOverlayMaterial(lrpPtr);
     void* matInner = s_matSelection ? (void*)&s_matSelection : overlayMaterial;
 
     // Prefer an opaque vertex-color fill so raising line thickness keeps
     // the chosen RGB solid instead of inheriting the overlay's alpha.
     void* matFill = s_matFill ? (void*)&s_matFill : matInner;
-    if (!matFill) matFill = overlayMaterial;
+
+    // Nothing usable to draw with: better an empty frame than handing the
+    // renderer a pointer that is not a material.
+    if (!matInner || !matFill) {
+        bail(4, "no material resolved (material group and embedded overlay both unusable)");
+        return;
+    }
 
     uintptr_t colorHolderPtr = *(uintptr_t*)((uintptr_t)screenContext + bedrocktools::sdk::offsets::ScreenContext::mColorHolder);
     if (!colorHolderPtr || colorHolderPtr < 0x1000) return;
@@ -565,39 +744,59 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         localAabb.max.x, localAabb.max.y, localAabb.max.z);
     const bool gameThirdPerson = s_perspectiveKnown ? (s_perspective != 0) : true;
 
-    ActorVec actors{};
-    if (s_actorFetchNearby) {
-        constexpr float kActorFetchRadius = 30.0f;
-        bedrocktools::sdk::Vec3 extent = {kActorFetchRadius, kActorFetchRadius, kActorFetchRadius};
-        actors = s_actorFetchNearby(g_localPlayerPtr, &extent, 1);
+    // Actors to box, from the level's actor manager and from the nearby-actor
+    // scan. Either one alone leaves the module empty on a build where its
+    // signature does not resolve, so both are used and the results merged.
+    static std::vector<void*> actors;
+    size_t managerCount = 0;
+    size_t nearbyCount = 0;
+    collectActors(g_localPlayerPtr, camX, camY, camZ, actors, managerCount, nearbyCount);
+
+    // The game's own answer for "what is under the crosshair" - the source the
+    // Crosshair module's indicator already relies on. It also keeps working
+    // when both actor lists come back empty.
+    void* aimed = aimedEntity(g_localPlayerPtr);
+    if (aimed) {
+        bool known = false;
+        for (void* actor : actors) {
+            if (actor == aimed) {
+                known = true;
+                break;
+            }
+        }
+        if (!known && isUsableBox(getActorAABB(aimed))) actors.push_back(aimed);
     }
 
     void* selectedEntity = nullptr;
-    if (g_hitboxMod->hitboxIndicator && actors.begin && actors.end) {
-        bedrocktools::sdk::Vec2 lookRot = getActorRotation(g_localPlayerPtr);
-        static constexpr float kPi = 3.14159265f;
-        static constexpr float kDegToRad = kPi / 180.0f;
-        const float yawR = lookRot.y * kDegToRad;
-        const float pitchR = lookRot.x * kDegToRad;
-        const float lookX = -sinf(yawR) * cosf(pitchR);
-        const float lookY = -sinf(pitchR);
-        const float lookZ = cosf(yawR) * cosf(pitchR);
+    if (g_hitboxMod->hitboxIndicator) {
+        if (aimed) {
+            selectedEntity = aimed;
+        } else if (!actors.empty()) {
+            bedrocktools::sdk::Vec2 lookRot = getActorRotation(g_localPlayerPtr);
+            static constexpr float kPi = 3.14159265f;
+            static constexpr float kDegToRad = kPi / 180.0f;
+            const float yawR = lookRot.y * kDegToRad;
+            const float pitchR = lookRot.x * kDegToRad;
+            const float lookX = -sinf(yawR) * cosf(pitchR);
+            const float lookY = -sinf(pitchR);
+            const float lookZ = cosf(yawR) * cosf(pitchR);
 
-        // Pick the nearest actor along the look ray, limited to a short arm's
-        // reach so a distant entity the crosshair happens to touch is not
-        // highlighted as if it were the one being aimed at.
-        constexpr float kSelectionRayLength = 3.0f;
+            // No hit result: fall back to the nearest actor along the look
+            // ray, limited to a short arm's reach so a distant entity the
+            // crosshair happens to touch is not highlighted as if it were the
+            // one being aimed at.
+            constexpr float kSelectionRayLength = 3.0f;
 
-        float bestDist = 1e9f;
-        for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
-            void* ent = it->mActor;
-            if (!ent || ent == g_localPlayerPtr) continue;
-            AABB aabb = getActorAABB(ent);
-            float hitDist = 0.0f;
-            if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, kSelectionRayLength, hitDist)) continue;
-            if (hitDist < bestDist) {
-                bestDist = hitDist;
-                selectedEntity = ent;
+            float bestDist = 1e9f;
+            for (void* ent : actors) {
+                if (!ent || ent == g_localPlayerPtr) continue;
+                AABB aabb = getActorAABB(ent);
+                float hitDist = 0.0f;
+                if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, kSelectionRayLength, hitDist)) continue;
+                if (hitDist < bestDist) {
+                    bestDist = hitDist;
+                    selectedEntity = ent;
+                }
             }
         }
     }
@@ -614,14 +813,14 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         // against a wall, which would otherwise hide the player's own hitbox.
         if (!skipOcclusion && region && isOccluded(region, camX, camY, camZ, aabb)) return;
 
-        uint32_t boxColor = groupColor;
+        uint32_t boxColor = drawableColor(groupColor);
         if (g_hitboxMod->hitboxIndicator) {
             // The indicator is active for the entity currently under the
             // crosshair. Every other nearby entity keeps the default
             // indicator color.
-            boxColor = g_hitboxMod->indicatorDefaultColor;
+            boxColor = drawableColor(g_hitboxMod->indicatorDefaultColor);
             if (ent == selectedEntity) {
-                boxColor = g_hitboxMod->indicatorActiveColor;
+                boxColor = drawableColor(g_hitboxMod->indicatorActiveColor);
             }
         }
 
@@ -641,7 +840,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             eyeLines.push_back({bedrocktools::sdk::Vec3{maxX, eyeHeight, minZ}, bedrocktools::sdk::Vec3{maxX, eyeHeight, maxZ}});
             eyeLines.push_back({bedrocktools::sdk::Vec3{maxX, eyeHeight, maxZ}, bedrocktools::sdk::Vec3{minX, eyeHeight, maxZ}});
             eyeLines.push_back({bedrocktools::sdk::Vec3{minX, eyeHeight, maxZ}, bedrocktools::sdk::Vec3{minX, eyeHeight, minZ}});
-            drawLines(eyeLines, g_hitboxMod->eyeLineColor);
+            drawLines(eyeLines, drawableColor(g_hitboxMod->eyeLineColor));
         }
 
         if (g_hitboxMod->showLookLine) {
@@ -666,38 +865,53 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 
             std::vector<std::pair<bedrocktools::sdk::Vec3, bedrocktools::sdk::Vec3>> lookLines;
             lookLines.push_back({start, end});
-            drawLines(lookLines, g_hitboxMod->lookLineColor);
+            drawLines(lookLines, drawableColor(g_hitboxMod->lookLineColor));
         }
     };
 
     if (hitbox::shouldDrawLocalHitbox(g_hitboxMod->show3rdPerson, gameThirdPerson, cameraLooksThirdPerson)) {
-        renderActor(g_localPlayerPtr, g_hitboxMod->hitboxColor, true);
+        renderActor(g_localPlayerPtr, drawableColor(g_hitboxMod->hitboxColor), true);
     }
 
-    if (actors.begin && actors.end) {
-        for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
-            void* ent = it->mActor;
-            if (!ent || ent == g_localPlayerPtr) continue;
+    size_t drawn = 0;
+    for (void* ent : actors) {
+        if (!ent || ent == g_localPlayerPtr) continue;
 
-            bool isPlayer = false;
-            if (s_actorIsPlayer) {
-                isPlayer = s_actorIsPlayer(ent);
-            }
+        // Invisible actors are boxed by default: this is a hitbox overlay, and
+        // on a build where the invisibility query mis-resolves, hiding them
+        // hides every box in the game.
+        if (g_hitboxMod->hideInvisible && s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
 
-            uint32_t groupColor = g_hitboxMod->hitboxColor;
-            if (isPlayer) {
-                if (!g_hitboxMod->showPlayers) continue;
-            } else if (hasCategory(ent, bedrocktools::sdk::offsets::ActorCategories::IsMob)) {
-                if (!g_hitboxMod->showEntities) continue;
-            } else {
-                if (!g_hitboxMod->showItems) continue;
-                groupColor = g_hitboxMod->showItemsColor;
-            }
-
-            if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
-
-            renderActor(ent, groupColor);
+        bool isPlayer = false;
+        if (s_actorIsPlayer) {
+            isPlayer = s_actorIsPlayer(ent);
         }
+
+        uint32_t groupColor = g_hitboxMod->hitboxColor;
+        if (isPlayer) {
+            if (!g_hitboxMod->showPlayers) continue;
+        } else if (hasCategory(ent, bedrocktools::sdk::offsets::ActorCategories::IsMob)) {
+            if (!g_hitboxMod->showEntities) continue;
+        } else {
+            if (!g_hitboxMod->showItems) continue;
+            groupColor = g_hitboxMod->showItemsColor;
+        }
+
+        renderActor(ent, groupColor);
+        ++drawn;
+    }
+
+    // One line per frame while the state is unchanged, so a log tells whether
+    // actors were found at all and whether they survived the filters.
+    static size_t s_lastManager = size_t(-1);
+    static size_t s_lastNearby = size_t(-1);
+    static size_t s_lastDrawn = size_t(-1);
+    if (managerCount != s_lastManager || nearbyCount != s_lastNearby || drawn != s_lastDrawn) {
+        s_lastManager = managerCount;
+        s_lastNearby = nearbyCount;
+        s_lastDrawn = drawn;
+        HITBOX_LOG("Hitbox: actor manager %zu (fallback), nearby %zu, boxes %zu (aimed %s)",
+                   managerCount, nearbyCount, drawn, aimed ? "yes" : "no");
     }
 
     colorHolder[0] = savedColor[0];
@@ -767,6 +981,22 @@ void HitboxModule::onInit() {
 
     uintptr_t afn = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorFetchNearbyActorsSorted);
     if (afn) s_actorFetchNearby = (Actor_fetchNearbyActorsSorted_t)afn;
+
+    // Actor enumeration and the crosshair hit result. Kept optional: the
+    // module uses every source that resolves and logs what it has.
+    uintptr_t aml = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorManagerList);
+    if (aml) s_getRuntimeActorList = (ActorManager_getRuntimeActorList_t)aml;
+
+    uintptr_t lhr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::LevelGetHitResult);
+    if (lhr) s_levelGetHitResult = (Level_getHitResult_t)lhr;
+
+    uintptr_t hrge = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::HitResultGetEntity);
+    if (hrge) s_hitResultGetEntity = (HitResult_getEntity_t)hrge;
+
+    HITBOX_LOG("Hitbox: init - tess %d, material group %d, actor manager %d, nearby %d, hit result %d",
+               s_tessVertex != nullptr, s_renderMaterialGroup != 0,
+               s_getRuntimeActorList != nullptr, s_actorFetchNearby != nullptr,
+               s_levelGetHitResult != nullptr && s_hitResultGetEntity != nullptr);
 
     uintptr_t isb = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::BlockSourceIsSolidBlockingBlock);
     if (isb) s_isSolidBlockingBlock = (BlockSource_isSolidBlockingBlock_t)isb;
@@ -842,6 +1072,7 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     // Older configs have no such key; the cull used to be hardcoded on, but
     // the default is now off so the overlay is guaranteed to draw.
     hideBehindWalls = j.value("hideBehindWalls", hideBehindWalls);
+    hideInvisible = j.value("hideInvisible", hideInvisible);
     auto parseColor = [&](const std::string& key, uint32_t& outColor) {
         if (!j.contains(key) || !j[key].is_string()) return;
         std::string hexStr = j[key].get<std::string>();
@@ -880,6 +1111,7 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["lineThickness"] = lineThickness;
     j["hitboxIndicator"] = hitboxIndicator;
     j["hideBehindWalls"] = hideBehindWalls;
+    j["hideInvisible"] = hideInvisible;
 
     // Colors are written the way every other module in the mod writes them:
     // "#RRGGBB". The launcher builds its color picker straight from this
