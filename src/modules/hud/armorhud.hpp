@@ -59,12 +59,13 @@ private:
     struct ConfigSnapshot {
         bedrocktools::armorhud::ArmorLayout layout{};
         bool showOffhand = true;
+        bool showMainhand = false;
         bool stackCount = true;
         bool durability = true;
         bool armorDurability = true;
         bool hideInContainer = true;
         bool slotBackground = true;
-        bool hotbarBackground;
+        bool hotbarBackground = true;
         std::uint32_t slotBgColor = 0x73000000u; // "#000000" at 45%
         float countTextSize = 12.0f;
         std::uint32_t countColor = 0xFFFFFFFFu;
@@ -82,6 +83,7 @@ private:
 
     mutable std::mutex m_configMutex;
     std::array<SlotRuntime, SlotCount> m_slots;
+    SlotRuntime m_mainhandRuntime; // the right hand, shown past the column's end
     std::atomic_int m_containerDepth{0};
 
     float hudPosX = 24.0f;
@@ -90,6 +92,7 @@ private:
     float m_slotGap = 4.0f;
     bool m_horizontal = false;
     bool m_showOffhand = true;
+    bool m_showMainhand = false;
     bool m_showStackCount = true;
     bool m_showDurability = true;
     bool m_showArmorDurability = true;
