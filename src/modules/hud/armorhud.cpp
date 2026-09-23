@@ -27,10 +27,13 @@ using layout::ArmorLayout;
 using decor::SlotRect;
 
 constexpr std::size_t SlotCount = ArmorModule::SlotCount;
+constexpr std::size_t MainhandIndex = SlotCount;      // the right hand, one past the column
+constexpr std::size_t SlotTotal = SlotCount + 1;      // armor column slots + the right hand
 constexpr const char* ArmorElementId = "bedrocktools.armorhud.column";
 
 struct EquipmentStacks {
     std::array<void*, SlotCount> stacks{};
+    void* mainhand = nullptr; // the right hand (the carried item)
 };
 
 // Hotbar cell geometry of the vanilla hotbar sprite: 20x22 GUI pixels per
@@ -153,13 +156,28 @@ void flushImages(void* context) {
     reinterpret_cast<Fn>(vtable[bedrocktools::sdk::offsets::VTable::MinecraftUIRenderContextFlushImages])(context, color, 1.0f, material);
 }
 
-// Helmet, chestplate, leggings, boots, offhand.
+// Helmet, chestplate, leggings, boots, offhand — and the right hand.
 EquipmentStacks getEquipmentColumn(void* player) {
     EquipmentStacks column;
     const huditems::EquipmentStacks equipment = huditems::getEquipmentStacks(player);
     for (std::size_t i = 0; i < layout::ArmorSlotCount; ++i) column.stacks[i] = equipment.armor[i];
     column.stacks[layout::OffhandIndex] = equipment.offhand;
+    column.mainhand = equipment.mainhand;
     return column;
+}
+
+// The right-hand slot hangs past the end of the five-slot column (or row),
+// computed here so the shared layout math stays a five-slot one.
+SlotRect mainhandRect(const ArmorLayout& layout) {
+    SlotRect rect = layout::slotRect(layout, layout::OffhandIndex);
+    if (layout.horizontal) rect.x += layout::slotAdvance(layout) + layout.gap;
+    else rect.y += rect.size + layout.gap;
+    return rect;
+}
+
+// Rect of one visible slot: the column's own slots, or the right hand.
+SlotRect slotOrMainhandRect(const ArmorLayout& layout, std::size_t index) {
+    return index < SlotCount ? layout::slotRect(layout, index) : mainhandRect(layout);
 }
 
 void renderListener(void* context, void* client, void* user) {
@@ -171,7 +189,8 @@ void renderListener(void* context, void* client, void* user) {
 
 ArmorModule::ArmorModule()
     : Module("Armor",
-             "Shows your armor pieces and offhand item on the HUD, with durability bars and numbers.") {
+             "Shows your armor pieces and your hand slots (offhand and right hand) on the HUD, "
+             "with durability bars and numbers.") {
 }
 
 ArmorModule::~ArmorModule() {
@@ -224,6 +243,7 @@ ArmorModule::ConfigSnapshot ArmorModule::snapshotConfig() const {
     ConfigSnapshot config;
     config.layout = armorLayout();
     config.showOffhand = m_showOffhand;
+    config.showMainhand = m_showMainhand;
     config.stackCount = m_showStackCount;
     config.durability = m_showDurability;
     config.armorDurability = m_showArmorDurability;
@@ -245,6 +265,7 @@ ArmorModule::ConfigSnapshot ArmorModule::snapshotConfig() const {
 
 void ArmorModule::clearRuntime() {
     for (auto& slot : m_slots) storeRuntime(slot, nullptr, nullptr, false);
+    storeRuntime(m_mainhandRuntime, nullptr, nullptr, false);
 }
 
 // Publishes what the render thread saw for one slot to onFrame(); a null
@@ -279,13 +300,20 @@ void ArmorModule::renderNative(void* context, void* client) {
 
     EquipmentStacks equipment = getEquipmentColumn(localPlayer);
     if (!config.showOffhand) equipment.stacks[layout::OffhandIndex] = nullptr;
+    if (!config.showMainhand) equipment.mainhand = nullptr;
 
-    std::array<void*, SlotCount> items{};
-    for (std::size_t i = 0; i < SlotCount; ++i) {
-        items[i] = huditems::stackItem(equipment.stacks[i]);
+    // Helmet, chestplate, leggings, boots, offhand — then the right hand.
+    std::array<void*, SlotTotal> allStacks{};
+    for (std::size_t i = 0; i < SlotCount; ++i) allStacks[i] = equipment.stacks[i];
+    allStacks[MainhandIndex] = equipment.mainhand;
+
+    std::array<void*, SlotTotal> items{};
+    for (std::size_t i = 0; i < SlotTotal; ++i) {
+        items[i] = huditems::stackItem(allStacks[i]);
         const bool wantDurability =
             config.durability || (config.armorDurability && i < layout::OffhandIndex);
-        storeRuntime(m_slots[i], equipment.stacks[i], items[i], wantDurability);
+        SlotRuntime& runtime = i < SlotCount ? m_slots[i] : m_mainhandRuntime;
+        storeRuntime(runtime, allStacks[i], items[i], wantDurability);
     }
 
     if (!painter.ready()) return;
@@ -294,9 +322,10 @@ void ArmorModule::renderNative(void* context, void* client) {
     // item always stays on top of its background. Cells cover empty slots
     // too, keeping the element's shape steady while equipment changes.
     if (config.slotBackground) {
-        for (std::size_t i = 0; i < SlotCount; ++i) {
+        for (std::size_t i = 0; i < SlotTotal; ++i) {
             if (!config.showOffhand && i == layout::OffhandIndex) continue;
-            const SlotRect rect = layout::slotRect(config.layout, i);
+            if (!config.showMainhand && i == MainhandIndex) continue;
+            const SlotRect rect = slotOrMainhandRect(config.layout, i);
             painter.fillRect(rect.x, rect.y, rect.size, rect.size, config.slotBgColor);
         }
     }
@@ -308,11 +337,12 @@ void ArmorModule::renderNative(void* context, void* client) {
         if (hotbarTexture.clientTexture) {
             const huditems::HudMapping& mapping = painter.mapping();
             bool renderedBackground = false;
-            for (std::size_t i = 0; i < SlotCount; ++i) {
+            for (std::size_t i = 0; i < SlotTotal; ++i) {
                 if (!config.showOffhand && i == layout::OffhandIndex) continue;
+                if (!config.showMainhand && i == MainhandIndex) continue;
                 if (!items[i]) continue;
 
-                const SlotRect rect = layout::slotRect(config.layout, i);
+                const SlotRect rect = slotOrMainhandRect(config.layout, i);
                 const float width = rect.size * mapping.scaleX;
                 const float height = rect.size * mapping.scaleY;
                 const float iconSize = std::max(1.0f, std::min(width, height));
@@ -338,20 +368,20 @@ void ArmorModule::renderNative(void* context, void* client) {
     // fix pass first, otherwise their tinted pixels come out transparent.
     if (painter.supportsOpacityFix()) {
         painter.beginOpacityFixPass();
-        for (std::size_t i = 0; i < SlotCount; ++i) {
-            if (!items[i] || !huditems::needsTextureOpacityPass(equipment.stacks[i])) continue;
-            const SlotRect rect = layout::slotRect(config.layout, i);
-            painter.drawOpacityFix(equipment.stacks[i], items[i], rect.x, rect.y, rect.size);
+        for (std::size_t i = 0; i < SlotTotal; ++i) {
+            if (!items[i] || !huditems::needsTextureOpacityPass(allStacks[i])) continue;
+            const SlotRect rect = slotOrMainhandRect(config.layout, i);
+            painter.drawOpacityFix(allStacks[i], items[i], rect.x, rect.y, rect.size);
         }
         painter.endOpacityFixPass();
     }
 
     // Only occupied slots are submitted to the ItemRenderer; empty ones cost
     // nothing.
-    for (std::size_t i = 0; i < SlotCount; ++i) {
+    for (std::size_t i = 0; i < SlotTotal; ++i) {
         if (!items[i]) continue;
-        const SlotRect rect = layout::slotRect(config.layout, i);
-        painter.draw(equipment.stacks[i], items[i], rect.x, rect.y, rect.size);
+        const SlotRect rect = slotOrMainhandRect(config.layout, i);
+        painter.draw(allStacks[i], items[i], rect.x, rect.y, rect.size);
     }
 }
 
@@ -373,6 +403,16 @@ void ArmorModule::onFrame() {
         element.y = config.layout.y;
         element.width = std::max(1.0f, layout::columnWidth(config.layout));
         element.height = std::max(1.0f, layout::columnHeight(config.layout));
+        if (config.showMainhand) {
+            // Grow the box to cover the right-hand slot past the column's end.
+            const SlotRect hand = mainhandRect(config.layout);
+            const float x2 = std::max(element.x + element.width, hand.x + hand.size);
+            const float y2 = std::max(element.y + element.height, hand.y + hand.size);
+            element.x = std::min(element.x, hand.x);
+            element.y = std::min(element.y, hand.y);
+            element.width = x2 - element.x;
+            element.height = y2 - element.y;
+        }
         element.gridSize = config.gridSize;
         element.snapThreshold = config.snapThreshold;
         element.gridGap = config.gridGap;
@@ -447,6 +487,7 @@ void ArmorModule::onFrame() {
         for (std::size_t i = 0; i < SlotCount; ++i) {
             decorate(m_slots[i], layout::slotRect(config.layout, i), i < layout::OffhandIndex);
         }
+        decorate(m_mainhandRuntime, mainhandRect(config.layout), false);
     }
     pl::modmenu::submitDrawCommands(moduleId, commands);
 }
@@ -512,6 +553,7 @@ void ArmorModule::onMenuRegistered() {
         features.choiceStyle = ConfigChoiceStyleV2::Checklist;
         features.options = {
             {"offhand", "Offhand Slot", {}, "m_showOffhand"},
+            {"mainhand", "Right Hand", {}, "m_showMainhand"},
             {"count", "Stack Count", {}, "m_showStackCount"},
             {"durability", "Durability Bar", {}, "m_showDurability"}
         };
@@ -626,7 +668,8 @@ nlohmann::json ArmorModule::migratedFromInventoryHud(const nlohmann::json& inven
     for (const char* key : {"m_slotSize", "m_slotGap", "m_countTextSize", "m_gridSize", "m_gridGap",
                             "m_snapThreshold", "m_countColor", "m_showStackCount", "m_showDurability",
                             "m_showArmorDurability", "m_hideInContainer", "m_snapToGrid",
-                            "m_snapToElements", "m_snapToScreenCenter", "m_hotbarBackground"}) {
+                            "m_snapToElements", "m_snapToScreenCenter", "m_hotbarBackground",
+                            "m_showMainhand"}) {
         if (inventoryHud.contains(key)) migrated[key] = inventoryHud[key];
     }
     return migrated;
@@ -642,6 +685,7 @@ void ArmorModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_slotGap")) m_slotGap = std::clamp(j["m_slotGap"].get<float>(), 0.0f, 50.0f);
     if (j.contains("m_horizontal")) m_horizontal = j["m_horizontal"].get<bool>();
     if (j.contains("m_showOffhand")) m_showOffhand = j["m_showOffhand"].get<bool>();
+    if (j.contains("m_showMainhand")) m_showMainhand = j["m_showMainhand"].get<bool>();
     if (j.contains("m_showStackCount")) m_showStackCount = j["m_showStackCount"].get<bool>();
     if (j.contains("m_showDurability")) m_showDurability = j["m_showDurability"].get<bool>();
     if (j.contains("m_showArmorDurability")) m_showArmorDurability = j["m_showArmorDurability"].get<bool>();
@@ -670,6 +714,7 @@ void ArmorModule::saveConfig(nlohmann::json& j) {
     j["m_slotGap"] = m_slotGap;
     j["m_horizontal"] = m_horizontal;
     j["m_showOffhand"] = m_showOffhand;
+    j["m_showMainhand"] = m_showMainhand;
     j["m_showStackCount"] = m_showStackCount;
     j["m_showDurability"] = m_showDurability;
     j["m_showArmorDurability"] = m_showArmorDurability;
