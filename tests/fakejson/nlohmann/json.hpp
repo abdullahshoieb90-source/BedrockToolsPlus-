@@ -1,8 +1,9 @@
 // Host-side fake of <nlohmann/json.hpp> for tests that only need the tiny
-// slice of the API the modules use (contains / operator[] / get<T> /
-// scalar assignment). Prefer the real nlohmann_json headers from the xmake
-// package cache when they are available (see scripts/run_tests.sh); this
-// fake exists so those tests can still run standalone.
+// slice of the API the modules and the mod-menu builder use (contains / items /
+// operator[] / get<T> / scalar assignment). Prefer the real nlohmann_json
+// headers from the xmake package cache when they are available (see
+// scripts/run_tests.sh); this fake exists so those tests can still run
+// standalone.
 #pragma once
 
 #include <map>
@@ -21,6 +22,11 @@ public:
         return m_children.find(key) != m_children.end();
     }
 
+    // Real nlohmann_json returns a proxy whose iterator yields key/value pairs;
+    // the backing map already does, which is all the callers here need.
+    std::map<std::string, json>& items() { return m_children; }
+    const std::map<std::string, json>& items() const { return m_children; }
+
     json& operator[](const std::string& key) { return m_children[key]; }
 
     const json& operator[](const std::string& key) const {
@@ -31,6 +37,8 @@ public:
 
     bool is_string() const { return m_type == Type::String; }
     bool is_number_integer() const { return m_type == Type::Integer; }
+    bool is_number_float() const { return m_type == Type::Float; }
+    bool is_number() const { return is_number_integer() || is_number_float(); }
     bool is_boolean() const { return m_type == Type::Boolean; }
 
     template <class T>
@@ -50,6 +58,9 @@ public:
     }
 
     json& operator=(int value) { m_type = Type::Integer; m_integer = value; m_float = static_cast<double>(value); return *this; }
+    // ModuleMenu.cpp writes strtol() results back, which are long; without an
+    // exact overload the assignment is ambiguous against the float ones.
+    json& operator=(long value) { m_type = Type::Integer; m_integer = value; m_float = static_cast<double>(value); return *this; }
     json& operator=(bool value) { m_type = Type::Boolean; m_integer = value ? 1 : 0; m_float = value ? 1.0 : 0.0; return *this; }
     json& operator=(float value) { m_type = Type::Float; m_float = value; m_integer = static_cast<long long>(value); return *this; }
     json& operator=(double value) { m_type = Type::Float; m_float = value; m_integer = static_cast<long long>(value); return *this; }

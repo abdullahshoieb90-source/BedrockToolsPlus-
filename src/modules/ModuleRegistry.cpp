@@ -2,6 +2,9 @@
 #include "misc/hitsound.hpp"
 #include "hud/effectdisplay.hpp"
 #include "visual/hitbox.hpp"
+#include "visual/chunkborder.hpp"
+#include "visual/breadcrumbs.hpp"
+#include "visual/lightoverlay.hpp"
 #include "visual/blockoutline.hpp"
 #include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
@@ -69,6 +72,9 @@ void registerAllModules() {
     registry.emplace<HitSoundModule>();
     registry.emplace<EffectDisplayModule>();
     registry.emplace<HitboxModule>();
+    registry.emplace<ChunkBorderModule>();
+    registry.emplace<BreadcrumbsModule>();
+    registry.emplace<LightOverlayModule>();
     registry.emplace<BlockOutlineModule>();
     registry.emplace<CustomCapesModule>();
     registry.emplace<CommentKey>();

@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,6 +29,55 @@ enum class ConfigType {
     Text,
     Button,
 };
+
+// Mirrors the real ConfigEntry/ModuleInfo so ModuleMenu.cpp — which turns a
+// module's saved config into menu controls — compiles and runs on the host.
+// registerModule() records what it was handed so tests can inspect the menu the
+// launcher would have shown.
+struct ConfigEntry {
+    std::string key;
+    std::string displayName;
+    ConfigType type{};
+    std::string defaultValue;
+    std::string minValue;
+    std::string maxValue;
+    std::string dependsOn;
+};
+
+struct ModuleInfo {
+    std::string moduleId;
+    std::string displayName;
+    std::string description;
+    std::string modId;
+    bool defaultEnabled{};
+    bool hideInHudEditor{};
+    std::vector<ConfigEntry> configs;
+    std::function<void(std::string_view moduleId, bool enabled)> onToggle;
+    std::function<void(std::string_view moduleId, std::string_view key,
+                       std::string_view value)>
+        onConfigChanged;
+    std::function<void(std::string_view moduleId, std::string_view key, bool isDown)> onKeybind;
+};
+
+inline std::vector<ModuleInfo>& registeredModules() {
+    static std::vector<ModuleInfo> modules;
+    return modules;
+}
+
+inline bool registerModule(const ModuleInfo& info) {
+    registeredModules().push_back(info);
+    return true;
+}
+
+inline void unregisterModule(std::string_view moduleId) {
+    auto& modules = registeredModules();
+    for (auto it = modules.begin(); it != modules.end(); ++it) {
+        if (it->moduleId == moduleId) {
+            modules.erase(it);
+            return;
+        }
+    }
+}
 
 enum class DrawCommandType {
     Text,
@@ -114,5 +164,68 @@ private:
 };
 
 inline void unregisterButton(std::string_view) {}
+
+// Fluent helper mirroring the real preloader's ModuleBuilder.
+class ModuleBuilder {
+public:
+    ModuleBuilder(std::string moduleId, std::string displayName) {
+        mInfo.moduleId = std::move(moduleId);
+        mInfo.displayName = std::move(displayName);
+    }
+
+    ModuleBuilder& description(std::string value) {
+        mInfo.description = std::move(value);
+        return *this;
+    }
+
+    ModuleBuilder& modId(std::string value) {
+        mInfo.modId = std::move(value);
+        return *this;
+    }
+
+    ModuleBuilder& defaultEnabled(bool value) {
+        mInfo.defaultEnabled = value;
+        return *this;
+    }
+
+    ModuleBuilder& hideInHudEditor(bool value = true) {
+        mInfo.hideInHudEditor = value;
+        return *this;
+    }
+
+    ModuleBuilder& onToggle(std::function<void(std::string_view, bool)> callback) {
+        mInfo.onToggle = std::move(callback);
+        return *this;
+    }
+
+    ModuleBuilder& onConfigChanged(
+        std::function<void(std::string_view, std::string_view, std::string_view)> callback) {
+        mInfo.onConfigChanged = std::move(callback);
+        return *this;
+    }
+
+    ModuleBuilder& onKeybind(std::function<void(std::string_view, std::string_view, bool)> callback) {
+        mInfo.onKeybind = std::move(callback);
+        return *this;
+    }
+
+    ModuleBuilder& config(std::string key, std::string displayName, ConfigType type,
+                          std::string defaultValue = {}, std::string minValue = {},
+                          std::string maxValue = {}, std::string dependsOn = {}) {
+        mInfo.configs.push_back(ConfigEntry{std::move(key),
+                                            std::move(displayName),
+                                            type,
+                                            std::move(defaultValue),
+                                            std::move(minValue),
+                                            std::move(maxValue),
+                                            std::move(dependsOn)});
+        return *this;
+    }
+
+    [[nodiscard]] bool registerModule() const { return pl::modmenu::registerModule(mInfo); }
+
+private:
+    ModuleInfo mInfo;
+};
 
 } // namespace pl::modmenu
