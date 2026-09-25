@@ -9,6 +9,12 @@
 #include <cstring>
 #include <vector>
 #include <utility>
+#include <atomic>
+#include <cstdio>
+#include <mutex>
+#include <span>
+#include <pl/ModMenu.hpp>
+#include <bedrocktools/events/ClientInstanceUpdateEvent.hpp>
 
 typedef void (*Tessellator_begin_t)(void* tessellator, void* debugCallback, int primitiveMode, int vertexCount, int noIndices);
 typedef void (*Tessellator_color_t)(void* tessellator, float r, float g, float b, float a);
@@ -122,6 +128,28 @@ static uintptr_t    s_renderMaterialGroup = 0;
 static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
 
 static bedrocktools::sdk::Vec3 g_playerPos = {0.f, 0.f, 0.f};
+
+static void* g_clientInstance = nullptr;
+typedef void* (*ClientInstanceGetLocalPlayer_t)(void* clientInstance);
+static ClientInstanceGetLocalPlayer_t s_getLocalPlayer = nullptr;
+
+// Live diagnostics drawn on the HUD while the module is enabled: silent
+// pipeline failures (unresolved signatures, dead offsets, empty actor lists)
+// become visible in-game instead of "nothing shows up".
+// stage bits: 0 fns, 1 tessPtr, 2 lrp, 3 mat, 4 colorHolder, 5 actorList,
+//             6 manager, 7 player
+namespace hbd {
+static std::atomic<uint32_t> frames{0};
+static std::atomic<uint32_t> ticks{0};
+static std::atomic<uint32_t> scanned{0};
+static std::atomic<uint32_t> drawn{0};
+static std::atomic<uint32_t> aabbOk{0};
+static std::atomic<uint32_t> stage{0};
+static std::atomic<uint32_t> catSample{0};
+static std::mutex sampleMutex;
+static std::string sample;
+}
+
 static void* g_localPlayerPtr = nullptr;
 
 struct AABB {
@@ -132,6 +160,8 @@ struct AABB {
 static void s_hitboxTickCallback(void* _this) {
     if (!g_hitboxMod || !g_hitboxMod->enabled) return;
     g_localPlayerPtr = _this;
+    hbd::ticks.fetch_add(1, std::memory_order_relaxed);
+    hbd::stage.fetch_or(1u << 7, std::memory_order_relaxed);
     uintptr_t svc = *(uintptr_t*)((uintptr_t)_this + bedrocktools::sdk::offsets::Actor::mStateVectorComponent);
     if (svc != 0) {
         g_playerPos = *(bedrocktools::sdk::Vec3*)svc;
@@ -203,28 +233,37 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     }
 
     if (!g_hitboxMod || !g_hitboxMod->enabled) return;
+    hbd::frames.fetch_add(1, std::memory_order_relaxed);
+    if (!g_localPlayerPtr && s_getLocalPlayer && g_clientInstance) {
+        g_localPlayerPtr = s_getLocalPlayer(g_clientInstance);
+    }
     if (!g_localPlayerPtr) return;
     if (!s_tessBegin || !s_tessColor || !s_tessVertex || !s_renderMesh) return;
+    hbd::stage.fetch_or(1u << 0, std::memory_order_relaxed);
     if (!screenContext || (uintptr_t)screenContext < 0x1000) return;
 
     uintptr_t tessellatorPtr = *(uintptr_t*)((uintptr_t)screenContext + bedrocktools::sdk::offsets::ScreenContext::mTessellator);
     if (!tessellatorPtr || tessellatorPtr < 0x1000) return;
     void* tessellator = (void*)tessellatorPtr;
+    hbd::stage.fetch_or(1u << 1, std::memory_order_relaxed);
 
     uintptr_t lrpPtr = *(uintptr_t*)((uintptr_t)_this + bedrocktools::sdk::offsets::LevelRenderer::mLevelRendererPlayer);
     if (!lrpPtr || lrpPtr < 0x1000) return;
+    hbd::stage.fetch_or(1u << 2, std::memory_order_relaxed);
 
     float camX = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
     float camY = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos + 4);
     float camZ = *(float*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos + 8);
 
     ensureMaterials();
+    if (s_matSelection) hbd::stage.fetch_or(1u << 3, std::memory_order_relaxed);
 
     void* matInner = s_matSelection ? (void*)&s_matSelection
                                     : (void*)(lrpPtr + bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
 
     uintptr_t colorHolderPtr = *(uintptr_t*)((uintptr_t)screenContext + bedrocktools::sdk::offsets::ScreenContext::mColorHolder);
     if (!colorHolderPtr || colorHolderPtr < 0x1000) return;
+    hbd::stage.fetch_or(1u << 4, std::memory_order_relaxed);
     float* colorHolder = (float*)colorHolderPtr;
 
     float savedColor[4] = { colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3] };
@@ -289,7 +328,18 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     auto renderActor = [&](void* ent) {
         AABB aabb = getActorAABB(ent);
         if (aabb.min.x == 0.f && aabb.min.y == 0.f && aabb.min.z == 0.f &&
-            aabb.max.x == 0.f && aabb.max.y == 0.f && aabb.max.z == 0.f) return;
+            aabb.max.x == 0.f && aabb.max.y == 0.f && aabb.max.z == 0.f) {
+            // The AABB component read failed (or the actor has none): fall
+            // back to a standard 0.6x1.8 box around the position so the
+            // module keeps working.
+            bedrocktools::sdk::Vec3 p = getActorPos(ent);
+            if (p.x == 0.f && p.y == 0.f && p.z == 0.f) return;
+            aabb.min = {p.x - 0.3f, p.y, p.z - 0.3f};
+            aabb.max = {p.x + 0.3f, p.y + 1.8f, p.z + 0.3f};
+        } else {
+            hbd::aabbOk.fetch_add(1, std::memory_order_relaxed);
+        }
+        hbd::drawn.fetch_add(1, std::memory_order_relaxed);
 
         drawBox(aabb, g_hitboxMod->hitboxColor);
 
@@ -346,7 +396,23 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             ? *(void**)(levelPtr + bedrocktools::sdk::offsets::Level::mActorManager)
             : nullptr;
         if (actorManager) {
+            hbd::stage.fetch_or(1u << 6, std::memory_order_relaxed);
             std::vector<void*> actors = s_getRuntimeActorList(actorManager);
+            hbd::scanned.store((uint32_t)actors.size(), std::memory_order_relaxed);
+            if (!actors.empty()) {
+                void* probe = actors.front();
+                bedrocktools::sdk::Vec3 sp = getActorPos(probe);
+                AABB sb = getActorAABB(probe);
+                uint32_t cat = *(uint32_t*)((uintptr_t)probe + bedrocktools::sdk::offsets::Actor::mCategories);
+                hbd::catSample.store(cat, std::memory_order_relaxed);
+                char buf[160];
+                snprintf(buf, sizeof(buf), "s=%.1f,%.1f,%.1f b=%.2gx%.2gx%.2g",
+                         (double)sp.x, (double)sp.y, (double)sp.z,
+                         (double)(sb.max.x - sb.min.x), (double)(sb.max.y - sb.min.y),
+                         (double)(sb.max.z - sb.min.z));
+                std::lock_guard<std::mutex> hbdLock(hbd::sampleMutex);
+                hbd::sample = buf;
+            }
             for (void* ent : actors) {
                 if (!ent || ent == g_localPlayerPtr) continue;
 
@@ -394,48 +460,65 @@ HitboxModule::~HitboxModule() {
     if (g_hitboxMod == this) g_hitboxMod = nullptr;
 }
 
-void HitboxModule::onInit() {
-    uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderLevel);
-    if (addr != 0) {
-        m_patchTarget = (void*)addr;
+static void resolveHitboxFunctions() {
+    if (!s_getLocalPlayer) {
+        uintptr_t gp = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ClientInstanceGetLocalPlayer);
+        if (gp) s_getLocalPlayer = (ClientInstanceGetLocalPlayer_t)gp;
     }
-
-    uintptr_t tb = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorBegin);
-    if (tb) { m_tessBeginAddr = (void*)tb; s_tessBegin = (Tessellator_begin_t)tb; }
-
-    uintptr_t tc = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorColor);
-    if (tc) { m_tessColorAddr = (void*)tc; s_tessColor = (Tessellator_color_t)tc; }
-
-    uintptr_t tv = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorVertex);
-    if (tv) { m_tessVertexAddr = (void*)tv; s_tessVertex = (Tessellator_vertex_t)tv; }
-
-    uintptr_t rm = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MeshHelpersRenderMeshImmediately2);
-    if (rm) {
-        s_renderMesh = (MeshHelpers_renderMeshImmediately_t)rm;
-    } else {
-        uintptr_t rm5 = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MeshHelpersRenderMeshImmediately);
-        if (rm5) s_renderMesh = (MeshHelpers_renderMeshImmediately_t)rm5;
+    if (!s_tessBegin) {
+        uintptr_t tb = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorBegin);
+        if (tb) s_tessBegin = (Tessellator_begin_t)tb;
     }
-
-    uintptr_t rmg = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderMaterialGroupCommon);
-    if (rmg) {
-        m_renderMaterialGroupAddr = (void*)rmg;
-        uintptr_t groupAddr = resolveADRP(reinterpret_cast<uint32_t*>(rmg), 2, 0);
-        if (groupAddr) {
-            s_renderMaterialGroup = groupAddr + bedrocktools::sdk::offsets::MaterialGroup::mRenderMaterialGroupOffset;
+    if (!s_tessColor) {
+        uintptr_t tc = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorColor);
+        if (tc) s_tessColor = (Tessellator_color_t)tc;
+    }
+    if (!s_tessVertex) {
+        uintptr_t tv = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::TessellatorVertex);
+        if (tv) s_tessVertex = (Tessellator_vertex_t)tv;
+    }
+    if (!s_renderMesh) {
+        uintptr_t rm = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MeshHelpersRenderMeshImmediately2);
+        if (rm) {
+            s_renderMesh = (MeshHelpers_renderMeshImmediately_t)rm;
+        } else {
+            uintptr_t rm5 = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::MeshHelpersRenderMeshImmediately);
+            if (rm5) s_renderMesh = (MeshHelpers_renderMeshImmediately_t)rm5;
         }
     }
+    if (!s_renderMaterialGroup) {
+        uintptr_t rmg = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderMaterialGroupCommon);
+        if (rmg) {
+            uintptr_t groupAddr = resolveADRP(reinterpret_cast<uint32_t*>(rmg), 2, 0);
+            if (groupAddr) {
+                s_renderMaterialGroup = groupAddr + bedrocktools::sdk::offsets::MaterialGroup::mRenderMaterialGroupOffset;
+            }
+        }
+    }
+    if (!s_actorIsPlayer) {
+        uintptr_t aip = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorIsPlayer);
+        if (aip) s_actorIsPlayer = (Actor_isPlayer_t)aip;
+    }
+    if (!s_actorIsInvisible) {
+        uintptr_t aii = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorIsInvisible);
+        if (aii) s_actorIsInvisible = (Actor_isInvisible_t)aii;
+    }
+    if (!s_getRuntimeActorList) {
+        uintptr_t aml = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorManagerList);
+        if (aml) {
+            s_getRuntimeActorList = (GetRuntimeActorList_t)aml;
+            hbd::stage.fetch_or(1u << 5, std::memory_order_relaxed);
+        }
+    }
+}
 
-    uintptr_t aip = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorIsPlayer);
-    if (aip) s_actorIsPlayer = (Actor_isPlayer_t)aip;
-
-    uintptr_t aii = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorIsInvisible);
-    if (aii) s_actorIsInvisible = (Actor_isInvisible_t)aii;
-
-    uintptr_t aml = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorManagerList);
-    if (aml) s_getRuntimeActorList = (GetRuntimeActorList_t)aml;
+void HitboxModule::onInit() {
+    resolveHitboxFunctions();
 
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>([](auto& event) { s_hitboxTickCallback(event.player); });
+    bedrocktools::events::bus().subscribe<bedrocktools::events::ClientInstanceUpdateEvent>([](auto& event) {
+        g_clientInstance = (void*)event.clientInstance;
+    });
 }
 
 void HitboxModule::applyPatch() {
@@ -452,10 +535,58 @@ void HitboxModule::applyPatch() {
 }
 
 void HitboxModule::onEnable() {
+    resolveHitboxFunctions();
     applyPatch();
 }
 
 void HitboxModule::onDisable() {
+}
+
+void HitboxModule::onFrame() {
+    using pl::modmenu::DrawCommand;
+    using pl::modmenu::DrawCommandType;
+
+    char l1[160], l2[160], l3[160];
+    uint32_t st = hbd::stage.load(std::memory_order_relaxed);
+    uint32_t fn = (s_tessBegin ? 1u : 0u) | (s_tessColor ? 2u : 0u) |
+                  (s_tessVertex ? 4u : 0u) | (s_renderMesh ? 8u : 0u);
+    snprintf(l1, sizeof(l1), "HB f=%u t=%u p=%u fn=%x st=%02x",
+             hbd::frames.load(std::memory_order_relaxed),
+             hbd::ticks.load(std::memory_order_relaxed),
+             (st >> 7) & 1u, fn, st & 0x7Fu);
+    snprintf(l2, sizeof(l2), "scan=%u draw=%u aabb=%u cat=%08x",
+             hbd::scanned.load(std::memory_order_relaxed),
+             hbd::drawn.load(std::memory_order_relaxed),
+             hbd::aabbOk.load(std::memory_order_relaxed),
+             hbd::catSample.load(std::memory_order_relaxed));
+    {
+        std::lock_guard<std::mutex> lk(hbd::sampleMutex);
+        snprintf(l3, sizeof(l3), "%s", hbd::sample.empty() ? "s=-" : hbd::sample.c_str());
+    }
+
+    std::vector<DrawCommand> cmds;
+    DrawCommand bg{};
+    bg.type = DrawCommandType::RectFilled;
+    bg.x = 5.f;
+    bg.y = 25.f;
+    bg.w = 330.f;
+    bg.h = 56.f;
+    bg.color = 0xA0000000u;
+    cmds.push_back(bg);
+
+    const char* lines[3] = {l1, l2, l3};
+    for (int i = 0; i < 3; ++i) {
+        DrawCommand t{};
+        t.type = DrawCommandType::Text;
+        t.x = 8.f;
+        t.y = 28.f + (float)i * 17.f;
+        t.size = 13.f;
+        t.color = 0xFFFFFF00u;
+        t.fontId = "minecraft";
+        t.text = lines[i];
+        cmds.push_back(t);
+    }
+    pl::modmenu::submitDrawCommands(moduleId, cmds);
 }
 
 void HitboxModule::loadConfig(const nlohmann::json& j) {
