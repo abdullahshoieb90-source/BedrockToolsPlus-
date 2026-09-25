@@ -41,8 +41,7 @@ inline constexpr std::size_t mPreviousPosition = 0xC;
 }
 
 // Bitmask values for the actor category flags stored in Actor::mCategories,
-// in the order of the ActorCategory enum of the 1.21+ decompile. The Hitbox
-// module relies on IsMob (1 << 1) being the "mob" bit.
+// in the order of the ActorCategory enum of the 1.21+ decompile.
 namespace ActorCategories {
 inline constexpr std::uint32_t IsPlayer             = 1u << 0;
 inline constexpr std::uint32_t IsMob                = 1u << 1;

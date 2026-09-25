@@ -10,7 +10,7 @@
 //     configs keep resolving to the same shape
 //   * save/load round-trips every setting, including the style radio format
 //   * the outline pass is drawn first (dark, thicker) and RGB animates
-//   * the hit indicator recolors a custom crosshair without Hitbox enabled
+//   * the hit indicator recolors a custom crosshair
 //   * Vanilla + indicator falls back to an overlay when tinting is impossible
 //   * the show-in-third-person option suppresses/restores third-person draw
 //
@@ -507,7 +507,7 @@ int main() {
     check(animated, "rgb hue animates over time");
 
     // Hit indicator: lives entirely in the Crosshair module. Lighting it
-    // must recolor the custom overlay without any Hitbox module present.
+    // must recolor the custom overlay.
     g_lastCursorRenderUs.store(0, std::memory_order_relaxed);
     g_aimedEntityInRange.store(false, std::memory_order_relaxed);
     g_aimRefreshTimeUs.store(0, std::memory_order_relaxed);
@@ -529,7 +529,7 @@ int main() {
     g_aimRefreshTimeUs.store(nowUs(), std::memory_order_relaxed);
     cursorRenderHook(nullptr, nullptr, nullptr, nullptr);
     mod3.onFrame();
-    check(!g_lastCmds.empty(), "indicator draws without Hitbox module");
+    check(!g_lastCmds.empty(), "aimed indicator draws");
     check((g_lastCmds.back().color & 0x00FFFFFF) == 0xFF3300, "aimed indicator uses indicator color");
     check(indicatorLit(), "indicatorLit is true while the aim flag is fresh");
 

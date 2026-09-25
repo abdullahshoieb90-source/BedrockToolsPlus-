@@ -97,9 +97,7 @@ public:
     // so the back-mounted wings would overlap/clip the view; the module only
     // draws its wings when this returns true. Testing the box rather than a
     // fixed eye height keeps this correct while sneaking/swimming, where the
-    // eye drops but the camera stays inside the box. Mirrors the Hitbox
-    // module's convention of not rendering the player's own geometry in
-    // first-person.
+    // eye drops but the camera stays inside the box.
     static bool isThirdPersonCamera(float camX, float camY, float camZ,
                                     float aabbMinX, float aabbMinY, float aabbMinZ,
                                     float aabbMaxX, float aabbMaxY, float aabbMaxZ);

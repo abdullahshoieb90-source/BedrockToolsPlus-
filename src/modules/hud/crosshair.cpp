@@ -672,7 +672,7 @@ void CrosshairModule::onInit() {
 
     // Observe the camera perspective so the "Show In Third Person" option
     // can suppress the custom crosshair while in third/back or third/front
-    // view. The hook chains safely with View Model and Hitbox, which hook
+    // view. The hook chains safely with View Model, which hooks
     // the same signature.
     if (!m_perspectiveHooked) {
         uintptr_t perspective = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::GetPerspective);

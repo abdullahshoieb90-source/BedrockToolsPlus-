@@ -32,7 +32,7 @@ namespace {
 using namespace bedrocktools::sdk::offsets;
 
 // ---------------------------------------------------------------------------
-// RenderLevel hook plumbing (same pattern as Hitbox/Breadcrumbs)
+// RenderLevel hook plumbing (same pattern as Breadcrumbs)
 // ---------------------------------------------------------------------------
 
 typedef void (*Tessellator_begin_t)(void* tessellator, void* debugCallback, int primitiveMode, int vertexCount, int noIndices);
@@ -469,8 +469,7 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
 
     // First-person: the camera sits inside the player's head (inside the AABB),
     // so the back-mounted wings overlap/clip the view. Only draw them from a
-    // real third-person point of view, matching how the Hitbox module hides its
-    // own box in first-person.
+    // real third-person point of view.
     if (!WingsModule::isThirdPersonCamera(camX, camY, camZ,
                                           aabb.min.x, aabb.min.y, aabb.min.z,
                                           aabb.max.x, aabb.max.y, aabb.max.z)) return;
@@ -499,7 +498,6 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float sinYaw = std::sin(yawRad);
 
     // right = (-cosYaw, -sinYaw) in XZ, forward = (-sinYaw, cosYaw)
-    // See HitboxModule comments for derivation.
     float rightX = -cosYaw;
     float rightZ = -sinYaw;
     float fwdX = -sinYaw;

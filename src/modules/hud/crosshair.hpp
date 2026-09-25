@@ -96,8 +96,7 @@ public:
     bool m_outline = true;        // dark back-pass so bright scenes stay readable
 
     // Recolors the crosshair while the player is aiming at a hittable
-    // entity. Hit-testing lives in this module, so the option works
-    // without enabling Hitbox.
+    // entity. Hit-testing lives in this module.
     bool m_indicator = false;
     uint32_t m_indicatorColor = 0xFFFF0000;
 
@@ -109,8 +108,7 @@ public:
     bool indicatorActive() const { return enabled && m_indicator; }
     uint32_t indicatorColor() const { return m_indicatorColor; }
     // True while the game camera is in third person. Tracked from
-    // Options::getPlayerViewPerspective(), same as the View Model and
-    // Hitbox modules.
+    // Options::getPlayerViewPerspective(), same as the View Model module.
     bool isThirdPerson() const;
 
 private:

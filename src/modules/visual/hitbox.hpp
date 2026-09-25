@@ -12,40 +12,21 @@ public:
     void onInit() override;
     void onEnable() override;
     void onDisable() override;
-    void onFrame() override;
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j) override;
 
     
     bool showEntities = true;
     bool showPlayers = true;
-    bool showItems = true;
-    uint32_t showItemsColor = 0xFFFFFFFFu;
-    // Draw the local player's own box when the camera is in third person.
-    // First-person (including jumping, where the camera interpolates above
-    // the tick AABB) is skipped so the box does not fill the screen.
-    bool show3rdPerson = false;
-    bool showEyeLine = false;
-    bool showLookLine = false;
+    bool showSelf = true;
+    bool showEyeLine = true;
+    bool showLookLine = true;
     float lookLineLength = 2.0f;
 
-    // Line thickness (menu slider units). 1.0 keeps the classic hairline
-    // look; anything above that is drawn as real geometry (beams around
-    // every edge) whose world-space width is lineThickness * 0.01 blocks,
-    // because GL line width is ignored by most mobile GL ES drivers.
-    float lineThickness = 1.0f;
-
     
-    // Stored as AARRGGBB. Alpha is always forced opaque when loading,
-    // saving, and drawing so changing line thickness never washes the color out.
-    uint32_t hitboxColor = 0xFFFFFFFF;
-    uint32_t eyeLineColor = 0xFFFF0000;
+    uint32_t hitboxColor = 0xFFFFFFFF;   
+    uint32_t eyeLineColor = 0xFFFF0000;  
     uint32_t lookLineColor = 0xFF0000FF; 
-
-    bool hitboxIndicator = false;             
-    uint32_t indicatorDefaultColor = 0xFFFFFFFF; 
-    uint32_t indicatorActiveColor = 0xFFFF0000;  
-
 
 private:
     bool m_patched;
