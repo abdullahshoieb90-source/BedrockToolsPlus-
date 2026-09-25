@@ -94,7 +94,6 @@ enum class SignatureId : std::uint16_t {
     LocalPlayerChangeDimension,
     NbtTreeFind,
     ItemStackBaseLoadItem,
-    RenderPotionEffects,
     ItemStackBaseGetDamageValue,
     ItemStackBaseGetRawNameId,
     BaseActorRenderContextCtor,
