@@ -1,8 +1,5 @@
 #include "ModuleRegistry.hpp"
-#include "misc/hitsound.hpp"
-#include "hud/effectdisplay.hpp"
 #include "visual/hitbox.hpp"
-#include "visual/blockoutline.hpp"
 #include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
 #include "misc/commandhotkey.hpp"
@@ -66,10 +63,7 @@ bool ModuleRegistry::keybindBlocked() const {
 void registerAllModules() {
     auto& registry = ModuleRegistry::get();
     if (!registry.modules().empty()) return;
-    registry.emplace<HitSoundModule>();
-    registry.emplace<EffectDisplayModule>();
     registry.emplace<HitboxModule>();
-    registry.emplace<BlockOutlineModule>();
     registry.emplace<CustomCapesModule>();
     registry.emplace<CommentKey>();
     registry.emplace<CommandHotkeyModule>();

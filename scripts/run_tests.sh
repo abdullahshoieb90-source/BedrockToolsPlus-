@@ -38,11 +38,6 @@ for source in "${root}"/tests/*_test.cpp; do
     extra_srcs=()
     skip=""
     case "${name}" in
-        blockoutline_test)
-            # Includes the production renderer with host substitutes for the
-            # preloader hook API and the small JSON surface used by configs.
-            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
-            ;;
         commandhotkey_test)
             if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
                [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
@@ -58,7 +53,7 @@ for source in "${root}"/tests/*_test.cpp; do
             extra+=(-I "${root}/tests/crosshair_fakepl" -I "${root}/tests/fakejson"
                     -I "${root}/tests/fakejni")
             ;;
-        effectdisplay_test|inventoryhud_test|armorhud_test)
+        inventoryhud_test|armorhud_test)
             # Also needs entt from the xmake packages; fmt and <android/log.h>
             # are covered by the host fakes in tests/fakejni.
             if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&

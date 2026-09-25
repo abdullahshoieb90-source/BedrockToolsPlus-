@@ -10,44 +10,6 @@
 #include <string_view>
 #include <vector>
 
-// Child settings are normally attached to a toggle whose key is a prefix of
-// theirs (e.g. "crosshairIndicator" owns "crosshairIndicatorColor"). A few
-// settings are named differently but are still owned by a toggle, so they are
-// mapped explicitly here. The parent must be a toggle that exists in the same
-// module for the dependency to be applied.
-struct ExplicitDependency {
-    const char* child;
-    const char* parent;
-};
-
-static const ExplicitDependency kExplicitDependencies[] = {
-    // Hitbox module: the indicator colors only matter while the hitbox
-    // indicator itself is enabled.
-    {"indicatorDefaultColor", "hitboxIndicator"},
-    {"indicatorActiveColor", "hitboxIndicator"},
-
-    // Block Outline: these names do not begin with their owning toggle, and
-    // toggle children need an explicit relationship.
-    {"lineThickness", "outline"},
-    {"fillFaceOnly", "fill"},
-
-    // Effect Display: how the level is rendered only matters while the level
-    // is shown at all.
-    {"m_romanLevels", "m_showLevel"},
-    {"m_hideLevelOne", "m_showLevel"},
-
-    // Effect Display: the potion-icon size only matters while the icons are
-    // shown at all.
-    {"m_iconScale", "m_showIcons"},
-};
-
-static const char* explicitParentFor(const std::string& key) {
-    for (const auto& dep : kExplicitDependencies) {
-        if (key == dep.child) return dep.parent;
-    }
-    return nullptr;
-}
-
 static void onModuleToggle(std::string_view module_id, bool enabled) {
     auto* mod = ModuleRegistry::get().find(module_id);
     if (!mod) return;
@@ -238,14 +200,6 @@ void registerModulesWithLauncher() {
                     kLower.find("color") != std::string::npos ||
                     kLower.find("alpha") != std::string::npos) {
                     maxVal = 1.0f;
-                } else if (kLower.find("volume") != std::string::npos) {
-                    // Hit Sound playback volume: 0.0 (mute) .. 1.0 (full).
-                    maxVal = 1.0f;
-                } else if (kLower.find("iconscale") != std::string::npos) {
-                    // Potion-icon size multiplier (Effect Display); the module
-                    // clamps to the same range at render time.
-                    minVal = 0.25f;
-                    maxVal = 4.0f;
                 } else if (kLower.find("buttonscale") != std::string::npos) {
                     // Uniform size multiplier for the Zoom-style external
                     // command buttons.
@@ -280,11 +234,6 @@ void registerModulesWithLauncher() {
                 } else if (kLower.find("speed") != std::string::npos || kLower.find("strength") != std::string::npos) {
                     minVal = 0.05f;
                     maxVal = 1.0f;
-                } else if (kLower == "linethickness") {
-                    // 1.0 == classic hairline box, higher values widen the
-                    // hitbox lines (Hitbox module).
-                    minVal = 1.0f;
-                    maxVal = 10.0f;
                 } else if (kLower.find("thick") != std::string::npos) {
                     maxVal = 20.0f;
                 }
@@ -313,29 +262,16 @@ void registerModulesWithLauncher() {
 
                 for (auto& entry : configs) {
             std::string k = entry.key;
-            // A toggle can still be owned by another toggle, but only through
-            // an explicit mapping: the name-prefix heuristic below would
-            // otherwise nest unrelated toggles under each other.
-            const char* explicitParent = explicitParentFor(k);
-            if (entry.type != pl::modmenu::ConfigType::Toggle || explicitParent != nullptr) {
+            // Toggles are always top-level entries: the name-prefix heuristic
+            // below would otherwise nest unrelated toggles under each other.
+            if (entry.type != pl::modmenu::ConfigType::Toggle) {
                 std::string bestParent = "";
-                if (explicitParent) {
-                    for (const auto& parentCandidate : configs) {
-                        if (parentCandidate.type == pl::modmenu::ConfigType::Toggle &&
-                            parentCandidate.key == explicitParent) {
-                            bestParent = parentCandidate.key;
-                            break;
-                        }
-                    }
-                }
-                if (bestParent.empty() && entry.type != pl::modmenu::ConfigType::Toggle) {
-                    for (const auto& parentCandidate : configs) {
-                        if (parentCandidate.type == pl::modmenu::ConfigType::Toggle) {
-                            std::string pKey = parentCandidate.key;
-                            if (k.length() > pKey.length() && k.compare(0, pKey.length(), pKey) == 0) {
-                                if (pKey.length() > bestParent.length()) {
-                                    bestParent = pKey;
-                                }
+                for (const auto& parentCandidate : configs) {
+                    if (parentCandidate.type == pl::modmenu::ConfigType::Toggle) {
+                        std::string pKey = parentCandidate.key;
+                        if (k.length() > pKey.length() && k.compare(0, pKey.length(), pKey) == 0) {
+                            if (pKey.length() > bestParent.length()) {
+                                bestParent = pKey;
                             }
                         }
                     }

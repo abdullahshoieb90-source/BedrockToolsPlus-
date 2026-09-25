@@ -10,9 +10,8 @@ namespace bedrocktools::launcher {
 void setJavaVm(void* javaVm);
 
 // Returns the JavaVM supplied by the preloader (null until the native module
-// has been loaded). Modules that need JNI (e.g. the Hit Sound module's
-// android.media.MediaPlayer playback) use this instead of caching the VM in
-// their constructor, which runs before load() is called.
+// has been loaded). Modules that need JNI use this instead of caching the VM
+// in their constructor, which runs before load() is called.
 void* javaVm();
 
 // The launcher keeps an ExternalButtonOverlay snapshot after it is created.
