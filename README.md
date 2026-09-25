@@ -36,6 +36,39 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 The target is sampled on the client tick instead of resolving the hit result from the render thread, avoiding frame stalls. Settings and keybind state are persisted in `config.json`.
 
+## Chunk Border
+
+**Chunk Border** draws the 16x16 chunk column you are standing in as a world-space wireframe, from the bottom of the world to the build limit. It is client-side only and draws nothing on the server.
+
+- **Corner Color** paints the four corner posts of your chunk, **Mid Color** the inner grid, and **Adj Color** the twelve corner posts of the chunks around it, so neighbouring chunk boundaries read as well.
+- **Horiz Line Spacing** is the distance, in blocks, between two posts measured along X/Z. **Vert Line Spacing** is the distance between two horizontal rings measured along Y. Setting either to `0` switches that family of lines off, which is the cheap way to keep just the chunk outline.
+- Both spacings are clamped to one chunk (16 blocks); anything wider could not produce another line.
+
+The border follows the chunk you are in, which is sampled on the client tick rather than from the render thread.
+
+## Breadcrumbs
+
+**Breadcrumbs** leaves a trail of block outlines behind you as you walk, with an arrow on every step so the direction of travel is readable. It is client-side only.
+
+- **Trail Color** sets the colour; its alpha is how strongly the newest sample shows before the trail fades towards its head.
+- **Tick Interval** is how many client ticks pass between two samples — raise it for a sparser, longer trail.
+- **Max Points** caps the trail length; the oldest samples are dropped first.
+- **Clear Trail Button** empties the trail without turning the module off.
+
+Samples are taken at your feet, not at eye height, and a sample is skipped while you are still inside the block the previous one was taken in, so standing still does not pile outlines onto one spot. Turning the module off drops the trail, so re-enabling it never draws a stale path through a different world.
+
+## Light Overlay
+
+**Light Overlay** writes the light level on the faces of nearby blocks and colours the ones dark enough for hostile mobs to spawn. It reads the client's own world only — nothing is requested from or sent to the server.
+
+- **Radius Horizontal** and **Radius Vertical** size the scanned box around you, in blocks. The cost grows with the square of the horizontal radius times the vertical one, so both are clamped to 32.
+- **Danger Threshold** is the light level at and below which a face counts as dangerous; Bedrock light runs from 0 to 15.
+- **Safe Color** and **Danger Color** style the two cases.
+- **Only Top Face** labels just the top of each block instead of all six faces — much easier to read, and much cheaper.
+- **Only Solid Blocks** measures from solid blocks only; turn it off to also label plants, slabs and other non-air blocks.
+
+A face is only labelled when the block next to it is not solid, because that air is where a mob would actually spawn. The numbers are drawn with a small stroke font in the game's own tessellator, one face basis per side so they always lie flat and are never mirrored.
+
 ## Inventory HUD
 
 Shows the 27 slots of your inventory grid on the HUD without opening the inventory. Under **Details** you can toggle **Stack Count** and **Durability Bar**, **Number Text** changes the size and color of the stack counts, and **Slot Background** (on by default) draws a cell behind every slot — empty ones included — so the grid reads like the inventory screen. **Background Color** and **Background Opacity** style those cells.

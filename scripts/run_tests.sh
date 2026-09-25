@@ -38,10 +38,19 @@ for source in "${root}"/tests/*_test.cpp; do
     extra_srcs=()
     skip=""
     case "${name}" in
-        blockoutline_test)
+        blockoutline_test|chunkborder_test|breadcrumbs_test|lightoverlay_test)
             # Includes the production renderer with host substitutes for the
             # preloader hook API and the small JSON surface used by configs.
             extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
+            ;;
+        modulemenu_test)
+            # Runs the real menu registration. The modules are separate
+            # translation units: each keeps its state in an unnamed namespace,
+            # which would collide if they were #included into the test.
+            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
+            extra_srcs+=("${root}/src/modules/visual/chunkborder.cpp"
+                         "${root}/src/modules/visual/breadcrumbs.cpp"
+                         "${root}/src/modules/visual/lightoverlay.cpp")
             ;;
         commandhotkey_test)
             if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&

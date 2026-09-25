@@ -48,6 +48,51 @@ static const char* explicitParentFor(const std::string& key) {
     return nullptr;
 }
 
+// The name heuristics in registerModulesWithLauncher() cover the common cases,
+// but a few settings have a range only their own module knows about: a chunk
+// grid cannot be wider than a chunk, a light level never goes past 15, and the
+// Breadcrumbs trail is far longer than the default 200-step cap. Those are
+// listed explicitly and matched on the exact config name, so adding a module
+// can never shift another module's slider.
+struct IntSliderRange {
+    const char* key;
+    int minValue;
+    int maxValue;
+};
+
+static const IntSliderRange kIntSliderRanges[] = {
+    {"radiusHorizontal", 0, 32},  // Light Overlay scan radius, in blocks
+    {"radiusVertical", 0, 32},
+    {"dangerThreshold", 0, 15},   // light levels run from 0 to 15
+    {"horizLineSpacing", 0, 16},  // a chunk is 16 blocks wide
+    {"tickInterval", 1, 40},      // Breadcrumbs sampling rate, in client ticks
+    {"maxPoints", 1, 2000},       // Breadcrumbs trail length
+};
+
+struct FloatSliderRange {
+    const char* key;
+    float minValue;
+    float maxValue;
+};
+
+static const FloatSliderRange kFloatSliderRanges[] = {
+    {"vertLineSpacing", 0.0f, 16.0f},  // Chunk Border ring spacing, in blocks
+};
+
+static const IntSliderRange* intSliderRangeFor(const std::string& key) {
+    for (const auto& range : kIntSliderRanges) {
+        if (key == range.key) return &range;
+    }
+    return nullptr;
+}
+
+static const FloatSliderRange* floatSliderRangeFor(const std::string& key) {
+    for (const auto& range : kFloatSliderRanges) {
+        if (key == range.key) return &range;
+    }
+    return nullptr;
+}
+
 static void onModuleToggle(std::string_view module_id, bool enabled) {
     auto* mod = ModuleRegistry::get().find(module_id);
     if (!mod) return;
@@ -205,6 +250,9 @@ void registerModulesWithLauncher() {
 
                 if (kLower.find("keybind") != std::string::npos) {
                     entry.type = pl::modmenu::ConfigType::Keybind;
+                } else if (const auto* range = intSliderRangeFor(k)) {
+                    entry.min_value = std::to_string(range->minValue);
+                    entry.max_value = std::to_string(range->maxValue);
                 } else {
                     int minVal = 0;
                     int maxVal = 200;
@@ -234,7 +282,10 @@ void registerModulesWithLauncher() {
                 float minVal = 0.0f;
                 float maxVal = 100.0f;
 
-                if (kLower.find("opacity") != std::string::npos ||
+                if (const auto* range = floatSliderRangeFor(k)) {
+                    minVal = range->minValue;
+                    maxVal = range->maxValue;
+                } else if (kLower.find("opacity") != std::string::npos ||
                     kLower.find("color") != std::string::npos ||
                     kLower.find("alpha") != std::string::npos) {
                     maxVal = 1.0f;
