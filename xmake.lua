@@ -24,7 +24,7 @@ target("BedrockToolsPlus")
     set_strip("all")
     add_files("src/main.cpp", "src/core/**.cpp", "src/config/*.cpp", "src/launcher/*.cpp", "src/modules/**.cpp")
     add_includedirs("include", {public = true})
-    add_includedirs("src", "third_party")
+    add_includedirs("src")
     add_packages("preloader", "nlohmann_json", "glm", "entt", "fmt")
 
     if is_plat("android") then

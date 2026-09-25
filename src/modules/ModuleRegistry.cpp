@@ -1,13 +1,5 @@
 #include "ModuleRegistry.hpp"
 #include "visual/hitbox.hpp"
-#include "player/customcapes.hpp"
-#include "misc/commentkey.hpp"
-#include "misc/commandhotkey.hpp"
-#include "hud/crosshair.hpp"
-#include <bedrocktools/modules/visual/wings.hpp>
-#include "hud/hotbarslots.hpp"
-#include "hud/inventoryhud.hpp"
-#include "hud/armorhud.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -64,12 +56,4 @@ void registerAllModules() {
     auto& registry = ModuleRegistry::get();
     if (!registry.modules().empty()) return;
     registry.emplace<HitboxModule>();
-    registry.emplace<CustomCapesModule>();
-    registry.emplace<CommentKey>();
-    registry.emplace<CommandHotkeyModule>();
-    registry.emplace<CrosshairModule>();
-    registry.emplace<WingsModule>();
-    registry.emplace<HotbarSlotsModule>();
-    registry.emplace<InventoryHudModule>();
-    registry.emplace<ArmorModule>();
 }

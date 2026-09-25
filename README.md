@@ -2,85 +2,30 @@
 
 ## Introduction
 
-BedrockToolsPlus is an open-source native mod for Minecraft Bedrock on Android, made for [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid). It adds a collection of visual, HUD, player, and utility modules while also providing a small C++ SDK and event system for native mod development.
+BedrockToolsPlus is an open-source native mod for Minecraft Bedrock on Android, made for [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid). It ships the **Hitbox** module — entity hitbox rendering in the world — on top of a small C++ SDK and event system for native mod development.
 
 The source is public so people can study how a real LeviLauncher mod is structured, learn from it, and use the SDK as a starting point for their own mods.
 
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 55 configurable modules
+- The Hitbox module with per-kind toggles, eye/look lines, and three colors
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
 - Open-source and designed to be practical to extend
 
-## Modules
+## Hitbox
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings
+**Hitbox** draws wireframe hitboxes around actors in the world (a `RenderLevel` overlay with the game's own selection material):
 
-**HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Debug Menu, Keystrokes, Tablist, Crosshair, ArmorHUD, Armor, Hotbar Slots, Inventory HUD, World Time, Arrow Counter, Totem Counter
-
-**Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ, AutoSprint, Quick Loot, Custom Capes
-
-**Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, ForceGlobalRP, CommentKey, Command Hotkey, Hive Utils
-
-## Inventory HUD
-
-Shows the 27 slots of your inventory grid on the HUD without opening the inventory. Under **Details** you can toggle **Stack Count** and **Durability Bar**, **Number Text** changes the size and color of the stack counts, and **Slot Background** (on by default) draws a cell behind every slot — empty ones included — so the grid reads like the inventory screen. **Background Color** and **Background Opacity** style those cells.
-
-The module owns a single HUD Editor element, **Inventory Grid**. Armor and the offhand are no longer part of it — they live in the separate **Armor** module below.
-
-## Armor
-
-**Armor** is its own module: it draws your helmet, chestplate, leggings, boots and the offhand item on the HUD, with or without Inventory HUD enabled. It has its own toggle, keybind, settings and HUD Editor element (**Armor & Offhand**), so it can be placed anywhere on screen independently of the inventory grid.
-
-- **Offhand Slot**, **Stack Count** and **Durability Bar** under **Details** control what is drawn on each slot.
-- **Armor Durability Numbers** is on by default and displays each piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of the durability bars, and its labels are part of the armor element.
-- **Slot Background** (on by default) draws a cell behind every armor and offhand slot — empty ones included — so the column reads like the inventory screen. **Background Color** and **Background Opacity** style those cells.
-- **Horizontal Layout** lays the five slots out in a row instead of a column.
-
-Configs saved while armor was still an Inventory HUD option are migrated automatically: the new module inherits the position, size and style you had, and it starts enabled only if **Armor & Offhand** was on.
-
-## Crosshair
-
-**Crosshair** replaces the game's own crosshair with one of 29 shapes drawn at the exact screen center. The **Style** picker is grouped by how the shape reads on screen:
-
-- **Marks** — Dot, Plus, X, T Shape, T Shape Down, Chevron, Arrow, Star
-- **Gapped crosses** — Cross, Cross Dot, Cross X, Vertical, Horizontal
-- **Rings** — Circle, Circle Dot, Circle Cross, Ring Ticks, Broken Ring, Target
-- **Boxes** — Square, Square Dot, Diamond, Triangle, Brackets, Brackets Dot, Grid
-- **Reticles** — Scope, Mil Dots, Converge
-
-Every shape shares the same controls: **Scale** and **Thickness** set the size and the line weight, **Color** plus **Opacity** style it, and **Outline** adds a dark back-pass so bright skies and sand stay readable. **Rgb** animates the hue through the whole wheel with **Rgb Speed** controlling the cycle. **Indicator** recolors the crosshair (with **Indicator Color**) while you are aiming at a mob or another player — the hit test lives in this module. **Show Third Person** also draws the overlay while the camera is behind or in front of you; it is off by default, like vanilla.
-
-Selecting **Vanilla** gives the crosshair back to the game: the module then only tints the game's own crosshair when the indicator fires (and, on builds that cannot be tinted in place, briefly swaps it for a same-shaped overlay), so exactly one crosshair is ever on screen. New styles are always appended to the picker, so configs saved by an older version keep drawing the same shape.
-
-## Wings
-
-The **Wings** module renders animated 3D wings on your back that flap, idle and glide with your movement. Open the module's **Wing Style** selector to choose a shape:
-
-- **Dragon** — the default articulated membrane wing
-- **Angel** — white feathered blades with gold tips
-- **Demon** — deep-red spiky membrane
-- **Bat** — small dark membrane
-- **Butterfly** — pink/orange panels with blue accents
-- **Phoenix** — fiery orange feathers
-- **Fairy** — small translucent cyan/pink wings
-
-The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. Each style is drawn as closed, tapered feather prisms with a rest-pose fan, a backwards sweep and per-face shading, so the wings read as real 3D volume. Developers can preview every style offline (and compare against the legacy renderer) with `./scripts/gen_wings_preview.sh`, which writes PNGs to `build/wings-preview/`.
-
-## Custom Capes
-
-The **Custom Capes** module lets you wear any PNG as a classic cape.
-
-1. Put cape images (`.png`, ideally 64x32 — any other size is scaled automatically) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a sample cape).
-2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Custom Capes**.
-3. Pick a file in the module's **Cape** selector — the cape updates in-game immediately. Choose `None` to bring your vanilla cape back.
-
-Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
-
-The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
+- **Entities** (on by default) — mob hitboxes
+- **Players** (on by default) — other players' hitboxes
+- **Self** (on by default) — your own hitbox, shown in third person only (in first person the camera sits inside it)
+- **Eye Line** (on by default) — a short vertical tick at the eye position
+- **Look Line** (on by default) and **Look Line Length** — a beam along the look direction
+- **Hitbox Color**, **Eye Line Color**, **Look Line Color** — three independent color pickers
+- Actors under the invisibility effect are skipped; everything within 30 blocks is drawn
 
 ## System Requirements
 
@@ -115,6 +60,12 @@ The release build produces `libBedrockToolsPlus.so` and `BedrockToolsPlus.levipa
 
 Public SDK headers are under `include/bedrocktools`. Shared runtime code lives under `src/core`, while features are kept under `src/modules` by category. Minecraft signatures and offsets are version-specific, so those are the main pieces that normally need updating for a new game build.
 
+Host-side smoke checks:
+
+```sh
+./scripts/run_tests.sh
+```
+
 Example event subscription from another native mod:
 
 ```cpp
@@ -137,25 +88,3 @@ Pull requests are highly appreciated. Keep changes focused, preserve the existin
 Do not use LeviLauncher or BedrockToolsPlus to violate Mojang or Microsoft's user agreements.
 
 **Disclaimer:** The authors and contributors of BedrockToolsPlus and LeviLauncher are not responsible for bans, damages, or issues arising from the use of this software. Use it at your own risk and in accordance with Minecraft's terms of service.
-
-## Credits & Acknowledgements
-
-BedrockToolsPlus is made by [RadiantByte](https://github.com/RadiantByte) and maintained by VENOM P2 GM.
-
-Special thanks to [dreamguxiang](https://github.com/dreamguxiang) for helping make this mod possible.
-
-Motion blur module based on [mcpelauncher-motion-blur](https://github.com/CrackedMatter/mcpelauncher-motion-blur) by [CrackedMatter](https://github.com/CrackedMatter).
-
-Thanks to [Kashifro](https://github.com/Kashifro) for the Shulker Preview and Tablist modules.
-
-Built for [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid).
-
-## Contact
-
-Discord: [discord.gg/rMgdpTFFVg](https://discord.gg/rMgdpTFFVg)
-
-**Report Issues:** Open an issue in this GitHub repository.
-
-## License
-
-BedrockToolsPlus is licensed under the [GNU General Public License v3.0](LICENSE).

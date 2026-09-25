@@ -34,6 +34,12 @@ public:
     bool is_boolean() const { return m_type == Type::Boolean; }
 
     template <class T>
+    T value(const std::string& key, const T& fallback) const {
+        const auto it = m_children.find(key);
+        return it == m_children.end() ? fallback : it->second.template get<T>();
+    }
+
+    template <class T>
     T get() const {
         if constexpr (std::is_same_v<T, bool>) {
             return m_integer != 0;

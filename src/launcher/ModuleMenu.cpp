@@ -1,5 +1,4 @@
 #include "ModuleMenu.hpp"
-#include "ExternalButtonRefresh.hpp"
 #include "modules/ModuleRegistry.hpp"
 #include "config/ConfigManager.hpp"
 #include <pl/ModMenu.hpp>
@@ -63,13 +62,6 @@ static void onModuleConfigChanged(std::string_view module_id, std::string_view k
         j[safeKey] = safeValue;
     }
     mod->loadConfig(j);
-
-    if (module_id == "bedrocktoolsplus.CommentKey" ||
-        module_id == "bedrocktoolsplus.Command Hotkey") {
-        // Refresh the Java view in place. It replaces the button definition
-        // and reapplies its label without hiding the overlay.
-        bedrocktools::launcher::refreshExternalButtonsForModule(module_id);
-    }
 
     bedrocktools::config::ConfigManager::get().save();
 }
@@ -200,20 +192,9 @@ void registerModulesWithLauncher() {
                     kLower.find("color") != std::string::npos ||
                     kLower.find("alpha") != std::string::npos) {
                     maxVal = 1.0f;
-                } else if (kLower.find("buttonscale") != std::string::npos) {
-                    // Uniform size multiplier for the Zoom-style external
-                    // command buttons.
-                    minVal = 0.5f;
-                    maxVal = 2.0f;
                 } else if (kLower.find("scale") != std::string::npos) {
                     minVal = 0.1f;
                     maxVal = 5.0f;
-                } else if (kLower == "borderwidth") {
-                    maxVal = 4.0f;
-                } else if (kLower.find("borderwidth") != std::string::npos) {
-                    // Outline thickness in pixels (e.g. the launcher-style
-                    // border around the Command Hotkey buttons).
-                    maxVal = 8.0f;
                 } else if (kLower.find("width") != std::string::npos) {
                     maxVal = 1000.0f;
                 } else if (kLower.find("position") != std::string::npos ||
@@ -226,10 +207,6 @@ void registerModulesWithLauncher() {
                     minVal = 1.0f;
                     maxVal = 179.0f;
                 } else if (kLower.find("intensity") != std::string::npos) {
-                    maxVal = 10.0f;
-                } else if (kLower.find("flapspeed") != std::string::npos) {
-                    // Wings flap speed multiplier (Wings module).
-                    minVal = 0.1f;
                     maxVal = 10.0f;
                 } else if (kLower.find("speed") != std::string::npos || kLower.find("strength") != std::string::npos) {
                     minVal = 0.05f;
