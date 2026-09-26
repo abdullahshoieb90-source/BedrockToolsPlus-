@@ -770,9 +770,18 @@ void HitboxModule::onInit() {
 }
 
 void HitboxModule::applyPatch() {
-    if (m_patched || !m_patchTarget) return;
-    bedrocktools::hooks::install(m_patchTarget, (void*)_renderLevel_hook, (void**)&_renderLevel_orig);
-    m_patched = true;
+    if (m_patched) return;
+    
+    // إعادة محاولة جلب عنوان RenderLevel في حال فشله أثناء onInit
+    if (!m_patchTarget) {
+        uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderLevel);
+        if (addr != 0) m_patchTarget = (void*)addr;
+    }
+
+    if (m_patchTarget) {
+        bedrocktools::hooks::install(m_patchTarget, (void*)_renderLevel_hook, (void**)&_renderLevel_orig);
+        m_patched = true;
+    }
 }
 
 void HitboxModule::onEnable() {
@@ -783,7 +792,12 @@ void HitboxModule::onDisable() {
 }
 
 void HitboxModule::onFrame() {
+    // التأكد من تطبيق الهوك في حال تفعيل الموديل أثناء اللعب
+    if (enabled && !m_patched) {
+        applyPatch();
+    }
 }
+
 
 void HitboxModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
