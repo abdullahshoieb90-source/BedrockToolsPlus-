@@ -2,7 +2,6 @@
 #include "misc/hitsound.hpp"
 #include "hud/effectdisplay.hpp"
 #include "visual/hitbox.hpp"
-#include "visual/blockoutline.hpp"
 #include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
 #include "misc/commandhotkey.hpp"
@@ -69,7 +68,6 @@ void registerAllModules() {
     registry.emplace<HitSoundModule>();
     registry.emplace<EffectDisplayModule>();
     registry.emplace<HitboxModule>();
-    registry.emplace<BlockOutlineModule>();
     registry.emplace<CustomCapesModule>();
     registry.emplace<CommentKey>();
     registry.emplace<CommandHotkeyModule>();
