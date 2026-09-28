@@ -223,13 +223,21 @@ void initialize() {
         actorGetOffhandSlot = reinterpret_cast<ActorGetOffhandSlotFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorGetOffhandSlot));
     }
+    // These inspection helpers are optional for icon rendering. Resolve them
+    // independently so a temporarily unavailable signature can be retried on
+    // a later initialize() call even after the required renderer functions
+    // have already been found.
+    if (!itemStackBaseGetDamageValue) {
+        itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
+            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
+    }
+    if (!itemStackBaseGetRawNameId) {
+        itemStackBaseGetRawNameId = reinterpret_cast<ItemStackBaseGetRawNameIdFn>(
+            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetRawNameId));
+    }
     if (!functionsResolved) {
         baseActorRenderContextCtor = reinterpret_cast<BaseActorRenderContextCtorFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::BaseActorRenderContextCtor));
-        itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
-            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
-        itemStackBaseGetRawNameId = reinterpret_cast<ItemStackBaseGetRawNameIdFn>(
-            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetRawNameId));
         itemRendererRenderGuiItemNew = reinterpret_cast<ItemRendererRenderGuiItemNewFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemRendererRenderGuiItemNew));
         functionsResolved = baseActorRenderContextCtor && itemRendererRenderGuiItemNew;
