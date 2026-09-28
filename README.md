@@ -9,7 +9,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 54 configurable modules
+- 55 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -17,13 +17,24 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings
+**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Block Outline, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings
 
 **HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair, ArmorHUD, Armor, Hotbar Slots, Inventory HUD, World Time, Arrow Counter, Totem Counter
 
 **Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ, AutoSprint, Quick Loot, Custom Capes
 
 **Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, Hit Sound, ForceGlobalRP, CommentKey, Command Hotkey, Hive Utils
+
+## Block Outline
+
+**Block Outline** draws a configurable world-space overlay over the hard-to-see selected-block border. It only follows the block currently under the crosshair and is entirely client-side.
+
+- **Outline**, **Outline Color**, **Outline Opacity** and **Line Thickness** control the 12 block edges. Thickness uses real camera-facing geometry above the hairline setting, so it works on Android GLES drivers that ignore native line width.
+- **Fill** adds a translucent block overlay. **Fill Face Only** limits it to the face under the crosshair; otherwise all six faces are drawn. **Fill Color** and **Fill Opacity** are independent from the outline.
+- **Rainbow** animates both passes, with **Rainbow Speed** controlling the cycle. **Pulse** smoothly animates their opacity, with a separate **Pulse Speed**.
+- **Through Walls** switches to a no-depth material when the current game build provides it. It is off by default, so terrain normally occludes the overlay.
+
+The target is sampled on the client tick instead of resolving the hit result from the render thread, avoiding frame stalls. Settings and keybind state are persisted in `config.json`.
 
 ## Inventory HUD
 
