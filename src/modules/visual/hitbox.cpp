@@ -1,10 +1,12 @@
 #include "hitbox.hpp"
 #include "hitbox_camera.hpp"
+#include "hitbox_interp.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/sdk/Memory.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
+#include <chrono>
 #include <cmath>
 #include <string>
 #include <cstring>
@@ -147,6 +149,17 @@ static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
 
 static void* g_localPlayerPtr = nullptr;
 
+// --- Tick clock for partial-tick interpolation -----------------------------
+// The AABB is a tick sample while the entity mesh is drawn at an
+// interpolated position, so the box has to be shifted by the elapsed
+// fraction of the current tick (see hitbox_interp.hpp). The local player's
+// tick is the same world tick for every nearby actor, so one clock is
+// enough. The interval is measured, not assumed, so the fraction stays
+// correct when the game is not running at exactly 20 Hz.
+static std::chrono::steady_clock::time_point s_lastTickTime{};
+static float s_tickInterval = 0.05f;
+static bool s_lastTickTimeValid = false;
+
 // Options::getPlayerViewPerspective(): 0 = first person, 1 = third person
 // back, 2 = third person front. Jumping in first person interpolates the
 // camera above the tick AABB, so the geometric test alone used to flash
@@ -174,8 +187,32 @@ struct AABB {
 static bool hasCategory(void* actor, uint32_t categoryBit);
 
 static void s_hitboxTickCallback(void* _this) {
-    if (!g_hitboxMod || !g_hitboxMod->enabled) return;
+    if (!g_hitboxMod || !g_hitboxMod->enabled) {
+        // Do not interpolate across a gap: the next frame after the module is
+        // enabled again must start from the raw tick sample.
+        s_lastTickTimeValid = false;
+        return;
+    }
     g_localPlayerPtr = _this;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (s_lastTickTimeValid) {
+        const float measured = std::chrono::duration<float>(now - s_lastTickTime).count();
+        if (measured > 0.001f && measured < 0.5f) s_tickInterval = measured;
+    }
+    s_lastTickTime = now;
+    s_lastTickTimeValid = true;
+}
+
+// Partial-tick fraction for this frame: 0 right after the tick, 1 right
+// before the next one. Unknown timing returns 1, which leaves the raw tick
+// AABB in place (the pre-interpolation behaviour).
+static float currentPartialTick() {
+    if (!s_lastTickTimeValid) return 1.0f;
+    if (g_hitboxMod && !g_hitboxMod->smoothBoxes) return 1.0f;
+    const float elapsed =
+        std::chrono::duration<float>(std::chrono::steady_clock::now() - s_lastTickTime).count();
+    return hitbox::partialTickFraction(elapsed, s_tickInterval);
 }
 
 static MaterialPtr getMaterial(const char* name) {
@@ -344,6 +381,57 @@ static AABB getActorAABB(void* actor) {
     return aabb;
 }
 
+// StateVectorComponent: mPos is the authoritative tick position the AABB
+// belongs to, mPosPrev the position from the previous tick. The game
+// interpolates the entity mesh between the two (renderPos = lerp(prev, cur,
+// partialTick)), which is exactly what the hitbox has to follow.
+static bool getActorTickPositions(void* actor,
+                                  bedrocktools::sdk::Vec3& cur,
+                                  bedrocktools::sdk::Vec3& prev) {
+    const uintptr_t actorAddr = (uintptr_t)actor;
+    if (actorAddr < 0x1000) return false;
+
+    const uintptr_t component =
+        *(uintptr_t*)(actorAddr + bedrocktools::sdk::offsets::Actor::mStateVectorComponent);
+    if (component < 0x1000) return false;
+
+    cur = *(bedrocktools::sdk::Vec3*)(component + bedrocktools::sdk::offsets::StateVectorComponent::mPosition);
+    prev = *(bedrocktools::sdk::Vec3*)(component + bedrocktools::sdk::offsets::StateVectorComponent::mPreviousPosition);
+    return true;
+}
+
+// The box as the player sees the entity: the tick AABB moved onto the
+// interpolated render position. Falls back to the raw tick AABB whenever the
+// tick data is missing, implausible (teleport, bad read) or the smoothing is
+// disabled, so the box can never be dragged away from the entity.
+static AABB getInterpolatedAABB(void* actor, float partialTick) {
+    AABB aabb = getActorAABB(actor);
+    if (partialTick >= 1.0f) return aabb;
+
+    bedrocktools::sdk::Vec3 cur{0.f, 0.f, 0.f};
+    bedrocktools::sdk::Vec3 prev{0.f, 0.f, 0.f};
+    if (!getActorTickPositions(actor, cur, prev)) return aabb;
+
+    // The current tick position must belong to this box; anything else means
+    // the state-vector offsets do not match this build, so the raw tick AABB
+    // is safer than a shift built from unrelated memory.
+    if (!hitbox::positionNearBox(cur, aabb.min, aabb.max)) return aabb;
+
+    const bedrocktools::sdk::Vec3 delta{cur.x - prev.x, cur.y - prev.y, cur.z - prev.z};
+    if (!hitbox::isPlausibleTickDelta(delta)) return aabb;
+
+    const bedrocktools::sdk::Vec3 offset = hitbox::renderPositionOffset(cur, prev, partialTick);
+    if (!hitbox::isFinite(offset)) return aabb;
+
+    aabb.min.x += offset.x;
+    aabb.min.y += offset.y;
+    aabb.min.z += offset.z;
+    aabb.max.x += offset.x;
+    aabb.max.y += offset.y;
+    aabb.max.z += offset.z;
+    return aabb;
+}
+
 static bedrocktools::sdk::Vec2 getActorRotation(void* actor) {
     bedrocktools::sdk::Vec2 rot = {0.f, 0.f};
     uintptr_t actorAddr = (uintptr_t)actor;
@@ -422,6 +510,11 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (thicknessSetting > 20.0f) thicknessSetting = 20.0f;
     const bool thickLines = thicknessSetting > 1.05f;
     const float halfWidth = thicknessSetting * 0.01f * 0.5f;
+
+    // Partial-tick fraction for this frame: the boxes are drawn at the
+    // interpolated render position so they ride the smoothly moving entity
+    // mesh instead of snapping at the tick rate (see hitbox_interp.hpp).
+    const float partialTick = currentPartialTick();
 
     auto drawLines = [&](const std::vector<std::pair<bedrocktools::sdk::Vec3, bedrocktools::sdk::Vec3>>& lines, uint32_t color) {
         if (lines.empty()) return;
@@ -579,7 +672,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
             void* ent = it->mActor;
             if (!ent || ent == g_localPlayerPtr) continue;
-            AABB aabb = getActorAABB(ent);
+            AABB aabb = getInterpolatedAABB(ent, partialTick);
             float hitDist = 0.0f;
             if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, kSelectionRayLength, hitDist)) continue;
             if (hitDist < bestDist) {
@@ -590,7 +683,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     }
 
     auto renderActor = [&](void* ent, uint32_t groupColor, bool skipOcclusion = false) {
-        AABB aabb = getActorAABB(ent);
+        AABB aabb = getInterpolatedAABB(ent, partialTick);
         if (aabb.min.x == 0.f && aabb.min.y == 0.f && aabb.min.z == 0.f &&
             aabb.max.x == 0.f && aabb.max.y == 0.f && aabb.max.z == 0.f) return;
 
@@ -814,6 +907,7 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     showEyeLine = j.value("showEyeLine", showEyeLine);
     showLookLine = j.value("showLookLine", showLookLine);
     lookLineLength = j.value("lookLineLength", lookLineLength);
+    smoothBoxes = j.value("smoothBoxes", smoothBoxes);
 
     if (j.contains("lineThickness")) {
         try { lineThickness = j["lineThickness"].get<float>(); } catch (...) {}
@@ -859,6 +953,7 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["showEyeLine"] = showEyeLine;
     j["showLookLine"] = showLookLine;
     j["lookLineLength"] = lookLineLength;
+    j["smoothBoxes"] = smoothBoxes;
     j["lineThickness"] = lineThickness;
     j["hitboxIndicator"] = hitboxIndicator;
 

@@ -33,6 +33,15 @@ public:
     bool is_number_integer() const { return m_type == Type::Integer; }
     bool is_boolean() const { return m_type == Type::Boolean; }
 
+    // Mirrors nlohmann::json::value(key, fallback): a missing key returns the
+    // module's current value so configs saved by older builds keep working.
+    template <class T>
+    T value(const std::string& key, const T& fallback) const {
+        const auto it = m_children.find(key);
+        if (it == m_children.end()) return fallback;
+        return it->second.template get<T>();
+    }
+
     template <class T>
     T get() const {
         if constexpr (std::is_same_v<T, bool>) {

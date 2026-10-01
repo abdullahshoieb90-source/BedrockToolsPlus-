@@ -29,6 +29,13 @@ public:
     bool showLookLine = false;
     float lookLineLength = 2.0f;
 
+    // Draw every box at the interpolated render position (the position the
+    // entity mesh is drawn at) instead of the raw 20 Hz tick AABB. The raw
+    // box snaps a whole tick of movement ahead of the smoothly rendered
+    // body, which reads as the hitbox lagging behind the player; off keeps
+    // the old tick-stepped boxes.
+    bool smoothBoxes = true;
+
     // Line thickness (menu slider units). 1.0 keeps the classic hairline
     // look; anything above that is drawn as real geometry (beams around
     // every edge) whose world-space width is lineThickness * 0.01 blocks,
