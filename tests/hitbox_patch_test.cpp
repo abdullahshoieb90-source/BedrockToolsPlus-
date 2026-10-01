@@ -1,18 +1,18 @@
-// Regression test for Hitbox partial-tick interpolation.
+// Regression test for Hitbox per-actor sample interpolation.
 //
-// The module used to draw the raw collision AABB, which is a 20 Hz tick
-// sample, while the game draws the entity mesh at an interpolated render
-// position (renderPos = lerp(prev, cur, partialTick)). A moving player's box
-// therefore snapped a whole tick of movement ahead of the smoothly rendered
-// body. The module now moves every box onto that render position, driven by
-// the measured tick clock.
+// The module used to draw the raw collision AABB - a tick sample - while the
+// game draws the entity mesh at an interpolated position. It then derived the
+// interpolation phase from the local player's tick callback; while gliding
+// with an elytra that callback fires off-cadence, so the phase collapsed to
+// zero and the player's own box stayed frozen on the previous sample and was
+// left behind by a firework-boosted glide (visible in third person only,
+// because that is the only mode that draws the local box).
 //
-// This host test builds fake actor memory (StateVectorComponent + the
-// AABBShapeComponent next to it) and drives the production code paths, so it
-// covers the geometry helpers, the tick clock, the render hook output and the
-// config plumbing without needing Minecraft.
+// The phase is now measured from the actor's own box samples, so this test
+// drives the production render hook frame by frame with fake actor memory and
+// checks what is actually drawn: the newest sample can never be abandoned.
 //
-// Build: g++ -std=c++20 -I include -I src -I tests/fakepl -I tests/fakejson
+// Build: g++ -std=c++20 -I include -I src -I tests/fakepl -I tests/fakejson -pthread
 //        tests/hitbox_patch_test.cpp -o /tmp/hitbox_patch_test
 // Run:   /tmp/hitbox_patch_test
 
@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "bedrocktools/events/EventBus.hpp"
@@ -51,6 +52,10 @@ EventBus& bus() {
 
 namespace {
 
+// Pinned sample interval for the mid-interval check: long enough that a slow
+// CI machine cannot overshoot it in a single 100 ms sleep.
+constexpr float kPinnedInterval = 0.5f;
+
 int g_failures = 0;
 
 void check(bool condition, const char* message) {
@@ -66,6 +71,10 @@ bool near(float a, float b, float epsilon = 0.0001f) {
     return std::fabs(a - b) <= epsilon;
 }
 
+void sleepMs(int ms) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
 template <typename T, std::size_t N>
 void writeAt(std::array<std::byte, N>& storage, std::size_t offset, const T& value) {
     std::memcpy(storage.data() + offset, &value, sizeof(T));
@@ -74,8 +83,6 @@ void writeAt(std::array<std::byte, N>& storage, std::size_t offset, const T& val
 // Actor memory as the module reads it:
 //   actor + Actor::mStateVectorComponent                        -> StateVectorComponent
 //   actor + Actor::mStateVectorComponent + mAABBShapeComponent  -> AABBShapeComponent
-// The component pointers sit next to each other in the actor, which is what
-// the offsets of the repo describe (0x208 state vector, 0x210 AABB shape).
 struct FakeActor {
     struct StateVector {
         bedrocktools::sdk::Vec3 pos{0.0f, 0.0f, 0.0f};
@@ -97,6 +104,12 @@ struct FakeActor {
     }
 
     void* handle() { return bytes.data(); }
+
+    // Moves the collision box to a new X, as a tick would.
+    void setBoxX(float x) {
+        shape.aabb = {{x, 64.0f, 10.0f}, {x + 0.6f, 65.8f, 10.6f}};
+        state.pos = {x, 64.0f, 10.0f};
+    }
 
     alignas(16) std::array<std::byte, 0x230> bytes{};
     StateVector state{};
@@ -181,140 +194,123 @@ DrawBounds drawOneFrame(FakeActor& actor, FakeActor& localPlayer) {
     return capturedBounds();
 }
 
+// The sample interval is measured from the frames themselves, so a test that
+// wants to check "halfway through the interval" pins it to the real 50 ms.
+void pinSampleInterval(FakeActor& actor) {
+    auto it = s_interpHistory.find(actor.handle());
+    if (it != s_interpHistory.end()) it->second.track.intervalSeconds = kPinnedInterval;
+}
+
 } // namespace
 
 int main() {
     using namespace bedrocktools::sdk::offsets;
 
-    std::printf("hitbox interpolated box geometry\n");
-
-    FakeActor actor;
-    actor.shape.aabb = {{10.0f, 64.0f, 10.0f}, {10.6f, 65.8f, 10.6f}};
-    actor.state.pos = {10.0f, 64.0f, 10.0f};
-    actor.state.prev = {9.5f, 64.0f, 10.0f};
-
-    const AABB raw = getActorAABB(actor.handle());
-    check(near(raw.min.x, 10.0f) && near(raw.max.x, 10.6f), "raw tick AABB reads from the component");
-
-    const AABB atTick = getInterpolatedAABB(actor.handle(), 0.0f);
-    check(near(atTick.min.x, 9.5f) && near(atTick.max.x, 10.1f),
-          "at the tick the box sits on the previous tick position (the mesh position)");
-
-    const AABB atHalf = getInterpolatedAABB(actor.handle(), 0.5f);
-    check(near(atHalf.min.x, 9.75f) && near(atHalf.max.x, 10.35f),
-          "halfway through the tick the box is halfway between the samples");
-
-    const AABB atEnd = getInterpolatedAABB(actor.handle(), 1.0f);
-    check(atEnd.min.x == raw.min.x && atEnd.max.x == raw.max.x,
-          "alpha 1 is byte-for-byte the old tick AABB");
-
-    check(atHalf.min.y == raw.min.y && atHalf.max.y == raw.max.y &&
-              atHalf.min.z == raw.min.z && atHalf.max.z == raw.max.z,
-          "only the moving axis is shifted");
-
-    // Teleports and bad reads must fall back to the authoritative tick box.
-    actor.state.prev = {10.0f, 64.0f, 60.0f};
-    const AABB teleported = getInterpolatedAABB(actor.handle(), 0.0f);
-    check(teleported.min.z == raw.min.z && teleported.max.z == raw.max.z,
-          "implausible tick delta falls back to the raw tick AABB");
-    actor.state.prev = {9.5f, 64.0f, 10.0f};
-
-    // A position that does not belong to the box (wrong build / stale
-    // component) must not drag the box anywhere.
-    actor.state.pos = {10.3f, 80.0f, 10.3f};
-    actor.state.prev = {10.0f, 80.0f, 10.3f};
-    const AABB mismatched = getInterpolatedAABB(actor.handle(), 0.0f);
-    check(mismatched.min.y == raw.min.y && mismatched.max.y == raw.max.y,
-          "position outside the box falls back to the raw tick AABB");
-    actor.state.pos = {10.0f, 64.0f, 10.0f};
-    actor.state.prev = {9.5f, 64.0f, 10.0f};
-
-    alignas(16) std::array<std::byte, 0x230> empty{};
-    const AABB missing = getInterpolatedAABB(empty.data(), 0.5f);
-    check(missing.min.x == 0.0f && missing.max.x == 0.0f,
-          "missing components fall back to an empty box instead of crashing");
-
-    std::printf("hitbox tick clock\n");
+    std::printf("hitbox raw box reads\n");
 
     FakeActor localPlayer;
-    localPlayer.shape.aabb = {{0.0f, 64.0f, 0.0f}, {0.6f, 65.8f, 0.6f}};
-    localPlayer.state.pos = {0.0f, 64.0f, 0.0f};
-    localPlayer.state.prev = {0.0f, 64.0f, 0.0f};
+    localPlayer.setBoxX(0.0f);
+
+    FakeActor actor;
+    actor.setBoxX(10.0f);
+
+    const AABB raw = getActorAABB(actor.handle());
+    check(near(raw.min.x, 10.0f) && near(raw.max.x, 10.6f),
+          "raw tick AABB reads from the component");
+
+    alignas(16) std::array<std::byte, 0x230> empty{};
+    const AABB missing = getActorAABB(empty.data());
+    check(!isDrawableBox(missing), "missing components are not a drawable box");
+
+    std::printf("hitbox first frame\n");
 
     HitboxModule mod;
     check(mod.smoothBoxes, "smooth boxes on by default");
 
-    s_lastTickTimeValid = false;
-    check(currentPartialTick() == 1.0f, "no tick sample yet -> raw tick boxes");
-
-    s_lastTickTime = std::chrono::steady_clock::now();
-    s_tickInterval = 0.05f;
-    s_lastTickTimeValid = true;
-    const float fresh = currentPartialTick();
-    check(fresh >= 0.0f && fresh < 0.1f, "fresh tick -> near 0 (box on the previous sample)");
-
-    s_lastTickTime = std::chrono::steady_clock::now() - std::chrono::milliseconds(25);
-    const float halfway = currentPartialTick();
-    check(halfway > 0.4f && halfway < 0.7f, "halfway through the tick -> ~0.5");
-
-    s_lastTickTime = std::chrono::steady_clock::now() - std::chrono::milliseconds(400);
-    check(currentPartialTick() == 1.0f, "stale tick (hitch) is clamped to raw tick boxes");
-
-    mod.smoothBoxes = false;
-    s_lastTickTime = std::chrono::steady_clock::now() - std::chrono::milliseconds(25);
-    check(currentPartialTick() == 1.0f, "menu toggle off -> raw tick boxes");
-    mod.smoothBoxes = true;
-
-    // The tick callback owns the clock: it measures the real interval instead
-    // of assuming 20 Hz, and it never interpolates across a disabled gap.
     mod.enabled = true;
-    s_lastTickTimeValid = false;
-    s_tickInterval = 0.05f;
-    s_hitboxTickCallback(actor.handle());
-    check(s_lastTickTimeValid && g_localPlayerPtr == actor.handle(),
-          "tick callback starts the clock and records the player");
+    s_interpHistory.clear();
 
-    s_lastTickTime = std::chrono::steady_clock::now() - std::chrono::milliseconds(20);
-    s_hitboxTickCallback(actor.handle());
-    check(s_tickInterval > 0.015f && s_tickInterval < 0.03f,
-          "measured interval replaces the 0.05 assumption");
+    // First time an actor is seen there is nothing to interpolate against, so
+    // the raw tick box is drawn.
+    DrawBounds first = drawOneFrame(actor, localPlayer);
+    check(first.valid && near(first.minX, 10.0f) && near(first.maxX, 10.6f),
+          "first sample draws the raw tick box");
 
-    s_lastTickTime = std::chrono::steady_clock::now() - std::chrono::milliseconds(900);
-    s_hitboxTickCallback(actor.handle());
-    check(s_tickInterval > 0.015f && s_tickInterval < 0.03f,
-          "a 0.9 s hitch is not adopted as the tick interval");
+    std::printf("hitbox interpolation across a sample\n");
 
-    mod.enabled = false;
-    s_hitboxTickCallback(actor.handle());
-    check(!s_lastTickTimeValid, "disabled module clears the clock");
+    // New sample: the box moved a tick of movement. The phase restarts, so the
+    // drawn box must sit on the *previous* sample, which is where the game
+    // starts drawing the mesh.
+    actor.setBoxX(10.5f);
+    DrawBounds atSample = drawOneFrame(actor, localPlayer);
+    check(atSample.valid && near(atSample.minX, 10.0f) && near(atSample.maxX, 10.6f),
+          "on a new sample the box is drawn on the previous sample");
 
-    std::printf("hitbox render hook output\n");
+    // Partway through the interval the box sits between the two samples. The
+    // expectation is derived from the module's own clock so a loaded machine
+    // cannot make the check flaky.
+    pinSampleInterval(actor);
+    sleepMs(100);
+    DrawBounds midInterval = drawOneFrame(actor, localPlayer);
+    float observedAlpha = -1.0f;
+    {
+        const auto it = s_interpHistory.find(actor.handle());
+        if (it != s_interpHistory.end() && it->second.hasSampleTime) {
+            const float elapsed = std::chrono::duration<float>(
+                std::chrono::steady_clock::now() - it->second.sampleTime).count();
+            observedAlpha = hitbox::sampleFraction(elapsed, it->second.track.intervalSeconds);
+        }
+    }
+    const float expectedMinX = 10.0f + 0.5f * observedAlpha;
+    check(midInterval.valid && observedAlpha > 0.05f && observedAlpha < 0.95f &&
+              near(midInterval.minX, expectedMinX, 0.02f),
+          "partway through the interval the box is between the samples");
 
-    mod.enabled = true;
-    mod.smoothBoxes = true;
-    mod.showItems = true;
-    s_lastTickTime = std::chrono::steady_clock::now();
-    s_tickInterval = 0.05f;
-    s_lastTickTimeValid = true;
+    // The next sample arrives: the box lands on it instead of lagging.
+    actor.setBoxX(11.0f);
+    DrawBounds nextSample = drawOneFrame(actor, localPlayer);
+    check(nextSample.valid && near(nextSample.minX, 10.5f) && near(nextSample.maxX, 11.1f),
+          "a new sample immediately puts the box a full sample behind, not two");
 
-    const DrawBounds drawnAtTick = drawOneFrame(actor, localPlayer);
-    check(drawnAtTick.valid && near(drawnAtTick.minX, 9.5f) && near(drawnAtTick.maxX, 10.1f),
-          "render hook draws the box at the interpolated position");
+    std::printf("hitbox stale sampling (elytra / firework boost regression)\n");
 
-    // Mid-tick: the box must be between the two tick samples, not snapped.
-    s_lastTickTime = std::chrono::steady_clock::now() - std::chrono::milliseconds(25);
-    const DrawBounds drawnMidTick = drawOneFrame(actor, localPlayer);
-    check(drawnMidTick.valid && drawnMidTick.minX > 9.55f && drawnMidTick.minX < 9.95f &&
-              drawnMidTick.minX < drawnAtTick.minX + 0.001f + 0.4f,
-          "render hook interpolates between the tick samples");
+    // The reported bug: while gliding with a firework, no new sample is
+    // accepted for a long time. The box used to stay frozen on the previous
+    // sample forever; it must instead be pulled onto the newest sample.
+    actor.setBoxX(20.0f);
+    drawOneFrame(actor, localPlayer); // sample at 20.0, phase restarts
+    actor.setBoxX(21.0f);
+    drawOneFrame(actor, localPlayer); // sample at 21.0, prev = 20.0
 
-    // Toggle off: the drawn box is the raw tick AABB again.
+    sleepMs(400); // no samples at all in this window
+    DrawBounds stalled = drawOneFrame(actor, localPlayer);
+    check(stalled.valid && near(stalled.minX, 21.0f) && near(stalled.maxX, 21.6f),
+          "after a stalled sampling window the box sits on the newest sample, never on the old one");
+
+    std::printf("hitbox teleport and toggle\n");
+
+    // A teleport cannot be interpolated across: the raw box is drawn.
+    actor.setBoxX(120.0f);
+    DrawBounds teleported = drawOneFrame(actor, localPlayer);
+    check(teleported.valid && near(teleported.minX, 120.0f) && near(teleported.maxX, 120.6f),
+          "teleport draws the raw box and drops the history");
+
+    // Menu toggle off: always the raw tick box, even mid-interval.
     mod.smoothBoxes = false;
-    s_lastTickTime = std::chrono::steady_clock::now();
-    const DrawBounds drawnOff = drawOneFrame(actor, localPlayer);
-    check(drawnOff.valid && near(drawnOff.minX, 10.0f) && near(drawnOff.maxX, 10.6f),
+    actor.setBoxX(121.0f);
+    drawOneFrame(actor, localPlayer);
+    sleepMs(25);
+    DrawBounds rawToggleOff = drawOneFrame(actor, localPlayer);
+    check(rawToggleOff.valid && near(rawToggleOff.minX, 121.0f) && near(rawToggleOff.maxX, 121.6f),
           "smooth boxes off -> raw tick AABB is drawn");
     mod.smoothBoxes = true;
+
+    std::printf("hitbox history hygiene\n");
+
+    check(s_interpHistory.find(actor.handle()) != s_interpHistory.end(),
+          "seen actors keep a sample history");
+    s_interpHistory.clear();
+    check(s_interpHistory.empty(), "history can be dropped when actors are unloaded");
 
     std::printf("hitbox config round-trip\n");
 

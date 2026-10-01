@@ -30,10 +30,12 @@ public:
     float lookLineLength = 2.0f;
 
     // Draw every box at the interpolated render position (the position the
-    // entity mesh is drawn at) instead of the raw 20 Hz tick AABB. The raw
-    // box snaps a whole tick of movement ahead of the smoothly rendered
-    // body, which reads as the hitbox lagging behind the player; off keeps
-    // the old tick-stepped boxes.
+    // entity mesh is drawn at) instead of the raw collision AABB. The raw box
+    // snaps a whole tick of movement ahead of the smoothly rendered body, which
+    // reads as the hitbox lagging behind the player. The interpolation phase
+    // is measured from each actor's own box samples, so a missing tick callback
+    // (gliding with an elytra) can never leave a box frozen behind the player.
+    // Off keeps the old tick-stepped boxes.
     bool smoothBoxes = true;
 
     // Line thickness (menu slider units). 1.0 keeps the classic hairline

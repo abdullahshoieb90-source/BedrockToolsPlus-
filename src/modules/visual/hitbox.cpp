@@ -8,10 +8,12 @@
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <chrono>
 #include <cmath>
-#include <string>
+#include <cstdint>
 #include <cstring>
-#include <vector>
+#include <string>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 typedef void (*Tessellator_begin_t)(void* tessellator, void* debugCallback, int primitiveMode, int vertexCount, int noIndices);
 typedef void (*Tessellator_color_t)(void* tessellator, float r, float g, float b, float a);
@@ -149,17 +151,6 @@ static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
 
 static void* g_localPlayerPtr = nullptr;
 
-// --- Tick clock for partial-tick interpolation -----------------------------
-// The AABB is a tick sample while the entity mesh is drawn at an
-// interpolated position, so the box has to be shifted by the elapsed
-// fraction of the current tick (see hitbox_interp.hpp). The local player's
-// tick is the same world tick for every nearby actor, so one clock is
-// enough. The interval is measured, not assumed, so the fraction stays
-// correct when the game is not running at exactly 20 Hz.
-static std::chrono::steady_clock::time_point s_lastTickTime{};
-static float s_tickInterval = 0.05f;
-static bool s_lastTickTimeValid = false;
-
 // Options::getPlayerViewPerspective(): 0 = first person, 1 = third person
 // back, 2 = third person front. Jumping in first person interpolates the
 // camera above the tick AABB, so the geometric test alone used to flash
@@ -187,32 +178,8 @@ struct AABB {
 static bool hasCategory(void* actor, uint32_t categoryBit);
 
 static void s_hitboxTickCallback(void* _this) {
-    if (!g_hitboxMod || !g_hitboxMod->enabled) {
-        // Do not interpolate across a gap: the next frame after the module is
-        // enabled again must start from the raw tick sample.
-        s_lastTickTimeValid = false;
-        return;
-    }
+    if (!g_hitboxMod || !g_hitboxMod->enabled) return;
     g_localPlayerPtr = _this;
-
-    const auto now = std::chrono::steady_clock::now();
-    if (s_lastTickTimeValid) {
-        const float measured = std::chrono::duration<float>(now - s_lastTickTime).count();
-        if (measured > 0.001f && measured < 0.5f) s_tickInterval = measured;
-    }
-    s_lastTickTime = now;
-    s_lastTickTimeValid = true;
-}
-
-// Partial-tick fraction for this frame: 0 right after the tick, 1 right
-// before the next one. Unknown timing returns 1, which leaves the raw tick
-// AABB in place (the pre-interpolation behaviour).
-static float currentPartialTick() {
-    if (!s_lastTickTimeValid) return 1.0f;
-    if (g_hitboxMod && !g_hitboxMod->smoothBoxes) return 1.0f;
-    const float elapsed =
-        std::chrono::duration<float>(std::chrono::steady_clock::now() - s_lastTickTime).count();
-    return hitbox::partialTickFraction(elapsed, s_tickInterval);
 }
 
 static MaterialPtr getMaterial(const char* name) {
@@ -381,46 +348,82 @@ static AABB getActorAABB(void* actor) {
     return aabb;
 }
 
-// StateVectorComponent: mPos is the authoritative tick position the AABB
-// belongs to, mPosPrev the position from the previous tick. The game
-// interpolates the entity mesh between the two (renderPos = lerp(prev, cur,
-// partialTick)), which is exactly what the hitbox has to follow.
-static bool getActorTickPositions(void* actor,
-                                  bedrocktools::sdk::Vec3& cur,
-                                  bedrocktools::sdk::Vec3& prev) {
-    const uintptr_t actorAddr = (uintptr_t)actor;
-    if (actorAddr < 0x1000) return false;
+// --- Per-actor sample history ---------------------------------------------
+// The box is drawn at lerp(prevSample, curSample, alpha), where the samples
+// are the actor's own collision boxes: a box that changed is a new tick
+// sample, so the phase is measured from the data instead of from a separate
+// tick callback (which can fire off-cadence and leave the box frozen on the
+// previous sample while the player flies away). See hitbox_interp.hpp.
+struct ActorInterp {
+    hitbox::Track track;
+    std::chrono::steady_clock::time_point sampleTime{};
+    bool hasSampleTime = false;
+    std::uint64_t lastSeenFrame = 0;
+};
 
-    const uintptr_t component =
-        *(uintptr_t*)(actorAddr + bedrocktools::sdk::offsets::Actor::mStateVectorComponent);
-    if (component < 0x1000) return false;
+static std::unordered_map<void*, ActorInterp> s_interpHistory;
+static std::uint64_t s_frameCounter = 0;
 
-    cur = *(bedrocktools::sdk::Vec3*)(component + bedrocktools::sdk::offsets::StateVectorComponent::mPosition);
-    prev = *(bedrocktools::sdk::Vec3*)(component + bedrocktools::sdk::offsets::StateVectorComponent::mPreviousPosition);
-    return true;
+static bool isDrawableBox(const AABB& box) {
+    if (box.min.x == 0.0f && box.min.y == 0.0f && box.min.z == 0.0f &&
+        box.max.x == 0.0f && box.max.y == 0.0f && box.max.z == 0.0f) {
+        return false;
+    }
+    return hitbox::isFinite(box.min) && hitbox::isFinite(box.max) &&
+           box.max.x >= box.min.x && box.max.y >= box.min.y && box.max.z >= box.min.z;
 }
 
-// The box as the player sees the entity: the tick AABB moved onto the
-// interpolated render position. Falls back to the raw tick AABB whenever the
-// tick data is missing, implausible (teleport, bad read) or the smoothing is
-// disabled, so the box can never be dragged away from the entity.
-static AABB getInterpolatedAABB(void* actor, float partialTick) {
+static bedrocktools::sdk::Vec3 boxCenter(const AABB& box) {
+    return bedrocktools::sdk::Vec3{(box.min.x + box.max.x) * 0.5f,
+                                   (box.min.y + box.max.y) * 0.5f,
+                                   (box.min.z + box.max.z) * 0.5f};
+}
+
+// Drop actors that have not been drawn for a while, so recycled pointers
+// cannot inherit a stale sample from an unrelated entity.
+static void trimInterpHistory() {
+    if (s_interpHistory.size() <= 256) return;
+    for (auto it = s_interpHistory.begin(); it != s_interpHistory.end();) {
+        if (s_frameCounter - it->second.lastSeenFrame > 120) it = s_interpHistory.erase(it);
+        else ++it;
+    }
+}
+
+// The box as the player sees the entity: the collision box moved onto the
+// interpolated position the game draws the mesh at. Falls back to the raw box
+// whenever there is nothing to interpolate (first sample, teleport, bad read)
+// or the smoothing is disabled, so the box can never be dragged away from the
+// entity.
+static AABB getInterpolatedAABB(void* actor) {
     AABB aabb = getActorAABB(actor);
-    if (partialTick >= 1.0f) return aabb;
+    if (!isDrawableBox(aabb)) return aabb;
 
-    bedrocktools::sdk::Vec3 cur{0.f, 0.f, 0.f};
-    bedrocktools::sdk::Vec3 prev{0.f, 0.f, 0.f};
-    if (!getActorTickPositions(actor, cur, prev)) return aabb;
+    // The history is kept warm even while the menu toggle is off, so
+    // switching it back on does not start from an empty track.
+    const auto now = std::chrono::steady_clock::now();
+    ActorInterp& entry = s_interpHistory[actor];
+    entry.lastSeenFrame = s_frameCounter;
 
-    // The current tick position must belong to this box; anything else means
-    // the state-vector offsets do not match this build, so the raw tick AABB
-    // is safer than a shift built from unrelated memory.
-    if (!hitbox::positionNearBox(cur, aabb.min, aabb.max)) return aabb;
+    float elapsed = 0.0f;
+    if (entry.hasSampleTime) {
+        elapsed = std::chrono::duration<float>(now - entry.sampleTime).count();
+        if (!(elapsed > 0.0f)) elapsed = 0.0f;
+        if (elapsed > 1.0f) elapsed = 1.0f; // a hitch must not poison the phase
+    }
 
-    const bedrocktools::sdk::Vec3 delta{cur.x - prev.x, cur.y - prev.y, cur.z - prev.z};
-    if (!hitbox::isPlausibleTickDelta(delta)) return aabb;
+    // A changed box is a new sample: the phase restarts from it.
+    if (hitbox::pushSample(entry.track, boxCenter(aabb), elapsed)) {
+        entry.sampleTime = now;
+        entry.hasSampleTime = true;
+        elapsed = 0.0f;
+    }
 
-    const bedrocktools::sdk::Vec3 offset = hitbox::renderPositionOffset(cur, prev, partialTick);
+    if (!g_hitboxMod || !g_hitboxMod->smoothBoxes) return aabb;
+    if (!entry.track.hasPrev) return aabb;
+
+    const float alpha = hitbox::sampleFraction(elapsed, entry.track.intervalSeconds);
+    const bedrocktools::sdk::Vec3 offset =
+        hitbox::sampleOffset(entry.track.prevCenter, entry.track.curCenter, alpha);
     if (!hitbox::isFinite(offset)) return aabb;
 
     aabb.min.x += offset.x;
@@ -511,10 +514,9 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     const bool thickLines = thicknessSetting > 1.05f;
     const float halfWidth = thicknessSetting * 0.01f * 0.5f;
 
-    // Partial-tick fraction for this frame: the boxes are drawn at the
-    // interpolated render position so they ride the smoothly moving entity
-    // mesh instead of snapping at the tick rate (see hitbox_interp.hpp).
-    const float partialTick = currentPartialTick();
+    // Per-frame bookkeeping for the sample history (see getInterpolatedAABB).
+    ++s_frameCounter;
+    trimInterpHistory();
 
     auto drawLines = [&](const std::vector<std::pair<bedrocktools::sdk::Vec3, bedrocktools::sdk::Vec3>>& lines, uint32_t color) {
         if (lines.empty()) return;
@@ -639,7 +641,9 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     // view, and jumping interpolates the camera above the tick AABB so a
     // tight inside-AABB test used to flash it). Combine the game camera
     // mode with a jump-tolerant geometric test; see hitbox_camera.hpp.
-    AABB localAabb = getActorAABB(g_localPlayerPtr);
+    // Also feeds the local player's sample history every frame, so switching
+    // to third person interpolates from a warm history instead of snapping.
+    AABB localAabb = getInterpolatedAABB(g_localPlayerPtr);
     const bool cameraLooksThirdPerson = hitbox::isThirdPersonCamera(
         camX, camY, camZ,
         localAabb.min.x, localAabb.min.y, localAabb.min.z,
@@ -672,7 +676,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
             void* ent = it->mActor;
             if (!ent || ent == g_localPlayerPtr) continue;
-            AABB aabb = getInterpolatedAABB(ent, partialTick);
+            AABB aabb = getInterpolatedAABB(ent);
             float hitDist = 0.0f;
             if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, kSelectionRayLength, hitDist)) continue;
             if (hitDist < bestDist) {
@@ -683,9 +687,8 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     }
 
     auto renderActor = [&](void* ent, uint32_t groupColor, bool skipOcclusion = false) {
-        AABB aabb = getInterpolatedAABB(ent, partialTick);
-        if (aabb.min.x == 0.f && aabb.min.y == 0.f && aabb.min.z == 0.f &&
-            aabb.max.x == 0.f && aabb.max.y == 0.f && aabb.max.z == 0.f) return;
+        AABB aabb = getInterpolatedAABB(ent);
+        if (!isDrawableBox(aabb)) return;
 
         // Cull hitboxes that are fully hidden behind solid blocks instead of
         // drawing them through walls. Skips the eye/look lines too, since

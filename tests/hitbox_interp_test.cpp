@@ -1,11 +1,12 @@
-// Regression test for Hitbox partial-tick interpolation.
+// Regression test for Hitbox per-actor sample interpolation.
 //
-// The collision AABB is a 20 Hz tick sample while the game draws the entity
-// mesh at an interpolated render position (renderPos = lerp(prev, cur,
-// partialTick)). Drawing the raw tick box makes it snap a whole tick of
-// movement ahead of the body, so the module moves every box onto that render
-// position. These checks pin down the timing fraction, the direction of the
-// correction and the sanity guards.
+// The collision AABB is a tick sample while the game draws the entity mesh at
+// a position interpolated between the last two samples, so every box is drawn
+// at lerp(prevSample, curSample, alpha). The phase used to come from the local
+// player's tick callback; while gliding with an elytra that callback fires
+// off-cadence, the phase collapsed back to zero and the box stayed frozen on
+// the previous sample - several blocks behind a firework-boosted glide. The
+// phase is now measured from the box samples themselves.
 //
 //     g++ -std=c++20 -I include -I src tests/hitbox_interp_test.cpp -o /tmp/hitbox_interp_test
 //     /tmp/hitbox_interp_test
@@ -45,84 +46,108 @@ Vec3 lerp(const Vec3& a, const Vec3& b, float t) {
 } // namespace
 
 int main() {
-    std::printf("hitbox partial-tick fraction\n");
+    std::printf("hitbox sample phase\n");
 
-    // 20 Hz tick: 0 right after the tick, 1 right before the next one.
-    check(hitbox::partialTickFraction(0.0f, 0.05f) == 0.0f, "just after the tick -> 0");
-    check(near(hitbox::partialTickFraction(0.025f, 0.05f), 0.5f), "halfway through the tick -> 0.5");
-    check(hitbox::partialTickFraction(0.05f, 0.05f) == 1.0f, "at the next tick -> 1");
-    check(hitbox::partialTickFraction(0.09f, 0.05f) == 1.0f, "late frame is clamped to 1");
-    check(hitbox::partialTickFraction(-0.01f, 0.05f) == 0.0f, "negative elapsed is clamped to 0");
-    check(hitbox::partialTickFraction(std::nanf(""), 0.05f) == 0.0f, "NaN elapsed does not leak through");
+    // 20 Hz samples: 0 right after one, 1 right before the next.
+    check(hitbox::sampleFraction(0.0f, 0.05f) == 0.0f, "just after the sample -> 0");
+    check(near(hitbox::sampleFraction(0.025f, 0.05f), 0.5f), "halfway -> 0.5");
+    check(hitbox::sampleFraction(0.05f, 0.05f) == 1.0f, "at the next sample -> 1");
+    check(hitbox::sampleFraction(0.4f, 0.05f) == 1.0f,
+          "a stalled callback must not hold the box behind the newest sample");
+    check(hitbox::sampleFraction(-0.01f, 0.05f) == 0.0f, "negative elapsed clamped to 0");
+    check(hitbox::sampleFraction(std::nanf(""), 0.05f) == 0.0f, "NaN elapsed does not leak through");
+    check(hitbox::sampleFraction(0.01f, 0.0f) == 1.0f, "unknown interval -> raw box");
+    check(hitbox::sampleFraction(0.01f, -0.05f) == 1.0f, "negative interval -> raw box");
 
-    // Unknown interval must keep the raw tick AABB, not a stale position.
-    check(hitbox::partialTickFraction(0.01f, 0.0f) == 1.0f, "zero interval -> raw box (1)");
-    check(hitbox::partialTickFraction(0.01f, -0.05f) == 1.0f, "negative interval -> raw box (1)");
+    std::printf("hitbox sample offset\n");
 
-    std::printf("hitbox render-position offset\n");
-
-    // Walking along +X: cur is the tick AABB position, prev the previous tick.
     const Vec3 prev{9.5f, 64.0f, 10.0f};
     const Vec3 cur{10.0f, 64.0f, 10.0f};
 
-    // alpha = 0: the model is drawn at the previous tick position, so the box
-    // has to move a full tick of movement back onto it.
-    check(vecNear(hitbox::renderPositionOffset(cur, prev, 0.0f), -0.5f, 0.0f, 0.0f),
-          "alpha 0 -> box shifted back one full tick of movement");
-    check(vecNear(hitbox::renderPositionOffset(cur, prev, 0.5f), -0.25f, 0.0f, 0.0f),
-          "alpha 0.5 -> box shifted back half a tick of movement");
-    check(vecNear(hitbox::renderPositionOffset(cur, prev, 1.0f), 0.0f, 0.0f, 0.0f),
-          "alpha 1 -> raw tick box (old behaviour)");
+    check(vecNear(hitbox::sampleOffset(prev, cur, 0.0f), -0.5f, 0.0f, 0.0f),
+          "alpha 0 -> box on the previous sample (the mesh position)");
+    check(vecNear(hitbox::sampleOffset(prev, cur, 0.5f), -0.25f, 0.0f, 0.0f),
+          "alpha 0.5 -> box halfway between the samples");
+    check(vecNear(hitbox::sampleOffset(prev, cur, 1.0f), 0.0f, 0.0f, 0.0f),
+          "alpha 1 -> newest sample (raw tick box)");
 
-    // The shifted box is exactly lerp(prev, cur, alpha), i.e. the same
-    // position the game draws the entity mesh at.
+    // The shifted box is exactly lerp(prev, cur, alpha), i.e. the position the
+    // game draws the entity mesh at.
     for (float alpha = 0.0f; alpha <= 1.0f; alpha += 0.25f) {
-        const Vec3 offset = hitbox::renderPositionOffset(cur, prev, alpha);
+        const Vec3 offset = hitbox::sampleOffset(prev, cur, alpha);
         const Vec3 shifted{cur.x + offset.x, cur.y + offset.y, cur.z + offset.z};
-        check(vecNear(shifted, lerp(prev, cur, alpha).x, lerp(prev, cur, alpha).y,
-                      lerp(prev, cur, alpha).z),
+        const Vec3 expected = lerp(prev, cur, alpha);
+        check(vecNear(shifted, expected.x, expected.y, expected.z),
               "shifted box equals lerp(prev, cur, alpha)");
     }
 
-    // Standing still is a no-op, so idle entities never move.
-    check(vecNear(hitbox::renderPositionOffset(cur, cur, 0.3f), 0.0f, 0.0f, 0.0f),
+    check(vecNear(hitbox::sampleOffset(cur, cur, 0.3f), 0.0f, 0.0f, 0.0f),
           "no movement -> no offset");
 
-    std::printf("hitbox tick-delta sanity guard\n");
+    std::printf("hitbox sample history\n");
 
-    check(hitbox::isPlausibleTickDelta(Vec3{0.28f, 0.0f, 0.0f}), "sprinting player accepted");
-    check(hitbox::isPlausibleTickDelta(Vec3{0.0f, -3.9f, 0.0f}), "terminal-velocity fall accepted");
-    check(hitbox::isPlausibleTickDelta(Vec3{hitbox::kMaxTickDelta, 0.0f, 0.0f}),
-          "boundary delta accepted");
-    check(hitbox::isPlausibleTickDelta(Vec3{-0.3f, 0.42f, 0.3f}), "jump arc accepted");
+    {
+        hitbox::Track track;
+        check(!track.hasSample && !track.hasPrev, "fresh track has no samples");
+        check(near(track.intervalSeconds, 0.05f), "fresh track assumes a 50 ms interval");
 
-    check(!hitbox::isPlausibleTickDelta(Vec3{40.0f, 0.0f, 0.0f}), "teleport rejected");
-    check(!hitbox::isPlausibleTickDelta(Vec3{0.0f, -500.0f, 0.0f}), "bad read rejected");
-    check(!hitbox::isPlausibleTickDelta(Vec3{std::nanf(""), 0.0f, 0.0f}), "NaN delta rejected");
-    check(!hitbox::isPlausibleTickDelta(
-              Vec3{std::numeric_limits<float>::infinity(), 0.0f, 0.0f}),
-          "infinite delta rejected");
+        check(hitbox::pushSample(track, prev, 0.0f), "first sample accepted");
+        check(track.hasSample && !track.hasPrev, "first sample cannot interpolate yet");
 
-    check(hitbox::isFinite(Vec3{1.0f, 2.0f, 3.0f}), "finite offset accepted");
-    check(!hitbox::isFinite(Vec3{std::nanf(""), 2.0f, 3.0f}), "NaN offset rejected");
+        // Same position again: not a new sample, so the phase keeps running.
+        check(!hitbox::pushSample(track, prev, 0.02f), "unchanged box is not a new sample");
 
-    std::printf("hitbox position/box containment\n");
+        check(hitbox::pushSample(track, cur, 0.02f), "moved box is a new sample");
+        check(track.hasPrev, "second sample enables interpolation");
+        check(near(track.intervalSeconds, 0.02f), "short interval measured from the samples");
+        check(vecNear(track.prevCenter, prev.x, prev.y, prev.z) &&
+                  vecNear(track.curCenter, cur.x, cur.y, cur.z),
+              "history holds the last two samples");
 
-    const Vec3 boxMin{10.0f, 64.0f, 10.0f};
-    const Vec3 boxMax{10.6f, 65.8f, 10.6f};
+        // A hitch is not adopted as the sample interval.
+        check(hitbox::pushSample(track, Vec3{10.5f, 64.0f, 10.0f}, 4.0f), "sample after a hitch accepted");
+        check(near(track.intervalSeconds, 0.02f), "hitch interval rejected");
 
-    check(hitbox::positionNearBox(Vec3{10.3f, 64.0f, 10.3f}, boxMin, boxMax),
-          "feet centre inside the box accepted");
-    check(hitbox::positionNearBox(Vec3{10.3f, 65.8f, 10.3f}, boxMin, boxMax),
-          "position at head height accepted");
-    check(hitbox::positionNearBox(Vec3{10.3f, 63.2f, 10.3f}, boxMin, boxMax),
-          "small collision offset stays within the slack");
-    check(!hitbox::positionNearBox(Vec3{10.3f, 62.5f, 10.3f}, boxMin, boxMax),
-          "position past the slack rejected");
-    check(!hitbox::positionNearBox(Vec3{10.3f, 80.0f, 10.3f}, boxMin, boxMax),
-          "position far above the box rejected");
-    check(!hitbox::positionNearBox(Vec3{25.0f, 64.5f, 10.3f}, boxMin, boxMax),
-          "position far to the side rejected");
+        // A teleport keeps prev == cur, so that step cannot be interpolated
+        // across and the box stays on the newest sample.
+        check(hitbox::pushSample(track, Vec3{80.0f, 64.0f, 10.0f}, 0.02f), "teleport sample accepted");
+        check(!track.hasPrev, "teleport leaves nothing to interpolate");
+        check(vecNear(track.curCenter, 80.0f, 64.0f, 10.0f), "newest sample is the teleport landing");
+
+        check(!hitbox::pushSample(track, Vec3{std::nanf(""), 0.0f, 0.0f}, 0.02f),
+              "non-finite sample rejected");
+        check(vecNear(track.curCenter, 80.0f, 64.0f, 10.0f), "rejected sample leaves history intact");
+    }
+
+    // The reported bug: a player glides away (firework boost) while no new
+    // sample is accepted, and the box must never stay on an old sample.
+    {
+        hitbox::Track track;
+        hitbox::pushSample(track, Vec3{0.0f, 64.0f, 0.0f}, 0.0f);
+        hitbox::pushSample(track, Vec3{1.0f, 64.0f, 0.0f}, 0.05f);
+
+        const float stalledPhase = hitbox::sampleFraction(0.4f, track.intervalSeconds);
+        const Vec3 offset = hitbox::sampleOffset(track.prevCenter, track.curCenter, stalledPhase);
+        check(vecNear(offset, 0.0f, 0.0f, 0.0f),
+              "stalled sampling leaves the box on the newest sample, never on the old one");
+    }
+
+    std::printf("hitbox sample sanity guard\n");
+
+    check(hitbox::isPlausibleSampleJump(prev, cur), "walking sample accepted");
+    check(hitbox::isPlausibleSampleJump(cur, Vec3{10.0f, 60.0f, 10.0f}),
+          "terminal-velocity fall accepted");
+    check(hitbox::isPlausibleSampleJump(cur, Vec3{10.0f + hitbox::kMaxSampleJump, 64.0f, 10.0f}),
+          "boundary jump accepted");
+    check(!hitbox::isPlausibleSampleJump(cur, Vec3{40.0f, 64.0f, 10.0f}), "teleport rejected");
+    check(!hitbox::isPlausibleSampleJump(cur, Vec3{10.0f, -500.0f, 10.0f}), "bad read rejected");
+    check(!hitbox::isPlausibleSampleJump(cur, Vec3{std::nanf(""), 64.0f, 10.0f}),
+          "NaN sample rejected");
+    check(!hitbox::isPlausibleSampleJump(Vec3{std::numeric_limits<float>::infinity(), 0.0f, 0.0f}, cur),
+          "infinite sample rejected");
+
+    check(hitbox::isFinite(Vec3{1.0f, 2.0f, 3.0f}), "finite value accepted");
+    check(!hitbox::isFinite(Vec3{std::nanf(""), 2.0f, 3.0f}), "NaN value rejected");
 
     std::printf("\n");
     if (g_failures != 0) {

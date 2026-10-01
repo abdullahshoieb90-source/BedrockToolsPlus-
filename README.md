@@ -29,7 +29,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **Hitbox** draws the collision boxes of nearby entities and players, plus optional eye and look lines, as a world-space overlay.
 
-- Boxes are drawn at the interpolated render position the game draws each entity at, not at the raw 20 Hz tick AABB. The raw box snaps a whole tick of movement ahead of the smoothly moving body, which reads as the hitbox lagging behind the player; **Smooth Boxes** (on by default) is what drives the box from the measured tick clock, and turning it off gives the plain tick boxes back.
+- Boxes are drawn at the interpolated render position the game draws each entity at, not at the raw collision AABB. The raw box snaps a whole tick of movement ahead of the smoothly moving body, which reads as the hitbox lagging behind the player; **Smooth Boxes** (on by default) derives the interpolation phase from each entity's own box samples, so a stalled tick callback (for example while gliding with a firework-boosted elytra) can never leave a box frozen behind the player. Turning it off gives the plain tick boxes back.
 - **Show Entities**, **Show Players** and **Show Items** pick which groups are drawn, **Hitbox Color** and **Show Items Color** style them, and **Line Thickness** above 1 draws real camera-facing geometry because most mobile GLES drivers ignore native line width.
 - **Show 3rd Person** adds your own box while the camera is behind you, **Show Eye Line** and **Show Look Line** annotate every box, and **Hitbox Indicator** recolors the box under your crosshair with **Indicator Active Color** / **Indicator Default Color**.
 - Boxes hidden behind solid blocks are culled, so a wall stops an entity's box from showing through it.
