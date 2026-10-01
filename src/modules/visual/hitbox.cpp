@@ -147,6 +147,13 @@ static uint32_t forceOpaqueColor(uint32_t color) {
     return color | 0xFF000000u;
 }
 
+// Draw ranges are user configurable; clamp them so a hand-edited config can
+// never turn the per-frame actor fetch into a world-wide scan.
+static float clampRange(float value) {
+    if (!(value > 0.0f)) return 0.0f; // also catches NaN
+    return value > kHitboxMaxRange ? kHitboxMaxRange : value;
+}
+
 static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
 
 static void* g_localPlayerPtr = nullptr;
@@ -650,10 +657,16 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         localAabb.max.x, localAabb.max.y, localAabb.max.z);
     const bool gameThirdPerson = s_perspectiveKnown ? (s_perspective != 0) : true;
 
+    // One fetch has to cover the widest of the configured ranges; the
+    // per-group filter below turns the fetched cube into a sphere of exactly
+    // `range` / `itemsRange` blocks around the local player.
+    const float range = clampRange(g_hitboxMod->range);
+    const float itemsRange = clampRange(g_hitboxMod->itemsRange);
+    const float fetchRadius = range > itemsRange ? range : itemsRange;
+
     ActorVec actors{};
-    if (s_actorFetchNearby) {
-        constexpr float kActorFetchRadius = 30.0f;
-        bedrocktools::sdk::Vec3 extent = {kActorFetchRadius, kActorFetchRadius, kActorFetchRadius};
+    if (s_actorFetchNearby && fetchRadius > 0.0f) {
+        bedrocktools::sdk::Vec3 extent = {fetchRadius, fetchRadius, fetchRadius};
         actors = s_actorFetchNearby(g_localPlayerPtr, &extent, 1);
     }
 
@@ -768,6 +781,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             }
 
             uint32_t groupColor = g_hitboxMod->hitboxColor;
+            float groupRange = range;
             if (isPlayer) {
                 if (!g_hitboxMod->showPlayers) continue;
             } else if (hasCategory(ent, bedrocktools::sdk::offsets::ActorCategories::IsMob)) {
@@ -775,7 +789,13 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             } else {
                 if (!g_hitboxMod->showItems) continue;
                 groupColor = g_hitboxMod->showItemsColor;
+                groupRange = itemsRange;
             }
+
+            // The fetched list is distance sorted; the range is a sphere
+            // around the local player, so a diagonal actor just outside the
+            // cube corner is dropped as well.
+            if (it->mDistance > groupRange) continue;
 
             if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
 
@@ -900,6 +920,8 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     showEntities = j.value("showEntities", showEntities);
     showPlayers = j.value("showPlayers", showPlayers);
     showItems = j.value("showItems", showItems);
+    range = clampRange(j.value("range", range));
+    itemsRange = clampRange(j.value("itemsRange", itemsRange));
     // Prefer the current key; fall back to the old "showSelf" name so
     // existing configs keep working after the rename.
     if (j.contains("show3rdPerson")) {
@@ -952,6 +974,8 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["showEntities"] = showEntities;
     j["showPlayers"] = showPlayers;
     j["showItems"] = showItems;
+    j["range"] = range;
+    j["itemsRange"] = itemsRange;
     j["show3rdPerson"] = show3rdPerson;
     j["showEyeLine"] = showEyeLine;
     j["showLookLine"] = showLookLine;

@@ -31,6 +31,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 - Boxes are drawn at the interpolated render position the game draws each entity at, not at the raw collision AABB. The raw box snaps a whole tick of movement ahead of the smoothly moving body, which reads as the hitbox lagging behind the player; **Smooth Boxes** (on by default) derives the interpolation phase from each entity's own box samples, so a stalled tick callback (for example while gliding with a firework-boosted elytra) can never leave a box frozen behind the player. Turning it off gives the plain tick boxes back.
 - **Show Entities**, **Show Players** and **Show Items** pick which groups are drawn, **Hitbox Color** and **Show Items Color** style them, and **Line Thickness** above 1 draws real camera-facing geometry because most mobile GLES drivers ignore native line width.
+- **Range** sets how far players and mobs are drawn (100 blocks by default, 0 disables the group, ceiling 200), measured as a sphere around you. **Items Range** (32 blocks by default) keeps dropped stacks and farms from flooding the screen; both are clamped on load.
 - **Show 3rd Person** adds your own box while the camera is behind you, **Show Eye Line** and **Show Look Line** annotate every box, and **Hitbox Indicator** recolors the box under your crosshair with **Indicator Active Color** / **Indicator Default Color**.
 - Boxes hidden behind solid blocks are culled, so a wall stops an entity's box from showing through it.
 

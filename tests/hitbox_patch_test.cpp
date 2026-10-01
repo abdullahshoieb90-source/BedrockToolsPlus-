@@ -111,6 +111,11 @@ struct FakeActor {
         state.pos = {x, 64.0f, 10.0f};
     }
 
+    // Actor::mCategories drives the players / mobs / items split.
+    void setCategories(std::uint32_t categories) {
+        writeAt(bytes, bedrocktools::sdk::offsets::Actor::mCategories, categories);
+    }
+
     alignas(16) std::array<std::byte, 0x230> bytes{};
     StateVector state{};
     Shape shape{};
@@ -122,8 +127,9 @@ std::vector<bedrocktools::sdk::Vec3> g_vertices;
 int g_beginCalls = 0;
 
 void fakeTessBegin(void*, void*, int, int, int) {
+    // One begin call per drawn pass; the module's hairline pass is one call
+    // per box, so this doubles as the box counter.
     ++g_beginCalls;
-    g_vertices.clear();
 }
 void fakeTessColor(void*, float, float, float, float) {}
 void fakeTessVertex(void*, float x, float y, float z) {
@@ -131,10 +137,13 @@ void fakeTessVertex(void*, float x, float y, float z) {
 }
 void fakeRenderMesh(void*, void*, void*, char*) {}
 
-DistanceSortedActor g_fetched[2];
-int g_fetchedCount = 0;
-ActorVec fakeFetchNearby(void*, void*, int) {
-    return ActorVec{g_fetched, g_fetched + g_fetchedCount, g_fetched + 2};
+std::vector<DistanceSortedActor> g_fetchedList;
+float g_lastFetchExtent = 0.0f;
+ActorVec fakeFetchNearby(void*, void* extent, int) {
+    if (extent) g_lastFetchExtent = static_cast<float*>(extent)[0];
+    if (g_fetchedList.empty()) return ActorVec{};
+    return ActorVec{g_fetchedList.data(), g_fetchedList.data() + g_fetchedList.size(),
+                    g_fetchedList.data() + g_fetchedList.size()};
 }
 
 struct DrawBounds {
@@ -160,9 +169,20 @@ DrawBounds capturedBounds() {
     return bounds;
 }
 
+struct FetchEntry {
+    FakeActor* actor;
+    float distance;
+};
+
 // Runs the production render hook with a minimal ScreenContext /
-// LevelRenderer stand-in and returns the bounds of the drawn box.
-DrawBounds drawOneFrame(FakeActor& actor, FakeActor& localPlayer) {
+// LevelRenderer stand-in and returns what the frame drew. Each box is 12 edges
+// x 2 vertices (the hairline pass; the thick pass only runs above thickness 1).
+struct FrameResult {
+    DrawBounds bounds;
+    int boxes = 0;
+};
+
+FrameResult drawFrame(const std::vector<FetchEntry>& entries, FakeActor& localPlayer) {
     alignas(16) std::array<std::byte, 0xC0> screenContext{};
     alignas(16) std::array<std::byte, 0x1100> levelRenderer{};
     alignas(16) std::array<std::byte, 0x1050> rendererPlayer{};
@@ -180,8 +200,11 @@ DrawBounds drawOneFrame(FakeActor& actor, FakeActor& localPlayer) {
 
     g_vertices.clear();
     g_beginCalls = 0;
-    g_fetched[0] = DistanceSortedActor{actor.handle(), 1.0f, 0.0f};
-    g_fetchedCount = 1;
+    g_lastFetchExtent = 0.0f;
+    g_fetchedList.clear();
+    for (const auto& entry : entries) {
+        g_fetchedList.push_back(DistanceSortedActor{entry.actor->handle(), entry.distance, 0.0f});
+    }
 
     g_localPlayerPtr = localPlayer.handle();
     s_tessBegin = fakeTessBegin;
@@ -191,7 +214,16 @@ DrawBounds drawOneFrame(FakeActor& actor, FakeActor& localPlayer) {
     s_actorFetchNearby = fakeFetchNearby;
 
     _renderLevel_hook(levelRenderer.data(), screenContext.data(), nullptr);
-    return capturedBounds();
+
+    FrameResult result;
+    result.bounds = capturedBounds();
+    result.boxes = g_beginCalls;
+    return result;
+}
+
+// Single-actor convenience wrapper for the interpolation checks.
+DrawBounds drawOneFrame(FakeActor& actor, FakeActor& localPlayer) {
+    return drawFrame({{&actor, 1.0f}}, localPlayer).bounds;
 }
 
 // The sample interval is measured from the frames themselves, so a test that
@@ -235,6 +267,8 @@ int main() {
     DrawBounds first = drawOneFrame(actor, localPlayer);
     check(first.valid && near(first.minX, 10.0f) && near(first.maxX, 10.6f),
           "first sample draws the raw tick box");
+    check(drawFrame({{&actor, 1.0f}}, localPlayer).boxes == 1,
+          "one actor in range yields exactly one box");
 
     std::printf("hitbox interpolation across a sample\n");
 
@@ -312,6 +346,68 @@ int main() {
     s_interpHistory.clear();
     check(s_interpHistory.empty(), "history can be dropped when actors are unloaded");
 
+    std::printf("hitbox draw range\n");
+
+    {
+        using namespace bedrocktools::sdk::offsets;
+
+        HitboxModule ranged;
+        ranged.enabled = true;
+        s_interpHistory.clear();
+
+        FakeActor nearMob, midMob, farMob;
+        nearMob.setBoxX(10.0f);
+        nearMob.setCategories(ActorCategories::IsMob);
+        midMob.setBoxX(60.0f);
+        midMob.setCategories(ActorCategories::IsMob);
+        farMob.setBoxX(150.0f);
+        farMob.setCategories(ActorCategories::IsMob);
+
+        check(near(ranged.range, 100.0f), "players and mobs default to a 100 block range");
+        check(near(ranged.itemsRange, 32.0f), "items keep a shorter 32 block range");
+
+        const std::vector<FetchEntry> mobs{{&nearMob, 10.0f}, {&midMob, 60.0f}, {&farMob, 150.0f}};
+        FrameResult within = drawFrame(mobs, localPlayer);
+        check(within.boxes == 2, "a mob outside the 100 block range is not drawn");
+        check(near(within.bounds.maxX, 60.6f), "the farthest drawn mob is the one inside the range");
+        check(near(g_lastFetchExtent, 100.0f), "the actor fetch covers the configured range");
+
+        ranged.range = 200.0f;
+        check(drawFrame(mobs, localPlayer).boxes == 3, "raising the range brings the far mob back");
+
+        ranged.range = 40.0f;
+        check(drawFrame(mobs, localPlayer).boxes == 1, "lowering the range drops the mid mob");
+
+        ranged.range = 0.0f;
+        check(drawFrame(mobs, localPlayer).boxes == 0, "range 0 disables the group");
+        ranged.range = 100.0f;
+
+        // Items are their own group: same fetch, shorter range.
+        FakeActor itemActor;
+        itemActor.setBoxX(40.0f);
+        itemActor.setCategories(ActorCategories::IsItem);
+        const std::vector<FetchEntry> items{{&itemActor, 40.0f}};
+
+        ranged.itemsRange = 32.0f;
+        check(drawFrame(items, localPlayer).boxes == 0, "an item outside its own range is not drawn");
+        ranged.itemsRange = 64.0f;
+        check(drawFrame(items, localPlayer).boxes == 1, "an item inside its own range is drawn");
+
+        // Ranges are clamped so a hand-edited config cannot scan the world.
+        ranged.range = 5000.0f;
+        ranged.itemsRange = -12.0f;
+        drawFrame(items, localPlayer);
+        check(near(g_lastFetchExtent, kHitboxMaxRange),
+              "the fetch extent is clamped to the module ceiling");
+
+        ranged.range = 100.0f;
+        ranged.itemsRange = 32.0f;
+    }
+
+    // The ranged module is scoped to its own block; put the module the other
+    // checks use back in place before it goes out of scope.
+    g_hitboxMod = &mod;
+
     std::printf("hitbox config round-trip\n");
 
     {
@@ -331,6 +427,29 @@ int main() {
         oldConfig["showPlayers"] = false;
         legacy.loadConfig(oldConfig);
         check(legacy.smoothBoxes, "config saved before the option existed keeps smoothing on");
+        check(near(legacy.range, 100.0f) && near(legacy.itemsRange, 32.0f),
+              "config saved before the ranges existed keeps the 100/32 defaults");
+
+        HitboxModule ranged;
+        nlohmann::json savedRanges;
+        ranged.saveConfig(savedRanges);
+        check(savedRanges.contains("range") && savedRanges.contains("itemsRange"),
+              "saveConfig persists both draw ranges");
+
+        nlohmann::json incomingRanges;
+        incomingRanges["range"] = 150.0f;
+        incomingRanges["itemsRange"] = 8.0f;
+        ranged.loadConfig(incomingRanges);
+        check(near(ranged.range, 150.0f) && near(ranged.itemsRange, 8.0f),
+              "loadConfig reads both draw ranges");
+
+        nlohmann::json crazyRanges;
+        crazyRanges["range"] = 99999.0f;
+        crazyRanges["itemsRange"] = -40.0f;
+        HitboxModule clamped;
+        clamped.loadConfig(crazyRanges);
+        check(near(clamped.range, kHitboxMaxRange), "an oversized range is clamped to the ceiling");
+        check(near(clamped.itemsRange, 0.0f), "a negative range clamps to 0 (disabled)");
     }
 
     std::printf("\n");
