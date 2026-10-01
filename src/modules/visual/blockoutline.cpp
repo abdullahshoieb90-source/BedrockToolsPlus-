@@ -406,15 +406,27 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
         playerRenderer + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
 
     ensureMaterials();
-    void* embeddedSelectionOverlay = reinterpret_cast<void*>(
-        playerRenderer + bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial);
     void* normalOutlineMaterial = s_selectionMaterial
         ? static_cast<void*>(&s_selectionMaterial)
-        : embeddedSelectionOverlay;
-    // The embedded selection-overlay material blends vertex alpha and is a
-    // better fit for translucent faces than selection_box. Through Walls uses
-    // the same no-depth material for both passes so their occlusion agrees.
-    void* normalFillMaterial = embeddedSelectionOverlay;
+        : nullptr;
+
+    // The embedded LevelRendererPlayer selection-overlay material lives at a
+    // build-specific offset. Using it as the primary Fill material crashed the
+    // renderer when the offset/layout did not match, so it is only a last
+    // resort and only when it looks like a populated MaterialPtr.
+    void* embeddedSelectionOverlay = nullptr;
+    {
+        const std::uintptr_t embeddedAddress = playerRenderer +
+            bedrocktools::sdk::offsets::LevelRendererPlayer::mSelectionOverlayMaterial;
+        const std::uintptr_t embeddedData = *reinterpret_cast<const std::uintptr_t*>(embeddedAddress);
+        if (embeddedData >= 0x1000) embeddedSelectionOverlay = reinterpret_cast<void*>(embeddedAddress);
+    }
+    if (!normalOutlineMaterial) normalOutlineMaterial = embeddedSelectionOverlay;
+
+    // Fill uses the same game-owned material as the outline (known-good here)
+    // so both passes share depth/blend behavior. Through Walls swaps both to
+    // the no-depth material so their occlusion agrees.
+    void* normalFillMaterial = normalOutlineMaterial ? normalOutlineMaterial : embeddedSelectionOverlay;
     void* outlineMaterial = normalOutlineMaterial;
     void* fillMaterial = normalFillMaterial;
     if (g_blockOutline->throughWalls && s_throughWallsMaterial) {

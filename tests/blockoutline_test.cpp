@@ -140,6 +140,10 @@ int main() {
     writeAt(levelRenderer, LevelRenderer::mLevelRendererPlayer, playerRendererPointer);
     const Vec3 camera{10.5f, 65.5f, 2.0f};
     writeAt(playerRenderer, LevelRendererPlayer::mCamPos, camera);
+    // The embedded selection-overlay MaterialPtr must look populated to be used.
+    std::uint64_t fakeMaterialData = 0;
+    void* fakeMaterialPointer = &fakeMaterialData;
+    writeAt(playerRenderer, LevelRendererPlayer::mSelectionOverlayMaterial, fakeMaterialPointer);
 
     {
         BlockOutlineModule module;
@@ -174,6 +178,15 @@ int main() {
         renderBlockOutline(levelRenderer.data(), screenContext.data());
         check(g_batches.size() == 1 && g_batches[0].emittedVertices == 24,
               "full fill emits all six block faces");
+
+        // An unpopulated embedded material must be skipped, never submitted to
+        // the game's mesh renderer (this used to crash when Fill was enabled).
+        void* nullMaterialData = nullptr;
+        writeAt(playerRenderer, LevelRendererPlayer::mSelectionOverlayMaterial, nullMaterialData);
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.empty(), "fill never renders with an unpopulated material");
+        writeAt(playerRenderer, LevelRendererPlayer::mSelectionOverlayMaterial, fakeMaterialPointer);
 
         const int entityType = HitResult::TypeEntity;
         writeAt(hit, HitResult::mType, entityType);
