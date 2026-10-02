@@ -90,6 +90,7 @@ const void* offhand = nullptr;
 const void* offhandPlayer = nullptr;
 int offhandCalls = 0;
 bool offhandAvailable = false;
+bool damageGetterAvailable = false;
 int renderTag = 0;
 
 void* fakePlayer(void*) { return player; }
@@ -164,7 +165,7 @@ std::uintptr_t resolve(SignatureId id) {
         case SignatureId::ActorGetOffhandSlot:
             return offhandAvailable ? reinterpret_cast<std::uintptr_t>(fakeOffhand) : 0;
         case SignatureId::ItemStackBaseGetDamageValue:
-            return reinterpret_cast<std::uintptr_t>(fakeDamage);
+            return damageGetterAvailable ? reinterpret_cast<std::uintptr_t>(fakeDamage) : 0;
         case SignatureId::BaseActorRenderContextCtor:
             return reinterpret_cast<std::uintptr_t>(fakeCreateContext);
         case SignatureId::ItemRendererRenderGuiItemNew:
@@ -215,6 +216,12 @@ int main() {
     player = actor.bytes;
 
     hud::initialize();
+    check(hud::stackDamage(armor.stack(0)) == 0,
+          "missing optional damage signature does not break icon initialization");
+    damageGetterAvailable = true;
+    hud::initialize();
+    check(hud::stackDamage(armor.stack(0)) == 143,
+          "a later initialize retries the damage signature for durability bars");
     auto equipment = hud::getEquipmentStacks(player);
     check(!equipment.offhand, "unresolved offhand signature safely returns no stack");
     check(equipment.armor[0] == armor.stack(0), "missing offhand accessor does not hide armor");
@@ -293,6 +300,19 @@ int main() {
     check(!findText("1"), "single items do not get redundant stack counts");
     check(findText("220/363") && findText("528/528") && findText("0/495") && findText("428/429"),
           "all four armor slots show clamped remaining/maximum durability by default");
+    const bool helmetBarTrack = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+        return command.type == pl::modmenu::DrawCommandType::RectFilled &&
+               near(command.x, 28.0f) && near(command.y, 226.0f) &&
+               near(command.w, 26.0f) && near(command.h, 4.0f) && command.color == 0xFF000000u;
+    });
+    const bool helmetBarFill = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+        return command.type == pl::modmenu::DrawCommandType::RectFilled &&
+               near(command.x, 28.0f) && near(command.y, 226.0f) &&
+               command.w > 0.0f && command.w < 26.0f && near(command.h, 2.0f) &&
+               command.color != 0xFF000000u;
+    });
+    check(helmetBarTrack && helmetBarFill,
+          "damaged armor draws a background track and proportional colored durability fill");
 
     // Slot backgrounds are on by default: every visible slot — empty or not —
     // gets a cell behind its icon, painted in the same native pass.
@@ -303,7 +323,8 @@ int main() {
     check(near(fills[4].area.y0, 200.0f + 4.0f * 36.0f) && near(fills[4].area.x0, 24.0f),
           "the offhand slot has its own cell below the boots");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 114,
+              near(fills[0].color.a, 1.0f) &&
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 114,
           "default cells are black at the configured 45% opacity");
     const auto* label = findText("220/363");
     check(label && near(label->h, 32.0f) && near(label->size, 12.0f), "armor label is centered within its row");
@@ -429,7 +450,8 @@ int main() {
     check(fills.size() == 5 && near(fills[0].area.x0, 500.0f),
           "styled backgrounds still cover every visible slot");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 1.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 204,
+              near(fills[0].color.a, 1.0f) &&
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 204,
           "background color and opacity are applied to the cells");
 
     config["m_showArmorDurability"] = true;
