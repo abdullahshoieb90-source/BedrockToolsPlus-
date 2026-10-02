@@ -152,8 +152,18 @@ struct SignatureDefinition {
     std::string_view symbol{};
 };
 
+// How a definition was resolved: a definition carrying an exported symbol is
+// looked up in the library's symbol tables first and only falls back to its
+// byte pattern. The kind is reported for diagnostics.
+enum class ResolveKind : std::uint8_t {
+    None = 0,
+    Symbol,  // found by its mangled name in the dynamic symbol table
+    Pattern, // found by its byte pattern
+};
+
 BEDROCKTOOLS_API bool resolveAll(std::string_view libraryName = "libminecraftpe.so");
 BEDROCKTOOLS_API std::uintptr_t resolve(SignatureId id);
+BEDROCKTOOLS_API ResolveKind resolveKind(SignatureId id);
 BEDROCKTOOLS_API void clear();
 
 }

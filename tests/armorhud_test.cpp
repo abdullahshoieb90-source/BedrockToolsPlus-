@@ -164,6 +164,15 @@ const pl::modmenu::DrawCommand* findText(const std::string& text) {
     }
     return nullptr;
 }
+const pl::modmenu::DrawCommand* findTextPrefix(const std::string& prefix) {
+    for (const auto& command : commands) {
+        if (command.type == pl::modmenu::DrawCommandType::Text &&
+            command.text.compare(0, prefix.size(), prefix) == 0) {
+            return &command;
+        }
+    }
+    return nullptr;
+}
 } // namespace
 
 namespace pl::memory {
@@ -199,6 +208,9 @@ std::uintptr_t resolve(SignatureId id) {
             return reinterpret_cast<std::uintptr_t>(fakePaint);
         default: return 0;
     }
+}
+ResolveKind resolveKind(SignatureId id) {
+    return resolve(id) ? ResolveKind::Symbol : ResolveKind::None;
 }
 }
 namespace bedrocktools::events {
@@ -525,6 +537,43 @@ int main() {
     check(schemaJson.find("m_horizontal") != std::string::npos &&
               schemaJson.find("m_showOffhand") != std::string::npos,
           "menu exposes the module's own layout and offhand options");
+    // Durability diagnostics: one line under the column telling where the
+    // damage value came from, so a build whose damage accessor broke can be
+    // diagnosed from inside the game instead of guessing.
+    check(!findTextPrefix("BT+") && schemaJson.find("m_damageDebug") != std::string::npos,
+          "the durability diagnostics readout is off by default but exposed in the menu");
+    config["m_damageDebug"] = true;
+    module.loadConfig(config);
+    frame();
+    const auto* diagnosticLine = findTextPrefix("BT+");
+    const auto* diagnosticHex = findTextPrefix("hex ");
+    check(diagnosticLine && diagnosticLine->text.find("dmg[") != std::string::npos &&
+              diagnosticLine->text.find("/") != std::string::npos &&
+              diagnosticLine->text.find("sym") != std::string::npos &&
+              diagnosticLine->text.find("acc") != std::string::npos &&
+              diagnosticLine->text.find("raw") != std::string::npos,
+          "the diagnostics line names the damage source, the signature state and the raw reads");
+    check(diagnosticHex && diagnosticHex->text.find("bars ") != std::string::npos &&
+              near(diagnosticHex->y, diagnosticLine->y + 13.0f) && near(diagnosticHex->x, diagnosticLine->x),
+          "a second diagnostics line carries the stack words and the painted bar count");
+    check(findTextPrefix(std::string("BT+ ") + std::string(bedrocktools::Version)) != nullptr,
+          "the diagnostics line carries the build version");
+    // Durability bars are switched off in this part of the test, so the line
+    // reports zero painted bars: turn them on to see the count move.
+    config["m_showDurability"] = true;
+    module.loadConfig(config);
+    frame();
+    const auto* diagWithBars = findTextPrefix("hex ");
+    check(diagWithBars && diagWithBars->text.find("bars 0") == std::string::npos,
+          "the diagnostics line counts the durability bars the last pass painted");
+    config["m_showDurability"] = false;
+    module.loadConfig(config);
+    frame();
+    config["m_damageDebug"] = false;
+    module.loadConfig(config);
+    frame();
+    check(!findTextPrefix("BT+"), "turning the diagnostics off removes the line again");
+
     check(schemaJson.find("m_slotBackground") != std::string::npos &&
               schemaJson.find("m_slotBgOpacity") != std::string::npos &&
               schemaJson.find("m_slotBgColor") != std::string::npos &&

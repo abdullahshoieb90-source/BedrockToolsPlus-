@@ -71,10 +71,48 @@ EquipmentStacks getEquipmentStacks(void* player);
 
 void* stackItem(void* stack);         // Item*, nullptr for an empty slot
 std::uint8_t stackCount(void* stack); // ItemStackBase::mCount
-// Damage (>= 0) of a stack: ItemStackBase::getDamageValue when it is resolved
-// and answers, otherwise the stack's own mAuxValue field. The fallback keeps
-// the durability bars alive on game builds where the damage signature lands on
-// the wrong function or does not resolve at all.
+// Candidate offsets the damage probe reads, most likely first: the
+// layout-derived mAuxValue (see Inventory::ItemStackDamage) and its neighbours,
+// so a build that moved the field by a word still reports the right damage.
+inline constexpr std::size_t DamageCandidateCount = 4;
+inline constexpr std::size_t DamageCandidateOffsets[DamageCandidateCount] = {
+    sdk::offsets::Inventory::ItemStackDamage,     // 0x20
+    sdk::offsets::Inventory::ItemStackDamage - 4, // 0x1C
+    sdk::offsets::Inventory::ItemStackDamage + 4, // 0x24
+    sdk::offsets::Inventory::ItemStackDamage + 8, // 0x28
+};
+
+// The stack header dumped as 32-bit words for the diagnostics line: mUserData,
+// mBlock, mAuxValue/mCount/mValid and the words around them, so the exact
+// offset a future game build moved the damage to can be read straight off the
+// HUD instead of guessed.
+inline constexpr std::size_t DamageWindowBase = 0x10;
+inline constexpr std::size_t DamageWindowCount = 8;
+
+// One durability reading of a stack: the value the bars use, where it came from
+// and the raw value of every candidate offset (for the diagnostics readout).
+struct DamageProbe {
+    enum class Source : std::uint8_t {
+        None = 0,
+        Accessor = 1, // ItemStackBase::getDamageValue
+        Field = 2,    // the stack's own field at DamageCandidateOffsets[index]
+    };
+
+    int value = 0;           // damage kept for the bars, >= 0
+    Source source = Source::None;
+    int candidateIndex = -1; // set when source == Field
+    int accessor = -1;       // what the accessor answered, -1 when unresolved
+    int raw[DamageCandidateCount] = {-1, -1, -1, -1};
+    int window[DamageWindowCount] = {}; // see DamageWindowBase below
+};
+
+// Reads the durability of one stack: the accessor when it is resolved and
+// answers a plausible value, otherwise the damage field itself. Keeping the
+// field as a fallback means a signature that landed on the wrong function can
+// no longer freeze every item at full durability.
+DamageProbe probeDamage(void* stack, int maxDamage);
+
+// Damage (>= 0) of a stack: probeDamage() with the stack's own maximum.
 int stackDamage(void* stack);
 // Maximum damage of a stack's item (0 when unbreakable):
 // ItemStackBase::getMaxDamage when it is resolved, otherwise the Item vtable.
@@ -83,6 +121,33 @@ int itemMaxDamage(void* item);        // Item::getMaxDamage, 0 when unbreakable
 // Items whose icon needs the HUD-opacity pass (dyed leather etc., see
 // IconPainter::beginOpacityFixPass).
 bool needsTextureOpacityPass(void* stack);
+
+// ---- Durability diagnostics --------------------------------------------------
+
+// What the durability reader saw the last time it ran, so a HUD module can
+// report it on screen when a game build stops producing damage values. The
+// snapshot is global (the last probed stack wins) and cheap to read.
+struct DurabilityDiagnostics {
+    bool symbolFound = false;  // ItemStackBase::getDamageValue via its symbol
+    bool patternFound = false; // ...via its byte pattern
+    int accessorAnswer = -1;   // what that accessor returned (-1 = unresolved)
+    int maxDamage = 0;
+    int value = 0;
+    int source = 0;            // DamageProbe::Source as an int
+    int candidateIndex = -1;
+    int raw[DamageCandidateCount] = {-1, -1, -1, -1};
+    int window[DamageWindowCount] = {};
+    // Durability bars painted since the last resetBarDiagnostics() call, so a
+    // module can tell "no damage was read" apart from "nothing was drawn".
+    int barsDrawn = 0;
+};
+DurabilityDiagnostics durabilityDiagnostics();
+// Clears barsDrawn; HUD modules call it at the start of their native pass.
+void resetBarDiagnostics();
+
+// One HUD line: "BT+ 1.5.6 dmg[+0x20] 143/363 sym0 pat1 acc0 raw 0,143,0,0
+// hex 0,0,8F,0,1,0 bars 3".
+std::string durabilityDiagnosticsText(const DurabilityDiagnostics& diagnostics);
 
 // ---- Drawing ----------------------------------------------------------------
 

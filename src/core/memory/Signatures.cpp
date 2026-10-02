@@ -1,14 +1,16 @@
 #include <bedrocktools/memory/Signatures.hpp>
 
+#include "LibrarySymbols.hpp"
+
 #include <array>
 #include <string>
 #include <string_view>
 #include <vector>
-#include <dlfcn.h>
 #include <pl/memory/Signature.hpp>
 
 namespace bedrocktools::memory {
 namespace {
+namespace library_symbols = bedrocktools::memory::library;
 
 // Itanium-ABI mangled names of the definitions that carry a `symbol`. Bedrock
 // keeps exporting these accessors, so the exact symbol lookup is preferred
@@ -20,21 +22,16 @@ std::string_view mangledSymbol(std::string_view symbol) {
     return {};
 }
 
-// Address of one exported symbol of an already loaded library. The handle is
-// dropped right away: the game owns the library's reference count, so the
-// balanced dlclose only releases this lookup.
+// Address of one exported symbol of an already loaded library: dlsym first,
+// then the image's own dynamic symbol table (see LibrarySymbols.hpp).
 std::uintptr_t resolveExportedSymbol(const std::string& library, std::string_view symbol) {
     const std::string_view mangled = mangledSymbol(symbol);
     if (mangled.empty()) return 0;
-    void* handle = dlopen(library.c_str(), RTLD_NOW | RTLD_NOLOAD);
-    if (!handle) return 0;
-    const std::string name(mangled);
-    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(dlsym(handle, name.c_str()));
-    dlclose(handle);
-    return address;
+    return library_symbols::findMangled(library, mangled);
 }
 
 std::array<std::uintptr_t, SignatureCount> addresses{};
+std::array<ResolveKind, SignatureCount> resolveKinds{};
 const std::array<SignatureDefinition, SignatureCount> definitions{{
     SignatureDefinition{SignatureId::VersionString, "? ? ? D1 ? ? ? A9 ? ? ? A9 ? ? ? 91 54 D0 3B D5 F3 03 08 AA ? ? ? F9 ? ? ? F8 E8 03 00 91 ? ? ? 94 ? ? ? 90"},
     SignatureDefinition{SignatureId::Nametag, "? ? ? D1 ? ? ? 6D ? ? ? 6D ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? 91 57 D0 3B D5 FA 03 01 AA"},
@@ -174,15 +171,22 @@ bool resolveAll(std::string_view libraryName) {
     // An empty list is fine: the resolver returns an empty map for it.
     const auto resolved = pl::memory::resolveSignatures(patterns, library.c_str());
     addresses.fill(0);
+    resolveKinds.fill(ResolveKind::None);
     bool any = false;
     for (const auto& definition : definitions) {
+        const auto index = static_cast<std::size_t>(definition.id);
         std::uintptr_t address = resolveExportedSymbol(library, definition.symbol);
-        if (!address && !definition.pattern.empty()) {
-            const auto it = resolved.find(std::string(definition.pattern));
-            if (it != resolved.end()) address = it->second;
+        if (address) {
+            addresses[index] = address;
+            resolveKinds[index] = ResolveKind::Symbol;
+            any = true;
+            continue;
         }
-        if (!address) continue;
-        addresses[static_cast<std::size_t>(definition.id)] = address;
+        if (definition.pattern.empty()) continue;
+        const auto it = resolved.find(std::string(definition.pattern));
+        if (it == resolved.end() || it->second == 0) continue;
+        addresses[index] = it->second;
+        resolveKinds[index] = ResolveKind::Pattern;
         any = true;
     }
     return any;
@@ -193,8 +197,14 @@ std::uintptr_t resolve(SignatureId id) {
     return index < addresses.size() ? addresses[index] : 0;
 }
 
+ResolveKind resolveKind(SignatureId id) {
+    const auto index = static_cast<std::size_t>(id);
+    return index < resolveKinds.size() ? resolveKinds[index] : ResolveKind::None;
+}
+
 void clear() {
     addresses.fill(0);
+    resolveKinds.fill(ResolveKind::None);
 }
 
 }

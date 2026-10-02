@@ -125,6 +125,8 @@ void InventoryHudModule::storeRuntime(SlotRuntime& runtime, void* stack, void* i
 }
 
 void InventoryHudModule::renderNative(void* context, void* client) {
+    // Fresh bar count for the diagnostics readout of this pass.
+    huditems::resetBarDiagnostics();
     const ConfigSnapshot config = snapshotConfig();
     const bool hidden = config.hideInContainer && hiddenByScreen();
 

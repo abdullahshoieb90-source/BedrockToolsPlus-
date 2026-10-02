@@ -183,6 +183,9 @@ std::uintptr_t resolve(SignatureId id) {
         default: return 0;
     }
 }
+ResolveKind resolveKind(SignatureId id) {
+    return resolve(id) ? ResolveKind::Symbol : ResolveKind::None;
+}
 }
 namespace bedrocktools::events {
 EventBus& bus() { static EventBus instance; return instance; }

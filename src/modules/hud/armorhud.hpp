@@ -66,6 +66,7 @@ private:
         bool hideInContainer = true;
         bool slotBackground = true;
         bool hotbarBackground = true;
+        bool damageDebug = false; // on-screen durability source readout
         std::uint32_t slotBgColor = 0x73000000u; // "#000000" at 45%
         float countTextSize = 12.0f;
         std::uint32_t countColor = 0xFFFFFFFFu;
@@ -96,6 +97,7 @@ private:
     bool m_showStackCount = true;
     bool m_showDurability = true;
     bool m_showArmorDurability = true;
+    bool m_damageDebug = false;
     bool m_hideInContainer = true;
     bool m_slotBackground = true;
     bool m_hotbarBackground = true;

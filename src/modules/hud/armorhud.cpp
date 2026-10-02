@@ -247,6 +247,7 @@ ArmorModule::ConfigSnapshot ArmorModule::snapshotConfig() const {
     config.stackCount = m_showStackCount;
     config.durability = m_showDurability;
     config.armorDurability = m_showArmorDurability;
+    config.damageDebug = m_damageDebug;
     config.hideInContainer = m_hideInContainer;
     config.slotBackground = m_slotBackground;
     config.slotBgColor = huditems::withOpacity(huditems::parseColor(m_slotBgColor, 0xFF000000u), m_slotBgOpacity);
@@ -285,6 +286,8 @@ void ArmorModule::storeRuntime(SlotRuntime& runtime, void* stack, void* item, bo
 }
 
 void ArmorModule::renderNative(void* context, void* client) {
+    // Fresh bar count for the diagnostics readout of this pass.
+    huditems::resetBarDiagnostics();
     const ConfigSnapshot config = snapshotConfig();
     const bool hidden = config.hideInContainer && hiddenByScreen();
 
@@ -483,6 +486,32 @@ void ArmorModule::onFrame() {
         }
         decorate(m_mainhandRuntime, mainhandRect(config.layout), false);
     }
+    if (config.damageDebug) {
+        // The durability reader's whole view, in at most two short lines under
+        // the element: what the signature found, which source answered and the
+        // stack's own words. The element's labels keep showing the values that
+        // end up on screen, so the two can be compared directly.
+        const huditems::DurabilityDiagnostics diagnostics = huditems::durabilityDiagnostics();
+        const std::string readout = huditems::durabilityDiagnosticsText(diagnostics);
+        const std::size_t hexAt = readout.find(" hex ");
+        const std::string lines[2] = {
+            hexAt == std::string::npos ? readout : readout.substr(0, hexAt),
+            hexAt == std::string::npos ? std::string() : readout.substr(hexAt + 1),
+        };
+        float y = config.layout.y + std::max(1.0f, layout::columnHeight(config.layout)) + 4.0f;
+        for (const std::string& line : lines) {
+            if (line.empty()) continue;
+            pl::modmenu::DrawCommand debug;
+            debug.type = pl::modmenu::DrawCommandType::Text;
+            debug.x = config.layout.x;
+            debug.y = y;
+            debug.color = 0xFFFFD24Au; // amber, readable over the world
+            debug.size = 12.0f;
+            debug.text = line;
+            commands.push_back(std::move(debug));
+            y += 13.0f;
+        }
+    }
     pl::modmenu::submitDrawCommands(moduleId, commands);
 }
 
@@ -558,6 +587,11 @@ void ArmorModule::onMenuRegistered() {
         armorNumbers.section = "slot_details";
         armorNumbers.description = "Shows remaining/maximum durability beside each armor piece, independently of durability bars.";
         schema.node(std::move(armorNumbers));
+
+        auto debug = node("m_damageDebug", "Durability Diagnostics", "details", ConfigControlTypeV2::Toggle);
+        debug.section = "slot_details";
+        debug.description = "Draws one line under the element showing where the durability value comes from: the resolved accessor (sym/pat), the field offset that answered (+0x20), the item's raw field values (raw) and what the accessor returned (acc). Turn it on when a durability bar stops showing up and send the line.";
+        schema.node(std::move(debug));
     }
     section("count_text", "Number Text", "details");
     slider("m_countTextSize", "Text Size", "details", "count_text", "6", "40");
@@ -683,6 +717,7 @@ void ArmorModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_showStackCount")) m_showStackCount = j["m_showStackCount"].get<bool>();
     if (j.contains("m_showDurability")) m_showDurability = j["m_showDurability"].get<bool>();
     if (j.contains("m_showArmorDurability")) m_showArmorDurability = j["m_showArmorDurability"].get<bool>();
+    if (j.contains("m_damageDebug")) m_damageDebug = j["m_damageDebug"].get<bool>();
     if (j.contains("m_hideInContainer")) m_hideInContainer = j["m_hideInContainer"].get<bool>();
     if (j.contains("m_slotBackground")) m_slotBackground = j["m_slotBackground"].get<bool>();
     if (j.contains("m_slotBgOpacity")) m_slotBgOpacity = std::clamp(j["m_slotBgOpacity"].get<float>(), 0.05f, 1.0f);
@@ -712,6 +747,7 @@ void ArmorModule::saveConfig(nlohmann::json& j) {
     j["m_showStackCount"] = m_showStackCount;
     j["m_showDurability"] = m_showDurability;
     j["m_showArmorDurability"] = m_showArmorDurability;
+    j["m_damageDebug"] = m_damageDebug;
     j["m_hideInContainer"] = m_hideInContainer;
     j["m_slotBackground"] = m_slotBackground;
     j["m_slotBgOpacity"] = m_slotBgOpacity;

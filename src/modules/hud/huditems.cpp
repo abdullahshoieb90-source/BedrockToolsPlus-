@@ -2,6 +2,10 @@
 
 #include "slotdecor_layout.hpp"
 
+#include <bedrocktools/Version.hpp>
+
+#include <atomic>
+
 #include "core/memory/Hooks.hpp"
 
 #include <bedrocktools/memory/Signatures.hpp>
@@ -11,6 +15,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <string>
 #include <cmath>
 #include <mutex>
 #include <string_view>
@@ -220,7 +226,36 @@ ActorEquipmentComponent* getEquipment(void* player) {
     return context->tryGetComponent<ActorEquipmentComponent>();
 }
 
+// The last probe, published for the HUD modules' diagnostics option. Plain
+// atomics: the render thread writes them, the frame thread reads them.
+std::atomic<int> lastAccessorAnswer{-1};
+std::atomic<int> lastMaxDamage{0};
+std::atomic<int> lastValue{0};
+std::atomic<int> lastSource{0};
+std::atomic<int> lastCandidateIndex{-1};
+std::atomic<int> lastRaw[DamageCandidateCount];
+std::atomic<int> lastWindow[DamageWindowCount];
+std::atomic<int> lastBarsDrawn{0};
+
+void publishDiagnostics(const DamageProbe& probe, int maxDamage) {
+    lastAccessorAnswer.store(probe.accessor, std::memory_order_relaxed);
+    lastMaxDamage.store(maxDamage, std::memory_order_relaxed);
+    lastValue.store(probe.value, std::memory_order_relaxed);
+    lastSource.store(static_cast<int>(probe.source), std::memory_order_relaxed);
+    lastCandidateIndex.store(probe.candidateIndex, std::memory_order_relaxed);
+    for (std::size_t i = 0; i < DamageCandidateCount; ++i) {
+        lastRaw[i].store(probe.raw[i], std::memory_order_relaxed);
+    }
+    for (std::size_t i = 0; i < DamageWindowCount; ++i) {
+        lastWindow[i].store(probe.window[i], std::memory_order_relaxed);
+    }
+}
+
 } // namespace
+
+void resetBarDiagnostics() {
+    lastBarsDrawn.store(0, std::memory_order_relaxed);
+}
 
 void initialize() {
     if (!actorGetOffhandSlot) {
@@ -346,17 +381,63 @@ std::uint8_t stackCount(void* stack) {
     return read<std::uint8_t>(stack, offsets::Inventory::ItemStackCount);
 }
 
+namespace {
+// Real stacks never carry more damage than the item's maximum, but a data
+// pack or a version bump can leave a sliver of slack, and a broken stack can
+// sit right at the cap. Values far outside the item's own range are the byte
+// pattern landing on something else, so they are not trusted.
+bool plausibleDamage(int value, int maxDamage) {
+    if (value <= 0) return false;
+    if (maxDamage <= 0) return true;
+    return value <= maxDamage + std::max(16, maxDamage / 20);
+}
+} // namespace
+
+DamageProbe probeDamage(void* stack, int maxDamage) {
+    DamageProbe probe;
+    if (!stack) return probe;
+
+    for (std::size_t i = 0; i < DamageCandidateCount; ++i) {
+        probe.raw[i] = std::max(0, static_cast<int>(read<std::int16_t>(stack, DamageCandidateOffsets[i])));
+    }
+    for (std::size_t i = 0; i < DamageWindowCount; ++i) {
+        probe.window[i] = static_cast<int>(read<std::uint32_t>(stack, DamageWindowBase + 4 * i));
+    }
+
+    // The accessor wins when it has something to say: it is the game's own
+    // reading of the stack, so it is the only source that can tell "this item
+    // really is undamaged" apart from "the wrong function was resolved".
+    if (itemStackBaseGetDamageValue) {
+        const int answer = itemStackBaseGetDamageValue(stack);
+        probe.accessor = answer;
+        if (answer > 0 && plausibleDamage(answer, maxDamage)) {
+            probe.value = answer;
+            probe.source = DamageProbe::Source::Accessor;
+            publishDiagnostics(probe, maxDamage);
+            return probe;
+        }
+    }
+
+    // The accessor is missing, or it is not the accessor at all: a short byte
+    // pattern can match a neighbour and quietly answer 0 for everything, which
+    // is exactly how a durability bar disappears. Fall back to the field
+    // itself, most likely offset first, and only keep a plausible value so a
+    // moved field cannot report garbage.
+    for (std::size_t i = 0; i < DamageCandidateCount; ++i) {
+        const int value = probe.raw[i];
+        if (!plausibleDamage(value, maxDamage)) continue;
+        probe.value = value;
+        probe.source = DamageProbe::Source::Field;
+        probe.candidateIndex = static_cast<int>(i);
+        break;
+    }
+    publishDiagnostics(probe, maxDamage);
+    return probe;
+}
+
 int stackDamage(void* stack) {
     if (!stack) return 0;
-    if (itemStackBaseGetDamageValue) {
-        const int damage = itemStackBaseGetDamageValue(stack);
-        if (damage > 0) return damage;
-    }
-    // The accessor is missing, or it is not the accessor at all (a byte
-    // pattern can match a neighbour and quietly answer 0 for everything):
-    // read the stack's own mAuxValue, which is where the damage lives.
-    return std::max(0, static_cast<int>(
-        read<std::int16_t>(stack, offsets::Inventory::ItemStackDamage)));
+    return probeDamage(stack, stackMaxDamage(stack)).value;
 }
 
 int stackMaxDamage(void* stack) {
@@ -483,12 +564,76 @@ bool IconPainter::fillRect(float hudX, float hudY, float hudW, float hudH, std::
     return true;
 }
 
+DurabilityDiagnostics durabilityDiagnostics() {
+    DurabilityDiagnostics diagnostics;
+    const auto kind = bedrocktools::memory::resolveKind(
+        bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue);
+    diagnostics.symbolFound = kind == bedrocktools::memory::ResolveKind::Symbol;
+    diagnostics.patternFound = kind == bedrocktools::memory::ResolveKind::Pattern;
+    diagnostics.accessorAnswer = lastAccessorAnswer.load(std::memory_order_relaxed);
+    diagnostics.maxDamage = lastMaxDamage.load(std::memory_order_relaxed);
+    diagnostics.value = lastValue.load(std::memory_order_relaxed);
+    diagnostics.source = lastSource.load(std::memory_order_relaxed);
+    diagnostics.candidateIndex = lastCandidateIndex.load(std::memory_order_relaxed);
+    for (std::size_t i = 0; i < DamageCandidateCount; ++i) {
+        diagnostics.raw[i] = lastRaw[i].load(std::memory_order_relaxed);
+    }
+    for (std::size_t i = 0; i < DamageWindowCount; ++i) {
+        diagnostics.window[i] = lastWindow[i].load(std::memory_order_relaxed);
+    }
+    diagnostics.barsDrawn = lastBarsDrawn.load(std::memory_order_relaxed);
+    return diagnostics;
+}
+
+std::string durabilityDiagnosticsText(const DurabilityDiagnostics& diagnostics) {
+    std::string text = "BT+ ";
+    text += std::string(bedrocktools::Version);
+    text += " dmg[";
+    if (diagnostics.source == static_cast<int>(DamageProbe::Source::Accessor)) {
+        text += "accessor";
+    } else if (diagnostics.source == static_cast<int>(DamageProbe::Source::Field) &&
+               diagnostics.candidateIndex >= 0 &&
+               static_cast<std::size_t>(diagnostics.candidateIndex) < DamageCandidateCount) {
+        char offset[16]{};
+        std::snprintf(offset, sizeof(offset), "+0x%02zX",
+                      DamageCandidateOffsets[diagnostics.candidateIndex]);
+        text += offset;
+    } else {
+        text += "none";
+    }
+    text += "] ";
+    text += std::to_string(diagnostics.value);
+    text += "/";
+    text += std::to_string(diagnostics.maxDamage);
+    text += " sym";
+    text += diagnostics.symbolFound ? "1" : "0";
+    text += " pat";
+    text += diagnostics.patternFound ? "1" : "0";
+    text += " acc";
+    text += std::to_string(diagnostics.accessorAnswer);
+    text += " raw";
+    for (std::size_t i = 0; i < DamageCandidateCount; ++i) {
+        text += i == 0 ? " " : ",";
+        text += std::to_string(diagnostics.raw[i]);
+    }
+    text += " hex";
+    for (std::size_t i = 0; i < DamageWindowCount; ++i) {
+        char word[16]{};
+        std::snprintf(word, sizeof(word), " %X", static_cast<unsigned>(diagnostics.window[i]));
+        text += word;
+    }
+    text += " bars ";
+    text += std::to_string(diagnostics.barsDrawn);
+    return text;
+}
+
 bool IconPainter::drawDurabilityBar(float hudX, float hudY, float hudSize, int damage, int maxDamage) {
     if (damage <= 0 || maxDamage <= 0 || hudSize <= 0.0f) return false;
     const slotdecor::SlotRect slot{hudX, hudY, hudSize};
     const float ratio = slotdecor::durabilityRatio(damage, maxDamage);
     const slotdecor::DurabilityBar bar = slotdecor::durabilityBar(slot, ratio);
     const bool track = fillRect(bar.x, bar.y, bar.width, bar.height, 0xFF000000u);
+    if (track) lastBarsDrawn.fetch_add(1, std::memory_order_relaxed);
     bool fill = false;
     if (bar.fillWidth > 0.0f) {
         fill = fillRect(bar.x, bar.y, bar.fillWidth, bar.fillHeight, slotdecor::durabilityColor(ratio));
