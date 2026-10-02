@@ -267,7 +267,9 @@ void registerModulesWithLauncher() {
                            kLower.find("posy") != std::string::npos) {
                     maxVal = 2000.0f;
                 } else if (kLower.find("range") != std::string::npos) {
-                    maxVal = 180.0f;
+                    // Hitbox draw ranges in blocks (World overlay). 0 turns
+                    // the group off; 200 is the module's own ceiling.
+                    maxVal = 200.0f;
                 } else if (kLower.find("fov") != std::string::npos) {
                     minVal = 1.0f;
                     maxVal = 179.0f;

@@ -1,15 +1,19 @@
 #include "hitbox.hpp"
 #include "hitbox_camera.hpp"
+#include "hitbox_interp.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/sdk/Memory.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
+#include <chrono>
 #include <cmath>
-#include <string>
+#include <cstdint>
 #include <cstring>
-#include <vector>
+#include <string>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 typedef void (*Tessellator_begin_t)(void* tessellator, void* debugCallback, int primitiveMode, int vertexCount, int noIndices);
 typedef void (*Tessellator_color_t)(void* tessellator, float r, float g, float b, float a);
@@ -141,6 +145,13 @@ static uintptr_t    s_renderMaterialGroup = 0;
 
 static uint32_t forceOpaqueColor(uint32_t color) {
     return color | 0xFF000000u;
+}
+
+// Draw ranges are user configurable; clamp them so a hand-edited config can
+// never turn the per-frame actor fetch into a world-wide scan.
+static float clampRange(float value) {
+    if (!(value > 0.0f)) return 0.0f; // also catches NaN
+    return value > kHitboxMaxRange ? kHitboxMaxRange : value;
 }
 
 static void (*_renderLevel_orig)(void* _this, void* screenContext, void* a3);
@@ -344,6 +355,93 @@ static AABB getActorAABB(void* actor) {
     return aabb;
 }
 
+// --- Per-actor sample history ---------------------------------------------
+// The box is drawn at lerp(prevSample, curSample, alpha), where the samples
+// are the actor's own collision boxes: a box that changed is a new tick
+// sample, so the phase is measured from the data instead of from a separate
+// tick callback (which can fire off-cadence and leave the box frozen on the
+// previous sample while the player flies away). See hitbox_interp.hpp.
+struct ActorInterp {
+    hitbox::Track track;
+    std::chrono::steady_clock::time_point sampleTime{};
+    bool hasSampleTime = false;
+    std::uint64_t lastSeenFrame = 0;
+};
+
+static std::unordered_map<void*, ActorInterp> s_interpHistory;
+static std::uint64_t s_frameCounter = 0;
+
+static bool isDrawableBox(const AABB& box) {
+    if (box.min.x == 0.0f && box.min.y == 0.0f && box.min.z == 0.0f &&
+        box.max.x == 0.0f && box.max.y == 0.0f && box.max.z == 0.0f) {
+        return false;
+    }
+    return hitbox::isFinite(box.min) && hitbox::isFinite(box.max) &&
+           box.max.x >= box.min.x && box.max.y >= box.min.y && box.max.z >= box.min.z;
+}
+
+static bedrocktools::sdk::Vec3 boxCenter(const AABB& box) {
+    return bedrocktools::sdk::Vec3{(box.min.x + box.max.x) * 0.5f,
+                                   (box.min.y + box.max.y) * 0.5f,
+                                   (box.min.z + box.max.z) * 0.5f};
+}
+
+// Drop actors that have not been drawn for a while, so recycled pointers
+// cannot inherit a stale sample from an unrelated entity.
+static void trimInterpHistory() {
+    if (s_interpHistory.size() <= 256) return;
+    for (auto it = s_interpHistory.begin(); it != s_interpHistory.end();) {
+        if (s_frameCounter - it->second.lastSeenFrame > 120) it = s_interpHistory.erase(it);
+        else ++it;
+    }
+}
+
+// The box as the player sees the entity: the collision box moved onto the
+// interpolated position the game draws the mesh at. Falls back to the raw box
+// whenever there is nothing to interpolate (first sample, teleport, bad read)
+// or the smoothing is disabled, so the box can never be dragged away from the
+// entity.
+static AABB getInterpolatedAABB(void* actor) {
+    AABB aabb = getActorAABB(actor);
+    if (!isDrawableBox(aabb)) return aabb;
+
+    // The history is kept warm even while the menu toggle is off, so
+    // switching it back on does not start from an empty track.
+    const auto now = std::chrono::steady_clock::now();
+    ActorInterp& entry = s_interpHistory[actor];
+    entry.lastSeenFrame = s_frameCounter;
+
+    float elapsed = 0.0f;
+    if (entry.hasSampleTime) {
+        elapsed = std::chrono::duration<float>(now - entry.sampleTime).count();
+        if (!(elapsed > 0.0f)) elapsed = 0.0f;
+        if (elapsed > 1.0f) elapsed = 1.0f; // a hitch must not poison the phase
+    }
+
+    // A changed box is a new sample: the phase restarts from it.
+    if (hitbox::pushSample(entry.track, boxCenter(aabb), elapsed)) {
+        entry.sampleTime = now;
+        entry.hasSampleTime = true;
+        elapsed = 0.0f;
+    }
+
+    if (!g_hitboxMod || !g_hitboxMod->smoothBoxes) return aabb;
+    if (!entry.track.hasPrev) return aabb;
+
+    const float alpha = hitbox::sampleFraction(elapsed, entry.track.intervalSeconds);
+    const bedrocktools::sdk::Vec3 offset =
+        hitbox::sampleOffset(entry.track.prevCenter, entry.track.curCenter, alpha);
+    if (!hitbox::isFinite(offset)) return aabb;
+
+    aabb.min.x += offset.x;
+    aabb.min.y += offset.y;
+    aabb.min.z += offset.z;
+    aabb.max.x += offset.x;
+    aabb.max.y += offset.y;
+    aabb.max.z += offset.z;
+    return aabb;
+}
+
 static bedrocktools::sdk::Vec2 getActorRotation(void* actor) {
     bedrocktools::sdk::Vec2 rot = {0.f, 0.f};
     uintptr_t actorAddr = (uintptr_t)actor;
@@ -422,6 +520,10 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (thicknessSetting > 20.0f) thicknessSetting = 20.0f;
     const bool thickLines = thicknessSetting > 1.05f;
     const float halfWidth = thicknessSetting * 0.01f * 0.5f;
+
+    // Per-frame bookkeeping for the sample history (see getInterpolatedAABB).
+    ++s_frameCounter;
+    trimInterpHistory();
 
     auto drawLines = [&](const std::vector<std::pair<bedrocktools::sdk::Vec3, bedrocktools::sdk::Vec3>>& lines, uint32_t color) {
         if (lines.empty()) return;
@@ -546,17 +648,25 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     // view, and jumping interpolates the camera above the tick AABB so a
     // tight inside-AABB test used to flash it). Combine the game camera
     // mode with a jump-tolerant geometric test; see hitbox_camera.hpp.
-    AABB localAabb = getActorAABB(g_localPlayerPtr);
+    // Also feeds the local player's sample history every frame, so switching
+    // to third person interpolates from a warm history instead of snapping.
+    AABB localAabb = getInterpolatedAABB(g_localPlayerPtr);
     const bool cameraLooksThirdPerson = hitbox::isThirdPersonCamera(
         camX, camY, camZ,
         localAabb.min.x, localAabb.min.y, localAabb.min.z,
         localAabb.max.x, localAabb.max.y, localAabb.max.z);
     const bool gameThirdPerson = s_perspectiveKnown ? (s_perspective != 0) : true;
 
+    // One fetch has to cover the widest of the configured ranges; the
+    // per-group filter below turns the fetched cube into a sphere of exactly
+    // `range` / `itemsRange` blocks around the local player.
+    const float range = clampRange(g_hitboxMod->range);
+    const float itemsRange = clampRange(g_hitboxMod->itemsRange);
+    const float fetchRadius = range > itemsRange ? range : itemsRange;
+
     ActorVec actors{};
-    if (s_actorFetchNearby) {
-        constexpr float kActorFetchRadius = 30.0f;
-        bedrocktools::sdk::Vec3 extent = {kActorFetchRadius, kActorFetchRadius, kActorFetchRadius};
+    if (s_actorFetchNearby && fetchRadius > 0.0f) {
+        bedrocktools::sdk::Vec3 extent = {fetchRadius, fetchRadius, fetchRadius};
         actors = s_actorFetchNearby(g_localPlayerPtr, &extent, 1);
     }
 
@@ -579,7 +689,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
             void* ent = it->mActor;
             if (!ent || ent == g_localPlayerPtr) continue;
-            AABB aabb = getActorAABB(ent);
+            AABB aabb = getInterpolatedAABB(ent);
             float hitDist = 0.0f;
             if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, kSelectionRayLength, hitDist)) continue;
             if (hitDist < bestDist) {
@@ -590,9 +700,8 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     }
 
     auto renderActor = [&](void* ent, uint32_t groupColor, bool skipOcclusion = false) {
-        AABB aabb = getActorAABB(ent);
-        if (aabb.min.x == 0.f && aabb.min.y == 0.f && aabb.min.z == 0.f &&
-            aabb.max.x == 0.f && aabb.max.y == 0.f && aabb.max.z == 0.f) return;
+        AABB aabb = getInterpolatedAABB(ent);
+        if (!isDrawableBox(aabb)) return;
 
         // Cull hitboxes that are fully hidden behind solid blocks instead of
         // drawing them through walls. Skips the eye/look lines too, since
@@ -672,6 +781,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             }
 
             uint32_t groupColor = g_hitboxMod->hitboxColor;
+            float groupRange = range;
             if (isPlayer) {
                 if (!g_hitboxMod->showPlayers) continue;
             } else if (hasCategory(ent, bedrocktools::sdk::offsets::ActorCategories::IsMob)) {
@@ -679,7 +789,13 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             } else {
                 if (!g_hitboxMod->showItems) continue;
                 groupColor = g_hitboxMod->showItemsColor;
+                groupRange = itemsRange;
             }
+
+            // The fetched list is distance sorted; the range is a sphere
+            // around the local player, so a diagonal actor just outside the
+            // cube corner is dropped as well.
+            if (it->mDistance > groupRange) continue;
 
             if (s_actorIsInvisible && s_actorIsInvisible(ent)) continue;
 
@@ -804,6 +920,8 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     showEntities = j.value("showEntities", showEntities);
     showPlayers = j.value("showPlayers", showPlayers);
     showItems = j.value("showItems", showItems);
+    range = clampRange(j.value("range", range));
+    itemsRange = clampRange(j.value("itemsRange", itemsRange));
     // Prefer the current key; fall back to the old "showSelf" name so
     // existing configs keep working after the rename.
     if (j.contains("show3rdPerson")) {
@@ -814,6 +932,7 @@ void HitboxModule::loadConfig(const nlohmann::json& j) {
     showEyeLine = j.value("showEyeLine", showEyeLine);
     showLookLine = j.value("showLookLine", showLookLine);
     lookLineLength = j.value("lookLineLength", lookLineLength);
+    smoothBoxes = j.value("smoothBoxes", smoothBoxes);
 
     if (j.contains("lineThickness")) {
         try { lineThickness = j["lineThickness"].get<float>(); } catch (...) {}
@@ -855,10 +974,13 @@ void HitboxModule::saveConfig(nlohmann::json& j) {
     j["showEntities"] = showEntities;
     j["showPlayers"] = showPlayers;
     j["showItems"] = showItems;
+    j["range"] = range;
+    j["itemsRange"] = itemsRange;
     j["show3rdPerson"] = show3rdPerson;
     j["showEyeLine"] = showEyeLine;
     j["showLookLine"] = showLookLine;
     j["lookLineLength"] = lookLineLength;
+    j["smoothBoxes"] = smoothBoxes;
     j["lineThickness"] = lineThickness;
     j["hitboxIndicator"] = hitboxIndicator;
 

@@ -4,6 +4,10 @@
 #include <bedrocktools/sdk/Types.hpp>
 #include <string>
 
+// Hard ceiling for the Hitbox draw ranges (blocks). Keeps the per-frame actor
+// fetch and the per-entity occlusion rays bounded on mobile.
+inline constexpr float kHitboxMaxRange = 200.0f;
+
 class HitboxModule : public Module {
 public:
     HitboxModule();
@@ -20,6 +24,13 @@ public:
     bool showEntities = true;
     bool showPlayers = true;
     bool showItems = true;
+
+    // Draw distance in blocks, measured from the local player. Players and mobs
+    // share `range` (100 blocks by default); items keep their own, shorter
+    // range so dropped stacks and farms do not flood the screen at distance.
+    // 0 disables the group. Clamped to [0, kHitboxMaxRange] when loading.
+    float range = 100.0f;
+    float itemsRange = 32.0f;
     uint32_t showItemsColor = 0xFFFFFFFFu;
     // Draw the local player's own box when the camera is in third person.
     // First-person (including jumping, where the camera interpolates above
@@ -28,6 +39,15 @@ public:
     bool showEyeLine = false;
     bool showLookLine = false;
     float lookLineLength = 2.0f;
+
+    // Draw every box at the interpolated render position (the position the
+    // entity mesh is drawn at) instead of the raw collision AABB. The raw box
+    // snaps a whole tick of movement ahead of the smoothly rendered body, which
+    // reads as the hitbox lagging behind the player. The interpolation phase
+    // is measured from each actor's own box samples, so a missing tick callback
+    // (gliding with an elytra) can never leave a box frozen behind the player.
+    // Off keeps the old tick-stepped boxes.
+    bool smoothBoxes = true;
 
     // Line thickness (menu slider units). 1.0 keeps the classic hairline
     // look; anything above that is drawn as real geometry (beams around

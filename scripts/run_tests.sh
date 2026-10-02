@@ -73,6 +73,12 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
+        hitbox_patch_test)
+            # Includes the production module; the preloader and
+            # nlohmann_json headers come from the host fakes. Drives the
+            # render hook frame by frame, so it needs threads for the sleeps.
+            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson" -pthread)
+            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
