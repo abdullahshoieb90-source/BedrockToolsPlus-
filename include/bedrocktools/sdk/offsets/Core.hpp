@@ -22,6 +22,7 @@ inline constexpr std::size_t ItemGetMaxDamage = 37;
 inline constexpr std::size_t ItemGetAnimationFrameFor = 120;
 inline constexpr std::size_t PlayerGetCarriedItem = 78;
 inline constexpr std::size_t HudCameraRendererRender = 17;
+inline constexpr std::size_t HudMobEffectsRendererRender = 17;
 inline constexpr std::size_t MinecraftUIRenderContextGetFullClippingRectangle = 27;
 }
 
