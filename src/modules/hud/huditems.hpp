@@ -71,7 +71,14 @@ EquipmentStacks getEquipmentStacks(void* player);
 
 void* stackItem(void* stack);         // Item*, nullptr for an empty slot
 std::uint8_t stackCount(void* stack); // ItemStackBase::mCount
-int stackDamage(void* stack);         // ItemStackBase::getDamageValue, >= 0
+// Damage (>= 0) of a stack: ItemStackBase::getDamageValue when it is resolved
+// and answers, otherwise the stack's own mAuxValue field. The fallback keeps
+// the durability bars alive on game builds where the damage signature lands on
+// the wrong function or does not resolve at all.
+int stackDamage(void* stack);
+// Maximum damage of a stack's item (0 when unbreakable):
+// ItemStackBase::getMaxDamage when it is resolved, otherwise the Item vtable.
+int stackMaxDamage(void* stack);
 int itemMaxDamage(void* item);        // Item::getMaxDamage, 0 when unbreakable
 // Items whose icon needs the HUD-opacity pass (dyed leather etc., see
 // IconPainter::beginOpacityFixPass).
@@ -117,6 +124,11 @@ public:
     // slot: fills are submitted first, so the icons of the same pass always
     // land on top of them (slot backgrounds).
     bool fillRect(float hudX, float hudY, float hudW, float hudH, std::uint32_t color);
+
+    // The vanilla durability bar (black track + green-to-red fill) of a
+    // HUD-space slot square, drawn with the game's own fillRectangle. Call it
+    // after draw() so the bar covers the bottom of the icon.
+    bool drawDurabilityBar(float hudX, float hudY, float hudSize, int damage, int maxDamage);
 
     // Dyed leather armor loses its tinted pixels when the HUD opacity shader
     // constant is at its default; the fix is an extra pass at a high opacity

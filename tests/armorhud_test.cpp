@@ -61,12 +61,15 @@ struct FakeItem {
     short maxDamage;
 };
 
-constexpr std::size_t FakeDamageOffset = 0x30;
+// The damage lives in the stack's own mAuxValue field, right in front of
+// mCount — the same field huditems::stackDamage() falls back to when the
+// optional ItemStackBase::getDamageValue signature is unavailable.
+constexpr std::size_t FakeDamageOffset = offsets::Inventory::ItemStackDamage;
 void setStack(void* stack, void* counter, std::uint8_t count, int damage = 0) {
     put(stack, offsets::Inventory::ItemStackItemCounter, counter);
     put(stack, offsets::Inventory::ItemStackCount, count);
     put(stack, offsets::Inventory::ItemStackValid, static_cast<std::uint8_t>(counter != nullptr));
-    put(stack, FakeDamageOffset, damage);
+    put(stack, FakeDamageOffset, static_cast<std::int16_t>(damage));
 }
 
 struct PaintedIcon {
@@ -91,6 +94,10 @@ const void* offhandPlayer = nullptr;
 int offhandCalls = 0;
 bool offhandAvailable = false;
 bool damageGetterAvailable = false;
+// A resolved accessor that answers 0 for every stack: the byte-pattern failure
+// mode where the wrong function is called and the bar silently disappears.
+bool damageGetterBroken = false;
+short stackMaxDamageValue = 0; // 0 = ItemStackBase::getMaxDamage has nothing to say
 int renderTag = 0;
 
 void* fakePlayer(void*) { return player; }
@@ -103,10 +110,12 @@ const void* fakeOffhand(const void* actor) {
 }
 short fakeMaxDamage(void* item) { return static_cast<FakeItem*>(item)->maxDamage; }
 int fakeDamage(void* stack) {
-    int result;
+    if (damageGetterBroken) return 0;
+    std::int16_t result;
     std::memcpy(&result, static_cast<std::byte*>(stack) + FakeDamageOffset, sizeof(result));
     return result;
 }
+short fakeStackMaxDamage(void*) { return stackMaxDamageValue; }
 
 hud::RectangleArea fakeClip(void*) { return {0.0f, 1000.0f, 0.0f, 1000.0f}; }
 void fakeFlush(void*, const hud::Color&, float, const hud::HashedString&) {}
@@ -125,6 +134,22 @@ std::uint64_t fakePaint(void*, void*, void* stack, unsigned int, unsigned char,
     return 0;
 }
 
+// Slot backgrounds are square cells; durability bars are thin rectangles, so
+// counting square fills keeps the cell assertions independent of the bars.
+std::size_t cellCount() {
+    std::size_t count = 0;
+    for (const auto& fill : fills) {
+        if (near(fill.area.x1 - fill.area.x0, fill.area.y1 - fill.area.y0)) ++count;
+    }
+    return count;
+}
+// The 4px-tall black track of a durability bar at a given slot top.
+const FilledCell* findBar(float y) {
+    for (const auto& fill : fills) {
+        if (near(fill.area.y0, y) && near(fill.area.y1 - fill.area.y0, 4.0f)) return &fill;
+    }
+    return nullptr;
+}
 const PaintedIcon* findIcon(void* stack) {
     for (const auto& icon : icons) if (icon.stack == stack) return &icon;
     return nullptr;
@@ -166,6 +191,8 @@ std::uintptr_t resolve(SignatureId id) {
             return offhandAvailable ? reinterpret_cast<std::uintptr_t>(fakeOffhand) : 0;
         case SignatureId::ItemStackBaseGetDamageValue:
             return damageGetterAvailable ? reinterpret_cast<std::uintptr_t>(fakeDamage) : 0;
+        case SignatureId::ItemStackBaseGetMaxDamage:
+            return reinterpret_cast<std::uintptr_t>(fakeStackMaxDamage);
         case SignatureId::BaseActorRenderContextCtor:
             return reinterpret_cast<std::uintptr_t>(fakeCreateContext);
         case SignatureId::ItemRendererRenderGuiItemNew:
@@ -216,12 +243,24 @@ int main() {
     player = actor.bytes;
 
     hud::initialize();
-    check(hud::stackDamage(armor.stack(0)) == 0,
-          "missing optional damage signature does not break icon initialization");
+    // The optional damage signature is missing: the stack's own field keeps the
+    // damage (and therefore the bars) alive.
+    check(hud::stackDamage(armor.stack(0)) == 143,
+          "a missing damage signature falls back to the stack's damage field");
     damageGetterAvailable = true;
     hud::initialize();
     check(hud::stackDamage(armor.stack(0)) == 143,
           "a later initialize retries the damage signature for durability bars");
+    damageGetterBroken = true;
+    check(hud::stackDamage(armor.stack(0)) == 143,
+          "a resolved-but-wrong damage accessor still falls back to the stack field");
+    damageGetterBroken = false;
+    check(hud::stackMaxDamage(armor.stack(0)) == 363,
+          "max damage falls back to Item::getMaxDamage through the item vtable");
+    stackMaxDamageValue = 4321;
+    check(hud::stackMaxDamage(armor.stack(0)) == 4321,
+          "a working ItemStackBase::getMaxDamage wins over the item vtable");
+    stackMaxDamageValue = 0;
     auto equipment = hud::getEquipmentStacks(player);
     check(!equipment.offhand, "unresolved offhand signature safely returns no stack");
     check(equipment.armor[0] == armor.stack(0), "missing offhand accessor does not hide armor");
@@ -300,23 +339,38 @@ int main() {
     check(!findText("1"), "single items do not get redundant stack counts");
     check(findText("220/363") && findText("528/528") && findText("0/495") && findText("428/429"),
           "all four armor slots show clamped remaining/maximum durability by default");
-    const bool helmetBarTrack = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
-        return command.type == pl::modmenu::DrawCommandType::RectFilled &&
-               near(command.x, 28.0f) && near(command.y, 226.0f) &&
-               near(command.w, 26.0f) && near(command.h, 4.0f) && command.color == 0xFF000000u;
-    });
-    const bool helmetBarFill = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
-        return command.type == pl::modmenu::DrawCommandType::RectFilled &&
-               near(command.x, 28.0f) && near(command.y, 226.0f) &&
-               command.w > 0.0f && command.w < 26.0f && near(command.h, 2.0f) &&
-               command.color != 0xFF000000u;
-    });
-    check(helmetBarTrack && helmetBarFill,
-          "damaged armor draws a background track and proportional colored durability fill");
+    // The durability bars are painted natively (game fillRectangle), not as
+    // launcher draw commands, so a launcher-side renderer can never drop them.
+    const float helmetRatio = (363.0f - 143.0f) / 363.0f;
+    const FilledCell* helmetTrack = findBar(226.0f);
+    check(helmetTrack && near(helmetTrack->area.x0, 28.0f) && near(helmetTrack->area.x1, 54.0f) &&
+              near(helmetTrack->color.r, 0.0f) && near(helmetTrack->color.g, 0.0f) &&
+              near(helmetTrack->color.b, 0.0f) && near(helmetTrack->alpha, 1.0f),
+          "a damaged armor piece draws the black durability bar track inside its slot");
+    const FilledCell* helmetFill = nullptr;
+    for (const auto& fill : fills) {
+        if (near(fill.area.y0, 226.0f) && near(fill.area.y1, 228.0f) && near(fill.area.x0, 28.0f)) {
+            helmetFill = &fill;
+        }
+    }
+    // The 8-bit color channels round, so the fill color is compared loosely.
+    const auto close = [](float a, float b) { return std::fabs(a - b) < 0.01f; };
+    check(helmetFill && near(helmetFill->area.x1, 28.0f + 26.0f * helmetRatio) &&
+              close(helmetFill->color.r, 1.0f - helmetRatio) && close(helmetFill->color.g, helmetRatio),
+          "the durability bar fill follows the remaining durability");
+    // The chestplate is at full durability (528/528): no bar. The damaged
+    // helmet and boots do have one, and the nearly broken leggings keep at
+    // least the track.
+    check(findBar(226.0f) && !findBar(226.0f + 36.0f) && findBar(226.0f + 2.0f * 36.0f),
+          "only damaged armor pieces get a bar (chestplate is at full durability)");
+    check(!std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+              return command.type == pl::modmenu::DrawCommandType::RectFilled;
+          }),
+          "the durability bar is no longer submitted as a launcher draw command");
 
     // Slot backgrounds are on by default: every visible slot — empty or not —
     // gets a cell behind its icon, painted in the same native pass.
-    check(fills.size() == 5, "default slot backgrounds cover the five visible slots");
+    check(cellCount() == 5, "default slot backgrounds cover the five visible slots");
     check(near(fills[0].area.x0, 24.0f) && near(fills[0].area.x1, 56.0f) &&
               near(fills[0].area.y0, 200.0f) && near(fills[0].area.y1, 232.0f),
           "the first cell sits exactly under the helmet slot");
@@ -346,10 +400,7 @@ int main() {
     frame();
     check(findIcon(heldStack.bytes) && !findText("16") && !findText("75/100"),
           "single offhand item updates its icon without a stale count or armor label");
-    const bool offhandBar = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
-        return command.type == pl::modmenu::DrawCommandType::RectFilled && near(command.y, 370.0f);
-    });
-    check(offhandBar, "damageable offhand items keep their durability bar");
+    check(findBar(370.0f) != nullptr, "damageable offhand items keep their durability bar");
     setStack(heldStack.bytes, &counters[4], 16);
 
     // The element is placed wherever the user drags it.
@@ -424,22 +475,22 @@ int main() {
     config["m_slotBackground"] = false;
     module.loadConfig(config);
     frame();
-    check(fills.empty() && findIcon(armor.stack(0)),
+    check(cellCount() == 0 && findIcon(armor.stack(0)),
           "slot backgrounds can be switched off without hiding the icons");
     config["m_slotBackground"] = true;
     config["m_showOffhand"] = false;
     module.loadConfig(config);
     frame();
-    check(fills.size() == 4 && !findIcon(heldStack.bytes),
+    check(cellCount() == 4 && !findIcon(heldStack.bytes),
           "a hidden offhand slot gets neither an icon nor a background cell");
     config["m_showOffhand"] = true;
     module.loadConfig(config);
     frame();
-    check(fills.size() == 5 && near(fills[4].area.y0, 12.0f + 4.0f * 36.0f),
+    check(cellCount() == 5 && near(fills[4].area.y0, 12.0f + 4.0f * 36.0f),
           "re-enabling the offhand restores its cell below the boots");
     setStack(armor.stack(1), nullptr, 0); // an empty chestplate slot
     frame();
-    check(fills.size() == 5 && !findIcon(armor.stack(1)),
+    check(cellCount() == 5 && !findIcon(armor.stack(1)),
           "empty slots keep their background cell");
     setStack(armor.stack(1), &counters[1], 1);
 
@@ -447,7 +498,7 @@ int main() {
     config["m_slotBgOpacity"] = 0.8f;
     module.loadConfig(config);
     frame();
-    check(fills.size() == 5 && near(fills[0].area.x0, 500.0f),
+    check(cellCount() == 5 && near(fills[0].area.x0, 500.0f),
           "styled backgrounds still cover every visible slot");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 1.0f) && near(fills[0].color.b, 0.0f) &&
               near(fills[0].color.a, 1.0f) &&

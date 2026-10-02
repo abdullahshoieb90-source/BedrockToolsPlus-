@@ -133,6 +133,9 @@ enum class SignatureId : std::uint16_t {
     MobGetModifiedSwingDuration,
     ContainerScreenControllerHandleAutoPlace,
     ActorGetOffhandSlot,
+    // Appended at the end so the numeric values of the ids above stay stable
+    // for mods that were built against an older header.
+    ItemStackBaseGetMaxDamage,
     Count
 };
 
@@ -141,6 +144,12 @@ inline constexpr std::size_t SignatureCount = static_cast<std::size_t>(Signature
 struct SignatureDefinition {
     SignatureId id;
     std::string_view pattern;
+    // Optional dynamic symbol of the same function. Bedrock exports the
+    // ItemStackBase accessors, and a symbol is an exact match where a short
+    // byte pattern can land on a neighbouring function that happens to share
+    // its prologue — which is how a durability bar silently reads 0 damage.
+    // Tried first; the pattern above stays the fallback.
+    std::string_view symbol{};
 };
 
 BEDROCKTOOLS_API bool resolveAll(std::string_view libraryName = "libminecraftpe.so");

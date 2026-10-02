@@ -1,5 +1,7 @@
 #include "huditems.hpp"
 
+#include "slotdecor_layout.hpp"
+
 #include "core/memory/Hooks.hpp"
 
 #include <bedrocktools/memory/Signatures.hpp>
@@ -85,6 +87,7 @@ using ActorGetOffhandSlotFn = const void* (*)(const void*);
 using HudCameraRendererFn = void (*)(void*, void*, void*, void*, int);
 using BaseActorRenderContextCtorFn = void (*)(void*, void*, void*, void*);
 using ItemStackBaseGetDamageValueFn = int (*)(void*);
+using ItemStackBaseGetMaxDamageFn = int (*)(void*);
 using ItemStackBaseGetRawNameIdFn = std::string (*)(void*);
 using ItemRendererRenderGuiItemNewFn = std::uint64_t (*)(
     void*, void*, void*, unsigned int, unsigned char, std::uint64_t,
@@ -95,6 +98,7 @@ using MinecraftUIRenderContextFillRectangleFn = void (*)(
 ActorGetOffhandSlotFn actorGetOffhandSlot = nullptr;
 BaseActorRenderContextCtorFn baseActorRenderContextCtor = nullptr;
 ItemStackBaseGetDamageValueFn itemStackBaseGetDamageValue = nullptr;
+ItemStackBaseGetMaxDamageFn itemStackBaseGetMaxDamage = nullptr;
 ItemStackBaseGetRawNameIdFn itemStackBaseGetRawNameId = nullptr;
 ItemRendererRenderGuiItemNewFn itemRendererRenderGuiItemNew = nullptr;
 bool functionsResolved = false;
@@ -232,6 +236,10 @@ void initialize() {
         itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
     }
+    if (!itemStackBaseGetMaxDamage) {
+        itemStackBaseGetMaxDamage = reinterpret_cast<ItemStackBaseGetMaxDamageFn>(
+            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetMaxDamage));
+    }
     if (!itemStackBaseGetRawNameId) {
         itemStackBaseGetRawNameId = reinterpret_cast<ItemStackBaseGetRawNameIdFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetRawNameId));
@@ -339,8 +347,25 @@ std::uint8_t stackCount(void* stack) {
 }
 
 int stackDamage(void* stack) {
-    if (!stack || !itemStackBaseGetDamageValue) return 0;
-    return std::max(0, itemStackBaseGetDamageValue(stack));
+    if (!stack) return 0;
+    if (itemStackBaseGetDamageValue) {
+        const int damage = itemStackBaseGetDamageValue(stack);
+        if (damage > 0) return damage;
+    }
+    // The accessor is missing, or it is not the accessor at all (a byte
+    // pattern can match a neighbour and quietly answer 0 for everything):
+    // read the stack's own mAuxValue, which is where the damage lives.
+    return std::max(0, static_cast<int>(
+        read<std::int16_t>(stack, offsets::Inventory::ItemStackDamage)));
+}
+
+int stackMaxDamage(void* stack) {
+    if (!stack) return 0;
+    if (itemStackBaseGetMaxDamage) {
+        const int maxDamage = itemStackBaseGetMaxDamage(stack);
+        if (maxDamage > 0) return maxDamage;
+    }
+    return itemMaxDamage(stackItem(stack));
 }
 
 int itemMaxDamage(void* item) {
@@ -456,6 +481,19 @@ bool IconPainter::fillRect(float hudX, float hudY, float hudW, float hudH, std::
     // is flushed, so it counts as work for the destructor's flush.
     mDrewAny = true;
     return true;
+}
+
+bool IconPainter::drawDurabilityBar(float hudX, float hudY, float hudSize, int damage, int maxDamage) {
+    if (damage <= 0 || maxDamage <= 0 || hudSize <= 0.0f) return false;
+    const slotdecor::SlotRect slot{hudX, hudY, hudSize};
+    const float ratio = slotdecor::durabilityRatio(damage, maxDamage);
+    const slotdecor::DurabilityBar bar = slotdecor::durabilityBar(slot, ratio);
+    const bool track = fillRect(bar.x, bar.y, bar.width, bar.height, 0xFF000000u);
+    bool fill = false;
+    if (bar.fillWidth > 0.0f) {
+        fill = fillRect(bar.x, bar.y, bar.fillWidth, bar.fillHeight, slotdecor::durabilityColor(ratio));
+    }
+    return track || fill;
 }
 
 bool IconPainter::supportsOpacityFix() const {

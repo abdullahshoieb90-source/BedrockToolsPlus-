@@ -277,7 +277,7 @@ void ArmorModule::storeRuntime(SlotRuntime& runtime, void* stack, void* item, bo
     int damage = 0;
     int maxDamage = 0;
     if (hasItem && wantDurability) {
-        maxDamage = huditems::itemMaxDamage(item);
+        maxDamage = huditems::stackMaxDamage(stack);
         if (maxDamage > 0) damage = huditems::stackDamage(stack);
     }
     runtime.damage.store(damage, std::memory_order_release);
@@ -383,6 +383,23 @@ void ArmorModule::renderNative(void* context, void* client) {
         const SlotRect rect = slotOrMainhandRect(config.layout, i);
         painter.draw(allStacks[i], items[i], rect.x, rect.y, rect.size);
     }
+
+    // The durability bars are painted in the same native pass as the icons —
+    // after them, so a bar sits on top of its icon — instead of being handed
+    // to the launcher as draw commands. A bar the launcher side drops would
+    // disappear silently while the durability numbers (text commands) still
+    // showed up.
+    if (config.durability) {
+        for (std::size_t i = 0; i < SlotTotal; ++i) {
+            const SlotRuntime& runtime = i < SlotCount ? m_slots[i] : m_mainhandRuntime;
+            if (!runtime.hasItem.load(std::memory_order_acquire)) continue;
+            const SlotRect rect = slotOrMainhandRect(config.layout, i);
+            painter.drawDurabilityBar(
+                rect.x, rect.y, rect.size,
+                runtime.damage.load(std::memory_order_acquire),
+                runtime.maxDamage.load(std::memory_order_acquire));
+        }
+    }
 }
 
 void ArmorModule::onFrame() {
@@ -429,33 +446,10 @@ void ArmorModule::onFrame() {
 
             const int maxDamage = runtime.maxDamage.load(std::memory_order_acquire);
             const int damage = runtime.damage.load(std::memory_order_acquire);
-            if (config.durability && maxDamage > 0 && damage > 0) {
-                const float ratio = decor::durabilityRatio(damage, maxDamage);
-                const decor::DurabilityBar bar = decor::durabilityBar(rect, ratio);
-
-                pl::modmenu::DrawCommand background;
-                background.type = pl::modmenu::DrawCommandType::RectFilled;
-                background.x = bar.x;
-                background.y = bar.y;
-                background.w = bar.width;
-                background.h = bar.height;
-                background.color = 0xFF000000u;
-                commands.push_back(std::move(background));
-
-                if (bar.fillWidth > 0.0f) {
-                    pl::modmenu::DrawCommand fill;
-                    fill.type = pl::modmenu::DrawCommandType::RectFilled;
-                    fill.x = bar.x;
-                    fill.y = bar.y;
-                    fill.w = bar.fillWidth;
-                    fill.h = bar.fillHeight;
-                    fill.color = decor::durabilityColor(ratio);
-                    commands.push_back(std::move(fill));
-                }
-            }
 
             // Armor numbers are independent of stack counts and durability
-            // bars, and remain visible for undamaged armor as well.
+            // bars, and remain visible for undamaged armor as well. The bar
+            // itself is painted natively in renderNative().
             if (armorSlot && config.armorDurability && maxDamage > 0) {
                 pl::modmenu::DrawCommand text;
                 text.type = pl::modmenu::DrawCommandType::Text;
