@@ -117,7 +117,7 @@ void InventoryHudModule::storeRuntime(SlotRuntime& runtime, void* stack, void* i
     int damage = 0;
     int maxDamage = 0;
     if (hasItem && wantDurability) {
-        maxDamage = huditems::itemMaxDamage(item);
+        maxDamage = huditems::stackMaxDamage(stack);
         if (maxDamage > 0) damage = huditems::stackDamage(stack);
     }
     runtime.damage.store(damage, std::memory_order_release);
@@ -125,6 +125,8 @@ void InventoryHudModule::storeRuntime(SlotRuntime& runtime, void* stack, void* i
 }
 
 void InventoryHudModule::renderNative(void* context, void* client) {
+    // Fresh bar count for the diagnostics readout of this pass.
+    huditems::resetBarDiagnostics();
     const ConfigSnapshot config = snapshotConfig();
     const bool hidden = config.hideInContainer && hiddenByScreen();
 
@@ -185,6 +187,21 @@ void InventoryHudModule::renderNative(void* context, void* client) {
         const SlotRect rect = layout::gridSlotRect(config.grid, i);
         painter.draw(stacks[i], items[i], rect.x, rect.y, rect.size);
     }
+
+    // Durability bars follow the icons in the same native pass, so they cover
+    // the bottom of the damaged items instead of depending on the launcher
+    // rendering RectFilled draw commands.
+    if (config.durability) {
+        for (std::size_t i = 0; i < GridSlotCount; ++i) {
+            const SlotRuntime& runtime = m_grid[i];
+            if (!runtime.hasItem.load(std::memory_order_acquire)) continue;
+            const SlotRect rect = layout::gridSlotRect(config.grid, i);
+            painter.drawDurabilityBar(
+                rect.x, rect.y, rect.size,
+                runtime.damage.load(std::memory_order_acquire),
+                runtime.maxDamage.load(std::memory_order_acquire));
+        }
+    }
 }
 
 void InventoryHudModule::onFrame() {
@@ -219,33 +236,8 @@ void InventoryHudModule::onFrame() {
         auto decorate = [&](const SlotRuntime& runtime, const SlotRect& rect) {
             if (!runtime.hasItem.load(std::memory_order_acquire) || rect.size <= 0.0f) return;
 
-            const int maxDamage = runtime.maxDamage.load(std::memory_order_acquire);
-            const int damage = runtime.damage.load(std::memory_order_acquire);
-            if (config.durability && maxDamage > 0 && damage > 0) {
-                const float ratio = decor::durabilityRatio(damage, maxDamage);
-                const decor::DurabilityBar bar = decor::durabilityBar(rect, ratio);
-
-                pl::modmenu::DrawCommand background;
-                background.type = pl::modmenu::DrawCommandType::RectFilled;
-                background.x = bar.x;
-                background.y = bar.y;
-                background.w = bar.width;
-                background.h = bar.height;
-                background.color = 0xFF000000u;
-                commands.push_back(std::move(background));
-
-                if (bar.fillWidth > 0.0f) {
-                    pl::modmenu::DrawCommand fill;
-                    fill.type = pl::modmenu::DrawCommandType::RectFilled;
-                    fill.x = bar.x;
-                    fill.y = bar.y;
-                    fill.w = bar.fillWidth;
-                    fill.h = bar.fillHeight;
-                    fill.color = decor::durabilityColor(ratio);
-                    commands.push_back(std::move(fill));
-                }
-            }
-
+            // The durability bar of this slot is painted natively in
+            // renderNative(); only the count stays a draw command.
             const std::uint8_t count = runtime.count.load(std::memory_order_acquire);
             if (config.stackCount && count > 1) {
                 const decor::TextAnchor anchor = decor::countTextAnchor(rect);

@@ -247,6 +247,7 @@ ArmorModule::ConfigSnapshot ArmorModule::snapshotConfig() const {
     config.stackCount = m_showStackCount;
     config.durability = m_showDurability;
     config.armorDurability = m_showArmorDurability;
+    config.damageDebug = m_damageDebug;
     config.hideInContainer = m_hideInContainer;
     config.slotBackground = m_slotBackground;
     config.slotBgColor = huditems::withOpacity(huditems::parseColor(m_slotBgColor, 0xFF000000u), m_slotBgOpacity);
@@ -277,7 +278,7 @@ void ArmorModule::storeRuntime(SlotRuntime& runtime, void* stack, void* item, bo
     int damage = 0;
     int maxDamage = 0;
     if (hasItem && wantDurability) {
-        maxDamage = huditems::itemMaxDamage(item);
+        maxDamage = huditems::stackMaxDamage(stack);
         if (maxDamage > 0) damage = huditems::stackDamage(stack);
     }
     runtime.damage.store(damage, std::memory_order_release);
@@ -285,6 +286,8 @@ void ArmorModule::storeRuntime(SlotRuntime& runtime, void* stack, void* item, bo
 }
 
 void ArmorModule::renderNative(void* context, void* client) {
+    // Fresh bar count for the diagnostics readout of this pass.
+    huditems::resetBarDiagnostics();
     const ConfigSnapshot config = snapshotConfig();
     const bool hidden = config.hideInContainer && hiddenByScreen();
 
@@ -383,6 +386,23 @@ void ArmorModule::renderNative(void* context, void* client) {
         const SlotRect rect = slotOrMainhandRect(config.layout, i);
         painter.draw(allStacks[i], items[i], rect.x, rect.y, rect.size);
     }
+
+    // The durability bars are painted in the same native pass as the icons —
+    // after them, so a bar sits on top of its icon — instead of being handed
+    // to the launcher as draw commands. A bar the launcher side drops would
+    // disappear silently while the durability numbers (text commands) still
+    // showed up.
+    if (config.durability) {
+        for (std::size_t i = 0; i < SlotTotal; ++i) {
+            const SlotRuntime& runtime = i < SlotCount ? m_slots[i] : m_mainhandRuntime;
+            if (!runtime.hasItem.load(std::memory_order_acquire)) continue;
+            const SlotRect rect = slotOrMainhandRect(config.layout, i);
+            painter.drawDurabilityBar(
+                rect.x, rect.y, rect.size,
+                runtime.damage.load(std::memory_order_acquire),
+                runtime.maxDamage.load(std::memory_order_acquire));
+        }
+    }
 }
 
 void ArmorModule::onFrame() {
@@ -429,33 +449,10 @@ void ArmorModule::onFrame() {
 
             const int maxDamage = runtime.maxDamage.load(std::memory_order_acquire);
             const int damage = runtime.damage.load(std::memory_order_acquire);
-            if (config.durability && maxDamage > 0 && damage > 0) {
-                const float ratio = decor::durabilityRatio(damage, maxDamage);
-                const decor::DurabilityBar bar = decor::durabilityBar(rect, ratio);
-
-                pl::modmenu::DrawCommand background;
-                background.type = pl::modmenu::DrawCommandType::RectFilled;
-                background.x = bar.x;
-                background.y = bar.y;
-                background.w = bar.width;
-                background.h = bar.height;
-                background.color = 0xFF000000u;
-                commands.push_back(std::move(background));
-
-                if (bar.fillWidth > 0.0f) {
-                    pl::modmenu::DrawCommand fill;
-                    fill.type = pl::modmenu::DrawCommandType::RectFilled;
-                    fill.x = bar.x;
-                    fill.y = bar.y;
-                    fill.w = bar.fillWidth;
-                    fill.h = bar.fillHeight;
-                    fill.color = decor::durabilityColor(ratio);
-                    commands.push_back(std::move(fill));
-                }
-            }
 
             // Armor numbers are independent of stack counts and durability
-            // bars, and remain visible for undamaged armor as well.
+            // bars, and remain visible for undamaged armor as well. The bar
+            // itself is painted natively in renderNative().
             if (armorSlot && config.armorDurability && maxDamage > 0) {
                 pl::modmenu::DrawCommand text;
                 text.type = pl::modmenu::DrawCommandType::Text;
@@ -488,6 +485,36 @@ void ArmorModule::onFrame() {
             decorate(m_slots[i], layout::slotRect(config.layout, i), i < layout::OffhandIndex);
         }
         decorate(m_mainhandRuntime, mainhandRect(config.layout), false);
+    }
+    // The readout also shows itself when the durability reader is blind — no
+    // readable tag text and no damage accessor — because that is exactly the
+    // state in which the bars and the numbers below cannot be trusted.
+    const huditems::DurabilityDiagnostics diagnostics = huditems::durabilityDiagnostics();
+    if (config.damageDebug || diagnostics.blind()) {
+        // The reader's whole view, a short line per group: which source
+        // answered, what the signature and the tag look like, the raw reads and
+        // the tag text itself. The element's own labels keep showing the values
+        // that end up on screen, so the two can be compared directly.
+        const std::string readout = huditems::durabilityDiagnosticsText(diagnostics);
+        float y = config.layout.y + std::max(1.0f, layout::columnHeight(config.layout)) + 4.0f;
+        std::size_t begin = 0;
+        while (begin <= readout.size()) {
+            const std::size_t end = readout.find('\n', begin);
+            const std::string line = readout.substr(begin, end == std::string::npos ? end : end - begin);
+            if (!line.empty()) {
+                pl::modmenu::DrawCommand debug;
+                debug.type = pl::modmenu::DrawCommandType::Text;
+                debug.x = config.layout.x;
+                debug.y = y;
+                debug.color = 0xFFFFD24Au; // amber, readable over the world
+                debug.size = 12.0f;
+                debug.text = line;
+                commands.push_back(std::move(debug));
+                y += 13.0f;
+            }
+            if (end == std::string::npos) break;
+            begin = end + 1;
+        }
     }
     pl::modmenu::submitDrawCommands(moduleId, commands);
 }
@@ -564,6 +591,11 @@ void ArmorModule::onMenuRegistered() {
         armorNumbers.section = "slot_details";
         armorNumbers.description = "Shows remaining/maximum durability beside each armor piece, independently of durability bars.";
         schema.node(std::move(armorNumbers));
+
+        auto debug = node("m_damageDebug", "Durability Diagnostics", "details", ConfigControlTypeV2::Toggle);
+        debug.section = "slot_details";
+        debug.description = "Always draws what the durability reader sees under the element: the source that answered (tag/accessor/+0xNN), the resolved signature (sym/pat), the item's tag and its text (ud/vt/td/txt) and the raw stack words. It also shows up on its own when the reader cannot find any damage source at all. Send the lines when a durability bar stops showing up.";
+        schema.node(std::move(debug));
     }
     section("count_text", "Number Text", "details");
     slider("m_countTextSize", "Text Size", "details", "count_text", "6", "40");
@@ -689,6 +721,7 @@ void ArmorModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_showStackCount")) m_showStackCount = j["m_showStackCount"].get<bool>();
     if (j.contains("m_showDurability")) m_showDurability = j["m_showDurability"].get<bool>();
     if (j.contains("m_showArmorDurability")) m_showArmorDurability = j["m_showArmorDurability"].get<bool>();
+    if (j.contains("m_damageDebug")) m_damageDebug = j["m_damageDebug"].get<bool>();
     if (j.contains("m_hideInContainer")) m_hideInContainer = j["m_hideInContainer"].get<bool>();
     if (j.contains("m_slotBackground")) m_slotBackground = j["m_slotBackground"].get<bool>();
     if (j.contains("m_slotBgOpacity")) m_slotBgOpacity = std::clamp(j["m_slotBgOpacity"].get<float>(), 0.05f, 1.0f);
@@ -718,6 +751,7 @@ void ArmorModule::saveConfig(nlohmann::json& j) {
     j["m_showStackCount"] = m_showStackCount;
     j["m_showDurability"] = m_showDurability;
     j["m_showArmorDurability"] = m_showArmorDurability;
+    j["m_damageDebug"] = m_damageDebug;
     j["m_hideInContainer"] = m_hideInContainer;
     j["m_slotBackground"] = m_slotBackground;
     j["m_slotBgOpacity"] = m_slotBgOpacity;

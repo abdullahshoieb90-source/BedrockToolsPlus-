@@ -61,12 +61,15 @@ struct FakeItem {
     short maxDamage;
 };
 
-constexpr std::size_t FakeDamageOffset = 0x30;
+// The damage lives in the stack's own mAuxValue field, right in front of
+// mCount — the same field huditems::stackDamage() falls back to when the
+// optional ItemStackBase::getDamageValue signature is unavailable.
+constexpr std::size_t FakeDamageOffset = offsets::Inventory::ItemStackDamage;
 void setStack(void* stack, void* counter, std::uint8_t count, int damage = 0) {
     put(stack, offsets::Inventory::ItemStackItemCounter, counter);
     put(stack, offsets::Inventory::ItemStackCount, count);
     put(stack, offsets::Inventory::ItemStackValid, static_cast<std::uint8_t>(counter != nullptr));
-    put(stack, FakeDamageOffset, damage);
+    put(stack, FakeDamageOffset, static_cast<std::int16_t>(damage));
 }
 
 struct PaintedIcon {
@@ -90,6 +93,11 @@ const void* offhand = nullptr;
 const void* offhandPlayer = nullptr;
 int offhandCalls = 0;
 bool offhandAvailable = false;
+bool damageGetterAvailable = false;
+// A resolved accessor that answers 0 for every stack: the byte-pattern failure
+// mode where the wrong function is called and the bar silently disappears.
+bool damageGetterBroken = false;
+short stackMaxDamageValue = 0; // 0 = ItemStackBase::getMaxDamage has nothing to say
 int renderTag = 0;
 
 void* fakePlayer(void*) { return player; }
@@ -102,10 +110,12 @@ const void* fakeOffhand(const void* actor) {
 }
 short fakeMaxDamage(void* item) { return static_cast<FakeItem*>(item)->maxDamage; }
 int fakeDamage(void* stack) {
-    int result;
+    if (damageGetterBroken) return 0;
+    std::int16_t result;
     std::memcpy(&result, static_cast<std::byte*>(stack) + FakeDamageOffset, sizeof(result));
     return result;
 }
+short fakeStackMaxDamage(void*) { return stackMaxDamageValue; }
 
 hud::RectangleArea fakeClip(void*) { return {0.0f, 1000.0f, 0.0f, 1000.0f}; }
 void fakeFlush(void*, const hud::Color&, float, const hud::HashedString&) {}
@@ -124,6 +134,22 @@ std::uint64_t fakePaint(void*, void*, void* stack, unsigned int, unsigned char,
     return 0;
 }
 
+// Slot backgrounds are square cells; durability bars are thin rectangles, so
+// counting square fills keeps the cell assertions independent of the bars.
+std::size_t cellCount() {
+    std::size_t count = 0;
+    for (const auto& fill : fills) {
+        if (near(fill.area.x1 - fill.area.x0, fill.area.y1 - fill.area.y0)) ++count;
+    }
+    return count;
+}
+// The 4px-tall black track of a durability bar at a given slot top.
+const FilledCell* findBar(float y) {
+    for (const auto& fill : fills) {
+        if (near(fill.area.y0, y) && near(fill.area.y1 - fill.area.y0, 4.0f)) return &fill;
+    }
+    return nullptr;
+}
 const PaintedIcon* findIcon(void* stack) {
     for (const auto& icon : icons) if (icon.stack == stack) return &icon;
     return nullptr;
@@ -138,12 +164,50 @@ const pl::modmenu::DrawCommand* findText(const std::string& text) {
     }
     return nullptr;
 }
+const pl::modmenu::DrawCommand* findTextPrefix(const std::string& prefix) {
+    for (const auto& command : commands) {
+        if (command.type == pl::modmenu::DrawCommandType::Text &&
+            command.text.compare(0, prefix.size(), prefix) == 0) {
+            return &command;
+        }
+    }
+    return nullptr;
+}
 } // namespace
+
+// The game's CompoundTag text source: the fake tag is a plain integer index
+// into this table, and the resolver hands back the two slots a real
+// CompoundTag has (the tag type getter and the text renderer), so the module
+// exercises the same slot selection it does in the game.
+bool fakeTagHasDamage = true;
+int fakeTagTypeCalls = 0;
+std::string fakeTagText(const void* self) {
+    const int value = *static_cast<const int*>(self);
+    std::string text = "{";
+    if (fakeTagHasDamage) {
+        text += "\"Damage\":";
+        text += std::to_string(value);
+        text += "s,";
+    }
+    text += "\"display\":{\"Name\":\"BT\"}}";
+    return text;
+}
+std::uint8_t fakeTagType(const void*) {
+    ++fakeTagTypeCalls;
+    return 10;
+}
+bool fakeTagTextAvailable = false;
 
 namespace pl::memory {
 int hook(FuncPtr, FuncPtr, FuncPtr*, HookPriority) { return -1; }
 bool unhook(FuncPtr, FuncPtr) { return true; }
-std::uintptr_t resolveVtableFunction(std::string_view, std::size_t, std::string_view) { return 0; }
+std::uintptr_t resolveVtableFunction(std::string_view typeInfo, std::size_t slot, std::string_view) {
+    if (!fakeTagTextAvailable || typeInfo != "11CompoundTag") return 0;
+    // Slot 5 is the tag type getter, slot 6 the text renderer: the resolver has
+    // to pick the string one and leave the getter alone.
+    return slot == 5 ? reinterpret_cast<std::uintptr_t>(fakeTagType)
+                     : reinterpret_cast<std::uintptr_t>(fakeTagText);
+}
 }
 namespace pl::modmenu {
 HudSurfaceSize getHudSurfaceSize() { return {1000.0f, 1000.0f}; }
@@ -164,13 +228,18 @@ std::uintptr_t resolve(SignatureId id) {
         case SignatureId::ActorGetOffhandSlot:
             return offhandAvailable ? reinterpret_cast<std::uintptr_t>(fakeOffhand) : 0;
         case SignatureId::ItemStackBaseGetDamageValue:
-            return reinterpret_cast<std::uintptr_t>(fakeDamage);
+            return damageGetterAvailable ? reinterpret_cast<std::uintptr_t>(fakeDamage) : 0;
+        case SignatureId::ItemStackBaseGetMaxDamage:
+            return reinterpret_cast<std::uintptr_t>(fakeStackMaxDamage);
         case SignatureId::BaseActorRenderContextCtor:
             return reinterpret_cast<std::uintptr_t>(fakeCreateContext);
         case SignatureId::ItemRendererRenderGuiItemNew:
             return reinterpret_cast<std::uintptr_t>(fakePaint);
         default: return 0;
     }
+}
+ResolveKind resolveKind(SignatureId id) {
+    return resolve(id) ? ResolveKind::Symbol : ResolveKind::None;
 }
 }
 namespace bedrocktools::events {
@@ -215,6 +284,24 @@ int main() {
     player = actor.bytes;
 
     hud::initialize();
+    // The optional damage signature is missing: the stack's own field keeps the
+    // damage (and therefore the bars) alive.
+    check(hud::stackDamage(armor.stack(0)) == 143,
+          "a missing damage signature falls back to the stack's damage field");
+    damageGetterAvailable = true;
+    hud::initialize();
+    check(hud::stackDamage(armor.stack(0)) == 143,
+          "a later initialize retries the damage signature for durability bars");
+    damageGetterBroken = true;
+    check(hud::stackDamage(armor.stack(0)) == 143,
+          "a resolved-but-wrong damage accessor still falls back to the stack field");
+    damageGetterBroken = false;
+    check(hud::stackMaxDamage(armor.stack(0)) == 363,
+          "max damage falls back to Item::getMaxDamage through the item vtable");
+    stackMaxDamageValue = 4321;
+    check(hud::stackMaxDamage(armor.stack(0)) == 4321,
+          "a working ItemStackBase::getMaxDamage wins over the item vtable");
+    stackMaxDamageValue = 0;
     auto equipment = hud::getEquipmentStacks(player);
     check(!equipment.offhand, "unresolved offhand signature safely returns no stack");
     check(equipment.armor[0] == armor.stack(0), "missing offhand accessor does not hide armor");
@@ -293,17 +380,46 @@ int main() {
     check(!findText("1"), "single items do not get redundant stack counts");
     check(findText("220/363") && findText("528/528") && findText("0/495") && findText("428/429"),
           "all four armor slots show clamped remaining/maximum durability by default");
+    // The durability bars are painted natively (game fillRectangle), not as
+    // launcher draw commands, so a launcher-side renderer can never drop them.
+    const float helmetRatio = (363.0f - 143.0f) / 363.0f;
+    const FilledCell* helmetTrack = findBar(226.0f);
+    check(helmetTrack && near(helmetTrack->area.x0, 28.0f) && near(helmetTrack->area.x1, 54.0f) &&
+              near(helmetTrack->color.r, 0.0f) && near(helmetTrack->color.g, 0.0f) &&
+              near(helmetTrack->color.b, 0.0f) && near(helmetTrack->alpha, 1.0f),
+          "a damaged armor piece draws the black durability bar track inside its slot");
+    const FilledCell* helmetFill = nullptr;
+    for (const auto& fill : fills) {
+        if (near(fill.area.y0, 226.0f) && near(fill.area.y1, 228.0f) && near(fill.area.x0, 28.0f)) {
+            helmetFill = &fill;
+        }
+    }
+    // The 8-bit color channels round, so the fill color is compared loosely.
+    const auto close = [](float a, float b) { return std::fabs(a - b) < 0.01f; };
+    check(helmetFill && near(helmetFill->area.x1, 28.0f + 26.0f * helmetRatio) &&
+              close(helmetFill->color.r, 1.0f - helmetRatio) && close(helmetFill->color.g, helmetRatio),
+          "the durability bar fill follows the remaining durability");
+    // The chestplate is at full durability (528/528): no bar. The damaged
+    // helmet and boots do have one, and the nearly broken leggings keep at
+    // least the track.
+    check(findBar(226.0f) && !findBar(226.0f + 36.0f) && findBar(226.0f + 2.0f * 36.0f),
+          "only damaged armor pieces get a bar (chestplate is at full durability)");
+    check(!std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+              return command.type == pl::modmenu::DrawCommandType::RectFilled;
+          }),
+          "the durability bar is no longer submitted as a launcher draw command");
 
     // Slot backgrounds are on by default: every visible slot — empty or not —
     // gets a cell behind its icon, painted in the same native pass.
-    check(fills.size() == 5, "default slot backgrounds cover the five visible slots");
+    check(cellCount() == 5, "default slot backgrounds cover the five visible slots");
     check(near(fills[0].area.x0, 24.0f) && near(fills[0].area.x1, 56.0f) &&
               near(fills[0].area.y0, 200.0f) && near(fills[0].area.y1, 232.0f),
           "the first cell sits exactly under the helmet slot");
     check(near(fills[4].area.y0, 200.0f + 4.0f * 36.0f) && near(fills[4].area.x0, 24.0f),
           "the offhand slot has its own cell below the boots");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 114,
+              near(fills[0].color.a, 1.0f) &&
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 114,
           "default cells are black at the configured 45% opacity");
     const auto* label = findText("220/363");
     check(label && near(label->h, 32.0f) && near(label->size, 12.0f), "armor label is centered within its row");
@@ -325,10 +441,7 @@ int main() {
     frame();
     check(findIcon(heldStack.bytes) && !findText("16") && !findText("75/100"),
           "single offhand item updates its icon without a stale count or armor label");
-    const bool offhandBar = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
-        return command.type == pl::modmenu::DrawCommandType::RectFilled && near(command.y, 370.0f);
-    });
-    check(offhandBar, "damageable offhand items keep their durability bar");
+    check(findBar(370.0f) != nullptr, "damageable offhand items keep their durability bar");
     setStack(heldStack.bytes, &counters[4], 16);
 
     // The element is placed wherever the user drags it.
@@ -403,22 +516,22 @@ int main() {
     config["m_slotBackground"] = false;
     module.loadConfig(config);
     frame();
-    check(fills.empty() && findIcon(armor.stack(0)),
+    check(cellCount() == 0 && findIcon(armor.stack(0)),
           "slot backgrounds can be switched off without hiding the icons");
     config["m_slotBackground"] = true;
     config["m_showOffhand"] = false;
     module.loadConfig(config);
     frame();
-    check(fills.size() == 4 && !findIcon(heldStack.bytes),
+    check(cellCount() == 4 && !findIcon(heldStack.bytes),
           "a hidden offhand slot gets neither an icon nor a background cell");
     config["m_showOffhand"] = true;
     module.loadConfig(config);
     frame();
-    check(fills.size() == 5 && near(fills[4].area.y0, 12.0f + 4.0f * 36.0f),
+    check(cellCount() == 5 && near(fills[4].area.y0, 12.0f + 4.0f * 36.0f),
           "re-enabling the offhand restores its cell below the boots");
     setStack(armor.stack(1), nullptr, 0); // an empty chestplate slot
     frame();
-    check(fills.size() == 5 && !findIcon(armor.stack(1)),
+    check(cellCount() == 5 && !findIcon(armor.stack(1)),
           "empty slots keep their background cell");
     setStack(armor.stack(1), &counters[1], 1);
 
@@ -426,10 +539,11 @@ int main() {
     config["m_slotBgOpacity"] = 0.8f;
     module.loadConfig(config);
     frame();
-    check(fills.size() == 5 && near(fills[0].area.x0, 500.0f),
+    check(cellCount() == 5 && near(fills[0].area.x0, 500.0f),
           "styled backgrounds still cover every visible slot");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 1.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 204,
+              near(fills[0].color.a, 1.0f) &&
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 204,
           "background color and opacity are applied to the cells");
 
     config["m_showArmorDurability"] = true;
@@ -452,6 +566,144 @@ int main() {
     check(schemaJson.find("m_horizontal") != std::string::npos &&
               schemaJson.find("m_showOffhand") != std::string::npos,
           "menu exposes the module's own layout and offhand options");
+    // Durability diagnostics: one line under the column telling where the
+    // damage value came from, so a build whose damage accessor broke can be
+    // diagnosed from inside the game instead of guessing.
+    check(!findTextPrefix("BT+") && schemaJson.find("m_damageDebug") != std::string::npos,
+          "the durability diagnostics readout is off by default but exposed in the menu");
+    config["m_damageDebug"] = true;
+    module.loadConfig(config);
+    frame();
+    const auto* diagnosticLine = findTextPrefix("BT+");
+    const auto* diagnosticRaw = findTextPrefix("raw ");
+    check(diagnosticLine && diagnosticLine->text.find("dmg[") != std::string::npos &&
+              diagnosticLine->text.find("/") != std::string::npos &&
+              diagnosticLine->text.find("sym") != std::string::npos &&
+              diagnosticLine->text.find("acc") != std::string::npos &&
+              diagnosticLine->text.find("ud") != std::string::npos &&
+              diagnosticLine->text.find("vt") != std::string::npos &&
+              diagnosticLine->text.find("td") != std::string::npos,
+          "the diagnostics line names the damage source, the signature state and the tag state");
+    check(diagnosticRaw && diagnosticRaw->text.find("hex") != std::string::npos &&
+              diagnosticRaw->text.find("bars ") != std::string::npos &&
+              near(diagnosticRaw->y, diagnosticLine->y + 13.0f) && near(diagnosticRaw->x, diagnosticLine->x),
+          "a second diagnostics line carries the raw reads, the stack words and the painted bar count");
+    check(findTextPrefix(std::string("BT+ ") + std::string(bedrocktools::Version)) != nullptr,
+          "the diagnostics line carries the build version");
+    // Durability bars are switched off in this part of the test, so the line
+    // reports zero painted bars: turn them on to see the count move.
+    config["m_showDurability"] = true;
+    module.loadConfig(config);
+    frame();
+    const auto* diagWithBars = findTextPrefix("raw ");
+    check(diagWithBars && diagWithBars->text.find("bars 0") == std::string::npos,
+          "the diagnostics line counts the durability bars the last pass painted");
+    config["m_showDurability"] = false;
+    module.loadConfig(config);
+    frame();
+    config["m_damageDebug"] = false;
+    module.loadConfig(config);
+    frame();
+    check(!findTextPrefix("BT+"), "turning the diagnostics off removes the line again");
+
+    // The prologue self-test is exercised on hand-written instruction words: no
+    // test compiler lays a function out the way the game's compiler does. The
+    // module's use of the text slot is then exercised with a verdict
+    // substituted for the self-test.
+    namespace text = bedrocktools::huditems::text;
+    {
+        const std::uint32_t aarch64Moves[] = {0x910003FDu, 0xAA0803E0u}; // add x29, sp, #0 ; mov x0, x8
+        const std::uint32_t aarch64Store[] = {0xF9000BE8u};              // str x8, [sp, #16]
+        const std::uint32_t aarch64Load[] = {0xF9400109u};               // ldr x9, [x8]
+        const std::uint32_t aarch64Type[] = {0x52800140u, 0xD65F03C0u};  // mov w0, #10 ; ret
+        const std::uint32_t aarch64Plain[] = {0xD503201Fu, 0xD65F03C0u}; // nop ; ret
+        check(text::detail::usesReturnSlotAArch64(aarch64Moves, 2) &&
+                  text::detail::usesReturnSlotAArch64(aarch64Store, 1) &&
+                  text::detail::usesReturnSlotAArch64(aarch64Load, 1) &&
+                  !text::detail::usesReturnSlotAArch64(aarch64Plain, 2),
+              "the AArch64 check sees the return slot in every instruction that keeps it");
+        check(text::detail::returnsTagTypeAArch64(aarch64Type, 2) &&
+                  !text::detail::returnsTagTypeAArch64(aarch64Plain, 2),
+              "the AArch64 check recognises the tag type getter by its body");
+        const std::uint8_t x86ReturnSlot[] = {0x55, 0x48, 0x89, 0xFD}; // push rbp ; mov rbp, rdi
+        const std::uint8_t x86Plain[] = {0x55, 0x48, 0x89, 0xE5};      // push rbp ; mov rbp, rsp
+        const std::uint8_t x86Type[] = {0xB8, 0x0A, 0x00, 0x00, 0x00, 0xC3}; // mov eax, 10 ; ret
+        check(text::detail::usesReturnSlotX86(x86ReturnSlot, 4) &&
+                  !text::detail::usesReturnSlotX86(x86Plain, 4) &&
+                  !text::detail::usesReturnSlotX86(x86Type, 6),
+              "the x86 check sees the return slot and never mistakes the tag type getter for it");
+        check(text::detail::returnsTagTypeX86(x86Type, 6) &&
+                  !text::detail::returnsTagTypeX86(x86ReturnSlot, 4),
+              "the x86 check recognises the tag type getter by its body");
+    }
+
+    // With neither a damage accessor nor a readable tag text the reader is
+    // blind, and the readout shows itself even with the option off: that is the
+    // state in which the bars and the numbers cannot be trusted.
+    text::detail::slotVerifier = [](const void*, std::size_t) { return false; };
+    auto* const savedDamageGetter = hud::itemStackBaseGetDamageValue;
+    hud::itemStackBaseGetDamageValue = nullptr;
+    frame();
+    const auto* autoLine = findTextPrefix("BT+");
+    check(autoLine && autoLine->text.find("vt0") != std::string::npos &&
+              autoLine->text.find("acc-1") != std::string::npos,
+          "a blind durability reader shows the readout without the option");
+    hud::itemStackBaseGetDamageValue = savedDamageGetter;
+
+    // The tag text slot then answers: the module has to take the slot the
+    // verdict accepted (6) and never call the tag type getter beside it (5).
+    text::detail::slotVerifier = [](const void*, std::size_t slot) { return slot == 6; };
+    {
+        text::Source probe{"11CompoundTag", {5, 6}};
+        fakeTagTextAvailable = true;
+        const bool usable = text::resolve(probe, "libminecraftpe.so");
+        check(usable && probe.usable == 1 && fakeTagTypeCalls == 0,
+              "the tag text slot is picked and the tag type getter is never called");
+        fakeTagTextAvailable = false;
+        probe = text::Source{"11CompoundTag", {5, 6}};
+        check(!text::resolve(probe, "libminecraftpe.so") && !probe.available(),
+              "a CompoundTag without a usable text slot stays unavailable");
+        fakeTagTextAvailable = true;
+    }
+
+    // The damage of a damaged stack lives in its own CompoundTag, the "Damage"
+    // key ItemStackBase::getDamageValue() reads. The module reaches it through
+    // the game's virtual tag text, so it survives both a moved field and a
+    // signature that landed on the wrong function.
+    int tagDamage = 187;
+    Storage<offsets::Inventory::ItemStackSize> tagged;
+    setStack(tagged.bytes, &counters[0], 1);
+    put(tagged.bytes, offsets::Inventory::ItemStackUserData, &tagDamage);
+    check(hud::stackDamage(tagged.bytes) == 187,
+          "the damage of a damaged stack is read out of its own CompoundTag text");
+    const auto tagDiagnostics = hud::durabilityDiagnostics();
+    check(tagDiagnostics.tagTextAvailable && tagDiagnostics.tagDamage == 187 && tagDiagnostics.userData,
+          "the diagnostics report the tag text source, its damage and the user data");
+    // The readout shows the tag text it parsed, one line per group.
+    config["m_damageDebug"] = true;
+    module.loadConfig(config);
+    frame();
+    const auto* diagnosticText = findTextPrefix("txt ");
+    const auto* diagnosticRawLine = findTextPrefix("raw ");
+    check(diagnosticText && diagnosticText->text.find("Damage") != std::string::npos,
+          "the readout shows the tag text it parsed the damage out of");
+    check(diagnosticRawLine && diagnosticText && near(diagnosticText->y, diagnosticRawLine->y + 13.0f),
+          "the readout is one line per group, not one clipped line");
+    config["m_damageDebug"] = false;
+    module.loadConfig(config);
+    frame();
+    // A damage change comes with a new tag (the game clones the user data), and
+    // a tag without a Damage key is an undamaged stack, not a broken read.
+    int replacedTagDamage = 5;
+    put(tagged.bytes, offsets::Inventory::ItemStackUserData, &replacedTagDamage);
+    check(hud::stackDamage(tagged.bytes) == 5, "a replaced tag is read again");
+    int plainTag = 0;
+    fakeTagHasDamage = false;
+    put(tagged.bytes, offsets::Inventory::ItemStackUserData, &plainTag);
+    check(hud::stackDamage(tagged.bytes) == 0, "a tag without a Damage key reads as undamaged");
+    fakeTagHasDamage = true;
+    text::detail::slotVerifier = nullptr;
+
     check(schemaJson.find("m_slotBackground") != std::string::npos &&
               schemaJson.find("m_slotBgOpacity") != std::string::npos &&
               schemaJson.find("m_slotBgColor") != std::string::npos &&

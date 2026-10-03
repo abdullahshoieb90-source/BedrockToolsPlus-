@@ -60,12 +60,15 @@ struct FakeItem {
     short maxDamage;
 };
 
-constexpr std::size_t FakeDamageOffset = 0x30;
+// The damage lives in the stack's own mAuxValue field (see
+// offsets::Inventory::ItemStackDamage), which huditems::stackDamage() falls
+// back to when the ItemStackBase::getDamageValue signature is unavailable.
+constexpr std::size_t FakeDamageOffset = offsets::Inventory::ItemStackDamage;
 void setStack(void* stack, void* counter, std::uint8_t count, int damage = 0) {
     put(stack, offsets::Inventory::ItemStackItemCounter, counter);
     put(stack, offsets::Inventory::ItemStackCount, count);
     put(stack, offsets::Inventory::ItemStackValid, static_cast<std::uint8_t>(counter != nullptr));
-    put(stack, FakeDamageOffset, damage);
+    put(stack, FakeDamageOffset, static_cast<std::int16_t>(damage));
 }
 
 struct PaintedIcon {
@@ -101,7 +104,7 @@ const void* fakeOffhand(const void* actor) {
 }
 short fakeMaxDamage(void* item) { return static_cast<FakeItem*>(item)->maxDamage; }
 int fakeDamage(void* stack) {
-    int result;
+    std::int16_t result;
     std::memcpy(&result, static_cast<std::byte*>(stack) + FakeDamageOffset, sizeof(result));
     return result;
 }
@@ -123,6 +126,15 @@ std::uint64_t fakePaint(void*, void*, void* stack, unsigned int, unsigned char,
     return 0;
 }
 
+// Slot backgrounds are square cells; durability bars are thin rectangles, so
+// counting square fills keeps the cell assertions independent of the bars.
+std::size_t cellCount() {
+    std::size_t count = 0;
+    for (const auto& fill : fills) {
+        if (near(fill.area.x1 - fill.area.x0, fill.area.y1 - fill.area.y0)) ++count;
+    }
+    return count;
+}
 const PaintedIcon* findIcon(void* stack) {
     for (const auto& icon : icons) if (icon.stack == stack) return &icon;
     return nullptr;
@@ -170,6 +182,9 @@ std::uintptr_t resolve(SignatureId id) {
             return reinterpret_cast<std::uintptr_t>(fakePaint);
         default: return 0;
     }
+}
+ResolveKind resolveKind(SignatureId id) {
+    return resolve(id) ? ResolveKind::Symbol : ResolveKind::None;
 }
 }
 namespace bedrocktools::events {
@@ -266,14 +281,15 @@ int main() {
 
     // Slot backgrounds are on by default and cover all 27 cells of the grid,
     // so empty slots keep their place.
-    check(fills.size() == 27, "default slot backgrounds cover all 27 grid cells");
+    check(cellCount() == 27, "default slot backgrounds cover all 27 grid cells");
     check(near(fills[0].area.x0, 24.0f) && near(fills[0].area.x1, 56.0f) &&
               near(fills[0].area.y0, 200.0f) && near(fills[0].area.y1, 232.0f),
           "the first cell sits exactly under the first grid slot");
     check(near(fills[26].area.x0, 24.0f + 8.0f * 36.0f) && near(fills[26].area.y0, 200.0f + 2.0f * 36.0f),
           "the last cell sits at the bottom-right of the 9x3 grid");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 114,
+              near(fills[0].color.a, 1.0f) &&
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 114,
           "default cells are black at the configured 45% opacity");
 
     const auto* firstIcon = findIcon(inventory.stack(9));
@@ -313,14 +329,23 @@ int main() {
     module.loadConfig(config);
     frame();
     check(!findText("64"), "stack counts can be disabled");
-    const bool bar = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
-        return command.type == pl::modmenu::DrawCommandType::RectFilled;
+    // The durability bar is painted natively (game fillRectangle), not as a
+    // launcher draw command: the 4px-tall track is the bar.
+    const bool bar = std::any_of(fills.begin(), fills.end(), [](const auto& fill) {
+        return near(fill.area.y1 - fill.area.y0, 4.0f) && near(fill.area.x1 - fill.area.x0, 26.0f);
     });
     check(bar, "damaged inventory items keep their durability bar");
+    check(!std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+              return command.type == pl::modmenu::DrawCommandType::RectFilled;
+          }),
+          "the durability bar is no longer submitted as a launcher draw command");
     config["m_showDurability"] = false;
     module.loadConfig(config);
     frame();
-    check(commands.empty(), "both decorations can be turned off");
+    check(commands.empty() && !std::any_of(fills.begin(), fills.end(), [](const auto& fill) {
+              return near(fill.area.y1 - fill.area.y0, 4.0f) && near(fill.area.x1 - fill.area.x0, 26.0f);
+          }),
+          "both decorations can be turned off");
     config["m_showStackCount"] = true;
     config["m_showDurability"] = true;
 
@@ -338,18 +363,19 @@ int main() {
     config["m_slotBackground"] = false;
     module.loadConfig(config);
     frame();
-    check(fills.empty() && findIcon(inventory.stack(9)),
+    check(cellCount() == 0 && findIcon(inventory.stack(9)),
           "slot backgrounds can be switched off without hiding the grid");
     config["m_slotBackground"] = true;
     config["m_slotBgColor"] = "#0000FF";
     config["m_slotBgOpacity"] = 0.8f;
     module.loadConfig(config);
     frame();
-    check(fills.size() == 27 && near(fills[13].area.x0, 120.0f + 4.0f * 36.0f) &&
+    check(cellCount() == 27 && near(fills[13].area.x0, 120.0f + 4.0f * 36.0f) &&
               near(fills[13].area.y0, 300.0f + 36.0f),
           "styled backgrounds follow the grid geometry");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 1.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 204,
+              near(fills[0].color.a, 1.0f) &&
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 204,
           "background color and opacity are applied");
 
     module.onMenuRegistered();

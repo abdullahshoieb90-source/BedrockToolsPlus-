@@ -1,13 +1,37 @@
 #include <bedrocktools/memory/Signatures.hpp>
 
+#include "LibrarySymbols.hpp"
+
 #include <array>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <pl/memory/Signature.hpp>
 
 namespace bedrocktools::memory {
 namespace {
+namespace library_symbols = bedrocktools::memory::library;
+
+// Itanium-ABI mangled names of the definitions that carry a `symbol`. Bedrock
+// keeps exporting these accessors, so the exact symbol lookup is preferred
+// over the byte pattern (see SignatureDefinition::symbol).
+std::string_view mangledSymbol(std::string_view symbol) {
+    if (symbol == "ItemStackBase::getDamageValue() const") return "_ZNK13ItemStackBase14getDamageValueEv";
+    if (symbol == "ItemStackBase::getMaxDamage() const") return "_ZNK13ItemStackBase12getMaxDamageEv";
+    if (symbol == "ItemStackBase::getRawNameId() const") return "_ZNK13ItemStackBase12getRawNameIdB5cxx11Ev";
+    return {};
+}
+
+// Address of one exported symbol of an already loaded library: dlsym first,
+// then the image's own dynamic symbol table (see LibrarySymbols.hpp).
+std::uintptr_t resolveExportedSymbol(const std::string& library, std::string_view symbol) {
+    const std::string_view mangled = mangledSymbol(symbol);
+    if (mangled.empty()) return 0;
+    return library_symbols::findMangled(library, mangled);
+}
+
 std::array<std::uintptr_t, SignatureCount> addresses{};
+std::array<ResolveKind, SignatureCount> resolveKinds{};
 const std::array<SignatureDefinition, SignatureCount> definitions{{
     SignatureDefinition{SignatureId::VersionString, "? ? ? D1 ? ? ? A9 ? ? ? A9 ? ? ? 91 54 D0 3B D5 F3 03 08 AA ? ? ? F9 ? ? ? F8 E8 03 00 91 ? ? ? 94 ? ? ? 90"},
     SignatureDefinition{SignatureId::Nametag, "? ? ? D1 ? ? ? 6D ? ? ? 6D ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? 91 57 D0 3B D5 FA 03 01 AA"},
@@ -95,8 +119,9 @@ const std::array<SignatureDefinition, SignatureCount> definitions{{
     SignatureDefinition{SignatureId::LocalPlayerChangeDimension, "? ? ? D1 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? 91 5A D0 3B D5 F6 03 01 AA F3 03 00 AA ? ? ? F9 ? ? ? F8 ? ? ? 95"},
     SignatureDefinition{SignatureId::NbtTreeFind, "? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 FD 03 00 91 F3 03 00 AA ? ? ? F8 ? ? ? B4 ? ? ? A9 F5 03 13 AA ? ? ? 14 F5 03 17 AA ? ? ? F8 ? ? ? B4 ? ? ? 39 ? ? ? 36 ? ? ? F9 ? ? ? 36 ? ? ? F9 1F 03 16 EB E0 03 14 AA 02 33 96 9A ? ? ? 95 ? ? ? 34 ? ? ? 37 ? ? ? 52 1F 01 00 71 ? ? ? 54 ? ? ? 52 1F 01 00 71 ? ? ? 54 ? ? ? 17 ? ? ? 91 ? ? ? 37 ? ? ? D3 1F 03 16 EB E0 03 14 AA 02 33 96 9A ? ? ? 95 ? ? ? 35 DF 02 18 EB ? ? ? 54 E8 03 1F 2A 1F 01 00 71 ? ? ? 54 ? ? ? 14 ? ? ? 54 ? ? ? 52 1F 01 00 71 ? ? ? 54 E9 03 1F AA 1F 01 00 71 ? ? ? 54 ? ? ? 17 BF 02 13 EB ? ? ? 54 ? ? ? 39 ? ? ? A9 E0 03 14 AA ? ? ? D3 ? ? ? 72 ? ? ? 91 01 01 8B 9A 57 01 89 9A FF 02 16 EB E2 32 96 9A ? ? ? 95 DF 02 17 EB E8 27 9F 1A 1F 00 00 71 E9 A7 9F 1A 08 01 89 1A 1F 01 00 71 73 12 95 9A E0 03 13 AA ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A8 C0 03 5F D6 ? ? ? A9 ? ? ? A9"},
     SignatureDefinition{SignatureId::ItemStackBaseLoadItem, "? ? ? D1 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? 91 5B D0 3B D5 F4 03 01 AA F3 03 00 AA ? ? ? F9 ? ? ? F8 ? ? ? 91"},
-    SignatureDefinition{SignatureId::ItemStackBaseGetDamageValue, "? ? ? F9 ? ? ? B4 ? ? ? F9 ? ? ? B4 ? ? ? F9 E0 03 08 AA ? ? ? 14 E0 03 1F 2A C0 03 5F D6 ? ? ? D1"},
-    SignatureDefinition{SignatureId::ItemStackBaseGetRawNameId, "? ? ? A9 ? ? ? F9 ? ? ? A9 ? ? ? A9 FD 03 00 91 ? ? ? F9 ? ? ? A9 ? ? ? F9 ? ? ? B4"},
+    SignatureDefinition{SignatureId::ItemStackBaseGetDamageValue, "? ? ? F9 ? ? ? B4 ? ? ? F9 ? ? ? B4 ? ? ? F9 E0 03 08 AA ? ? ? 14 E0 03 1F 2A C0 03 5F D6 ? ? ? D1", "ItemStackBase::getDamageValue() const"},
+    SignatureDefinition{SignatureId::ItemStackBaseGetMaxDamage, "", "ItemStackBase::getMaxDamage() const"},
+    SignatureDefinition{SignatureId::ItemStackBaseGetRawNameId, "? ? ? A9 ? ? ? F9 ? ? ? A9 ? ? ? A9 FD 03 00 91 ? ? ? F9 ? ? ? A9 ? ? ? F9 ? ? ? B4", "ItemStackBase::getRawNameId() const"},
     SignatureDefinition{SignatureId::BaseActorRenderContextCtor, "? ? ? D1 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? 91 56 D0 3B D5 F3 03 00 AA F4 03 02 AA ? ? ? F9 F5 03 01 AA ? ? ? F8 ? ? ? B0"},
     SignatureDefinition{SignatureId::ItemRendererRenderGuiItemNew, "? ? ? D1 ? ? ? FD ? ? ? 6D ? ? ? 6D ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? 91 5B D0 3B D5 F4 03 00 AA"},
     SignatureDefinition{SignatureId::ControlOptionEditorTick, "? ? ? D1 ? ? ? 6D ? ? ? 6D ? ? ? 6D ? ? ? 6D ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? A9 ? ? ? 91 5B D0 3B D5 F4 03 00 AA"},
@@ -140,14 +165,28 @@ bool resolveAll(std::string_view libraryName) {
     const std::string library(libraryName);
     std::vector<std::string> patterns;
     patterns.reserve(definitions.size());
-    for (const auto& definition : definitions) patterns.emplace_back(definition.pattern);
+    for (const auto& definition : definitions) {
+        if (!definition.pattern.empty()) patterns.emplace_back(definition.pattern);
+    }
+    // An empty list is fine: the resolver returns an empty map for it.
     const auto resolved = pl::memory::resolveSignatures(patterns, library.c_str());
     addresses.fill(0);
+    resolveKinds.fill(ResolveKind::None);
     bool any = false;
-    for (std::size_t i = 0; i < definitions.size(); ++i) {
-        const auto it = resolved.find(patterns[i]);
+    for (const auto& definition : definitions) {
+        const auto index = static_cast<std::size_t>(definition.id);
+        std::uintptr_t address = resolveExportedSymbol(library, definition.symbol);
+        if (address) {
+            addresses[index] = address;
+            resolveKinds[index] = ResolveKind::Symbol;
+            any = true;
+            continue;
+        }
+        if (definition.pattern.empty()) continue;
+        const auto it = resolved.find(std::string(definition.pattern));
         if (it == resolved.end() || it->second == 0) continue;
-        addresses[static_cast<std::size_t>(definitions[i].id)] = it->second;
+        addresses[index] = it->second;
+        resolveKinds[index] = ResolveKind::Pattern;
         any = true;
     }
     return any;
@@ -158,8 +197,14 @@ std::uintptr_t resolve(SignatureId id) {
     return index < addresses.size() ? addresses[index] : 0;
 }
 
+ResolveKind resolveKind(SignatureId id) {
+    const auto index = static_cast<std::size_t>(id);
+    return index < resolveKinds.size() ? resolveKinds[index] : ResolveKind::None;
+}
+
 void clear() {
     addresses.fill(0);
+    resolveKinds.fill(ResolveKind::None);
 }
 
 }
