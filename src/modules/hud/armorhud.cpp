@@ -486,30 +486,34 @@ void ArmorModule::onFrame() {
         }
         decorate(m_mainhandRuntime, mainhandRect(config.layout), false);
     }
-    if (config.damageDebug) {
-        // The durability reader's whole view, in at most two short lines under
-        // the element: what the signature found, which source answered and the
-        // stack's own words. The element's labels keep showing the values that
-        // end up on screen, so the two can be compared directly.
-        const huditems::DurabilityDiagnostics diagnostics = huditems::durabilityDiagnostics();
+    // The readout also shows itself when the durability reader is blind — no
+    // readable tag text and no damage accessor — because that is exactly the
+    // state in which the bars and the numbers below cannot be trusted.
+    const huditems::DurabilityDiagnostics diagnostics = huditems::durabilityDiagnostics();
+    if (config.damageDebug || diagnostics.blind()) {
+        // The reader's whole view, a short line per group: which source
+        // answered, what the signature and the tag look like, the raw reads and
+        // the tag text itself. The element's own labels keep showing the values
+        // that end up on screen, so the two can be compared directly.
         const std::string readout = huditems::durabilityDiagnosticsText(diagnostics);
-        const std::size_t hexAt = readout.find(" hex ");
-        const std::string lines[2] = {
-            hexAt == std::string::npos ? readout : readout.substr(0, hexAt),
-            hexAt == std::string::npos ? std::string() : readout.substr(hexAt + 1),
-        };
         float y = config.layout.y + std::max(1.0f, layout::columnHeight(config.layout)) + 4.0f;
-        for (const std::string& line : lines) {
-            if (line.empty()) continue;
-            pl::modmenu::DrawCommand debug;
-            debug.type = pl::modmenu::DrawCommandType::Text;
-            debug.x = config.layout.x;
-            debug.y = y;
-            debug.color = 0xFFFFD24Au; // amber, readable over the world
-            debug.size = 12.0f;
-            debug.text = line;
-            commands.push_back(std::move(debug));
-            y += 13.0f;
+        std::size_t begin = 0;
+        while (begin <= readout.size()) {
+            const std::size_t end = readout.find('\n', begin);
+            const std::string line = readout.substr(begin, end == std::string::npos ? end : end - begin);
+            if (!line.empty()) {
+                pl::modmenu::DrawCommand debug;
+                debug.type = pl::modmenu::DrawCommandType::Text;
+                debug.x = config.layout.x;
+                debug.y = y;
+                debug.color = 0xFFFFD24Au; // amber, readable over the world
+                debug.size = 12.0f;
+                debug.text = line;
+                commands.push_back(std::move(debug));
+                y += 13.0f;
+            }
+            if (end == std::string::npos) break;
+            begin = end + 1;
         }
     }
     pl::modmenu::submitDrawCommands(moduleId, commands);
@@ -590,7 +594,7 @@ void ArmorModule::onMenuRegistered() {
 
         auto debug = node("m_damageDebug", "Durability Diagnostics", "details", ConfigControlTypeV2::Toggle);
         debug.section = "slot_details";
-        debug.description = "Draws one line under the element showing where the durability value comes from: the resolved accessor (sym/pat), the field offset that answered (+0x20), the item's raw field values (raw) and what the accessor returned (acc). Turn it on when a durability bar stops showing up and send the line.";
+        debug.description = "Always draws what the durability reader sees under the element: the source that answered (tag/accessor/+0xNN), the resolved signature (sym/pat), the item's tag and its text (ud/vt/td/txt) and the raw stack words. It also shows up on its own when the reader cannot find any damage source at all. Send the lines when a durability bar stops showing up.";
         schema.node(std::move(debug));
     }
     section("count_text", "Number Text", "details");

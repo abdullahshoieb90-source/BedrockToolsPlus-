@@ -1,5 +1,6 @@
 #include "huditems.hpp"
 
+#include "itemtext.hpp"
 #include "slotdecor_layout.hpp"
 
 #include <bedrocktools/Version.hpp>
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include <cmath>
@@ -236,6 +238,73 @@ std::atomic<int> lastCandidateIndex{-1};
 std::atomic<int> lastRaw[DamageCandidateCount];
 std::atomic<int> lastWindow[DamageWindowCount];
 std::atomic<int> lastBarsDrawn{0};
+std::atomic<int> lastTagDamage{-1};
+std::atomic<int> lastUserData{0};
+std::atomic<int> lastTagTextAvailable{0};
+
+// The tag text the readout shows: written by the render thread, read by the
+// frame thread.
+std::mutex tagTextMutex;
+std::string lastTagText;
+
+// CompoundTag::toString() is virtual, so RTTI finds it on any build (see
+// itemtext.hpp). Slots 5 and 6 are where Tag::toString()/Tag::getId() sit in
+// the ABI; the resolver keeps whichever of the two really returns a string.
+text::Source tagTextSource{"11CompoundTag", {5, 6}};
+
+// Rendering a tag is not free and the answer only changes when the tag does,
+// so a reading is reused for a moment. A damaged stack gets a fresh tag every
+// time its damage changes (Item::setDamageValue clones the user data), which
+// the pointer check below catches immediately.
+struct TagTextCacheEntry {
+    const void* tag = nullptr;
+    int damage = -1;
+    std::uint64_t stamp = 0;
+};
+constexpr std::size_t TagTextCacheSize = 32;
+constexpr std::uint64_t TagTextCacheLifetime = 250; // milliseconds
+std::array<TagTextCacheEntry, TagTextCacheSize> tagTextCache{};
+std::mutex tagTextCacheMutex;
+
+std::uint64_t milliseconds() {
+    using Clock = std::chrono::steady_clock;
+    static const Clock::time_point start = Clock::now();
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count());
+}
+
+// Damage carried by one stack's user data, read out of the game's own text
+// rendering of the tag. -1 when there is no tag, no text slot or no "Damage".
+int tagTextDamage(const void* userData) {
+    if (!userData) return -1;
+    const void* const tag = userData;
+    const std::uint64_t now = milliseconds();
+    const std::size_t index =
+        (reinterpret_cast<std::uintptr_t>(tag) >> 4) % TagTextCacheSize;
+
+    {
+        std::lock_guard lock(tagTextCacheMutex);
+        const TagTextCacheEntry& entry = tagTextCache[index];
+        if (entry.tag == tag && now - entry.stamp < TagTextCacheLifetime) return entry.damage;
+    }
+
+    int damage = -1;
+    std::string text;
+    if (text::resolve(tagTextSource, MinecraftLibrary)) {
+        text = text::text(tagTextSource, tag);
+        damage = text::numberAfter(text, "Damage");
+    }
+
+    {
+        std::lock_guard lock(tagTextMutex);
+        lastTagText = text::snippet(text, 120);
+    }
+    {
+        std::lock_guard lock(tagTextCacheMutex);
+        tagTextCache[index] = TagTextCacheEntry{tag, damage, now};
+    }
+    return damage;
+}
 
 void publishDiagnostics(const DamageProbe& probe, int maxDamage) {
     lastAccessorAnswer.store(probe.accessor, std::memory_order_relaxed);
@@ -249,6 +318,9 @@ void publishDiagnostics(const DamageProbe& probe, int maxDamage) {
     for (std::size_t i = 0; i < DamageWindowCount; ++i) {
         lastWindow[i].store(probe.window[i], std::memory_order_relaxed);
     }
+    lastTagDamage.store(probe.tagDamage, std::memory_order_relaxed);
+    lastUserData.store(probe.userData ? 1 : 0, std::memory_order_relaxed);
+    lastTagTextAvailable.store(tagTextSource.available() ? 1 : 0, std::memory_order_relaxed);
 }
 
 } // namespace
@@ -404,7 +476,22 @@ DamageProbe probeDamage(void* stack, int maxDamage) {
         probe.window[i] = static_cast<int>(read<std::uint32_t>(stack, DamageWindowBase + 4 * i));
     }
 
-    // The accessor wins when it has something to say: it is the game's own
+    // The stack's own tag first: it is the very key
+    // ItemStackBase::getDamageValue() reads, reached through the game's virtual
+    // text rendering instead of a symbol or a byte pattern — the two sources
+    // that a new game build can break without any warning.
+    probe.userData = read<void*>(stack, offsets::Inventory::ItemStackUserData) != nullptr;
+    if (probe.userData) {
+        probe.tagDamage = tagTextDamage(read<void*>(stack, offsets::Inventory::ItemStackUserData));
+        if (plausibleDamage(probe.tagDamage, maxDamage)) {
+            probe.value = probe.tagDamage;
+            probe.source = DamageProbe::Source::TagText;
+            publishDiagnostics(probe, maxDamage);
+            return probe;
+        }
+    }
+
+    // Otherwise the accessor wins when it has something to say: it is the game's own
     // reading of the stack, so it is the only source that can tell "this item
     // really is undamaged" apart from "the wrong function was resolved".
     if (itemStackBaseGetDamageValue) {
@@ -582,6 +669,13 @@ DurabilityDiagnostics durabilityDiagnostics() {
         diagnostics.window[i] = lastWindow[i].load(std::memory_order_relaxed);
     }
     diagnostics.barsDrawn = lastBarsDrawn.load(std::memory_order_relaxed);
+    diagnostics.tagDamage = lastTagDamage.load(std::memory_order_relaxed);
+    diagnostics.userData = lastUserData.load(std::memory_order_relaxed) != 0;
+    diagnostics.tagTextAvailable = lastTagTextAvailable.load(std::memory_order_relaxed) != 0;
+    {
+        std::lock_guard lock(tagTextMutex);
+        diagnostics.tagTextSnippet = lastTagText;
+    }
     return diagnostics;
 }
 
@@ -589,7 +683,9 @@ std::string durabilityDiagnosticsText(const DurabilityDiagnostics& diagnostics) 
     std::string text = "BT+ ";
     text += std::string(bedrocktools::Version);
     text += " dmg[";
-    if (diagnostics.source == static_cast<int>(DamageProbe::Source::Accessor)) {
+    if (diagnostics.source == static_cast<int>(DamageProbe::Source::TagText)) {
+        text += "tag";
+    } else if (diagnostics.source == static_cast<int>(DamageProbe::Source::Accessor)) {
         text += "accessor";
     } else if (diagnostics.source == static_cast<int>(DamageProbe::Source::Field) &&
                diagnostics.candidateIndex >= 0 &&
@@ -611,7 +707,16 @@ std::string durabilityDiagnosticsText(const DurabilityDiagnostics& diagnostics) 
     text += diagnostics.patternFound ? "1" : "0";
     text += " acc";
     text += std::to_string(diagnostics.accessorAnswer);
-    text += " raw";
+    // ud: the stack carries a tag at all, vt: the game's tag text is readable,
+    // td: the damage that text carried.
+    text += " ud";
+    text += diagnostics.userData ? "1" : "0";
+    text += " vt";
+    text += diagnostics.tagTextAvailable ? "1" : "0";
+    text += " td";
+    text += std::to_string(diagnostics.tagDamage);
+
+    text += "\nraw";
     for (std::size_t i = 0; i < DamageCandidateCount; ++i) {
         text += i == 0 ? " " : ",";
         text += std::to_string(diagnostics.raw[i]);
@@ -624,6 +729,10 @@ std::string durabilityDiagnosticsText(const DurabilityDiagnostics& diagnostics) 
     }
     text += " bars ";
     text += std::to_string(diagnostics.barsDrawn);
+    if (!diagnostics.tagTextSnippet.empty()) {
+        text += "\ntxt ";
+        text += diagnostics.tagTextSnippet;
+    }
     return text;
 }
 

@@ -71,9 +71,10 @@ EquipmentStacks getEquipmentStacks(void* player);
 
 void* stackItem(void* stack);         // Item*, nullptr for an empty slot
 std::uint8_t stackCount(void* stack); // ItemStackBase::mCount
-// Candidate offsets the damage probe reads, most likely first: the
+// Last-resort candidates for the damage value, most likely first: the
 // layout-derived mAuxValue (see Inventory::ItemStackDamage) and its neighbours,
-// so a build that moved the field by a word still reports the right damage.
+// so a build that moved a 16-bit field by a word still reports the right
+// damage. Only reached when neither the stack's tag nor the accessor answers.
 inline constexpr std::size_t DamageCandidateCount = 4;
 inline constexpr std::size_t DamageCandidateOffsets[DamageCandidateCount] = {
     sdk::offsets::Inventory::ItemStackDamage,     // 0x20
@@ -96,20 +97,25 @@ struct DamageProbe {
         None = 0,
         Accessor = 1, // ItemStackBase::getDamageValue
         Field = 2,    // the stack's own field at DamageCandidateOffsets[index]
+        TagText = 3,  // the "Damage" key read out of the stack's CompoundTag
     };
 
     int value = 0;           // damage kept for the bars, >= 0
     Source source = Source::None;
     int candidateIndex = -1; // set when source == Field
     int accessor = -1;       // what the accessor answered, -1 when unresolved
+    int tagDamage = -1;      // damage parsed out of the tag text, -1 = none
+    bool userData = false;   // the stack carries a CompoundTag (mUserData)
     int raw[DamageCandidateCount] = {-1, -1, -1, -1};
     int window[DamageWindowCount] = {}; // see DamageWindowBase below
 };
 
-// Reads the durability of one stack: the accessor when it is resolved and
-// answers a plausible value, otherwise the damage field itself. Keeping the
-// field as a fallback means a signature that landed on the wrong function can
-// no longer freeze every item at full durability.
+// Reads the durability of one stack, most trustworthy source first: the
+// "Damage" key of the stack's own CompoundTag (rendered by the game through
+// its virtual toString(), see itemtext.hpp), the resolved accessor, then the
+// stack's raw fields. Every source has to be plausible for the item's own
+// maximum before it is believed, so a signature that landed on the wrong
+// function can no longer freeze every item at full durability.
 DamageProbe probeDamage(void* stack, int maxDamage);
 
 // Damage (>= 0) of a stack: probeDamage() with the stack's own maximum.
@@ -137,16 +143,29 @@ struct DurabilityDiagnostics {
     int candidateIndex = -1;
     int raw[DamageCandidateCount] = {-1, -1, -1, -1};
     int window[DamageWindowCount] = {};
+    int tagDamage = -1;        // damage the tag text carried, -1 = not parsed
+    bool userData = false;     // mUserData present on the last probed stack
+    bool tagTextAvailable = false; // the CompoundTag text slot resolved
+    std::string tagTextSnippet;    // bounded tag text (also fills when parsing failed)
     // Durability bars painted since the last resetBarDiagnostics() call, so a
     // module can tell "no damage was read" apart from "nothing was drawn".
     int barsDrawn = 0;
+
+    // The reader found neither the tag text nor the damage accessor: bars and
+    // numbers cannot be trusted on this build, so the readout shows itself.
+    bool blind() const { return !tagTextAvailable && accessorAnswer < 0; }
 };
 DurabilityDiagnostics durabilityDiagnostics();
 // Clears barsDrawn; HUD modules call it at the start of their native pass.
 void resetBarDiagnostics();
 
-// One HUD line: "BT+ 1.5.6 dmg[+0x20] 143/363 sym0 pat1 acc0 raw 0,143,0,0
-// hex 0,0,8F,0,1,0 bars 3".
+// The HUD readout, one \n separated line per group, drawn as one text line
+// each. A module shows it when its own option is on and when the reader is
+// blind (see above), so a build that stops producing damage values reports
+// itself without being asked to:
+//   BT+ 1.5.7 dmg[tag] 143/363 sym0 pat0 acc-1 ud1 vt1 td143
+//   raw 0,143,0,0 hex 0 0 8F 0 1 0 bars 3
+//   txt {Damage:143s,display:{Name:"..."}}
 std::string durabilityDiagnosticsText(const DurabilityDiagnostics& diagnostics);
 
 // ---- Drawing ----------------------------------------------------------------

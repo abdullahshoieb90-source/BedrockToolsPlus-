@@ -175,10 +175,39 @@ const pl::modmenu::DrawCommand* findTextPrefix(const std::string& prefix) {
 }
 } // namespace
 
+// The game's CompoundTag text source: the fake tag is a plain integer index
+// into this table, and the resolver hands back the two slots a real
+// CompoundTag has (the tag type getter and the text renderer), so the module
+// exercises the same slot selection it does in the game.
+bool fakeTagHasDamage = true;
+int fakeTagTypeCalls = 0;
+std::string fakeTagText(const void* self) {
+    const int value = *static_cast<const int*>(self);
+    std::string text = "{";
+    if (fakeTagHasDamage) {
+        text += "\"Damage\":";
+        text += std::to_string(value);
+        text += "s,";
+    }
+    text += "\"display\":{\"Name\":\"BT\"}}";
+    return text;
+}
+std::uint8_t fakeTagType(const void*) {
+    ++fakeTagTypeCalls;
+    return 10;
+}
+bool fakeTagTextAvailable = false;
+
 namespace pl::memory {
 int hook(FuncPtr, FuncPtr, FuncPtr*, HookPriority) { return -1; }
 bool unhook(FuncPtr, FuncPtr) { return true; }
-std::uintptr_t resolveVtableFunction(std::string_view, std::size_t, std::string_view) { return 0; }
+std::uintptr_t resolveVtableFunction(std::string_view typeInfo, std::size_t slot, std::string_view) {
+    if (!fakeTagTextAvailable || typeInfo != "11CompoundTag") return 0;
+    // Slot 5 is the tag type getter, slot 6 the text renderer: the resolver has
+    // to pick the string one and leave the getter alone.
+    return slot == 5 ? reinterpret_cast<std::uintptr_t>(fakeTagType)
+                     : reinterpret_cast<std::uintptr_t>(fakeTagText);
+}
 }
 namespace pl::modmenu {
 HudSurfaceSize getHudSurfaceSize() { return {1000.0f, 1000.0f}; }
@@ -546,16 +575,19 @@ int main() {
     module.loadConfig(config);
     frame();
     const auto* diagnosticLine = findTextPrefix("BT+");
-    const auto* diagnosticHex = findTextPrefix("hex ");
+    const auto* diagnosticRaw = findTextPrefix("raw ");
     check(diagnosticLine && diagnosticLine->text.find("dmg[") != std::string::npos &&
               diagnosticLine->text.find("/") != std::string::npos &&
               diagnosticLine->text.find("sym") != std::string::npos &&
               diagnosticLine->text.find("acc") != std::string::npos &&
-              diagnosticLine->text.find("raw") != std::string::npos,
-          "the diagnostics line names the damage source, the signature state and the raw reads");
-    check(diagnosticHex && diagnosticHex->text.find("bars ") != std::string::npos &&
-              near(diagnosticHex->y, diagnosticLine->y + 13.0f) && near(diagnosticHex->x, diagnosticLine->x),
-          "a second diagnostics line carries the stack words and the painted bar count");
+              diagnosticLine->text.find("ud") != std::string::npos &&
+              diagnosticLine->text.find("vt") != std::string::npos &&
+              diagnosticLine->text.find("td") != std::string::npos,
+          "the diagnostics line names the damage source, the signature state and the tag state");
+    check(diagnosticRaw && diagnosticRaw->text.find("hex") != std::string::npos &&
+              diagnosticRaw->text.find("bars ") != std::string::npos &&
+              near(diagnosticRaw->y, diagnosticLine->y + 13.0f) && near(diagnosticRaw->x, diagnosticLine->x),
+          "a second diagnostics line carries the raw reads, the stack words and the painted bar count");
     check(findTextPrefix(std::string("BT+ ") + std::string(bedrocktools::Version)) != nullptr,
           "the diagnostics line carries the build version");
     // Durability bars are switched off in this part of the test, so the line
@@ -563,7 +595,7 @@ int main() {
     config["m_showDurability"] = true;
     module.loadConfig(config);
     frame();
-    const auto* diagWithBars = findTextPrefix("hex ");
+    const auto* diagWithBars = findTextPrefix("raw ");
     check(diagWithBars && diagWithBars->text.find("bars 0") == std::string::npos,
           "the diagnostics line counts the durability bars the last pass painted");
     config["m_showDurability"] = false;
@@ -573,6 +605,104 @@ int main() {
     module.loadConfig(config);
     frame();
     check(!findTextPrefix("BT+"), "turning the diagnostics off removes the line again");
+
+    // The prologue self-test is exercised on hand-written instruction words: no
+    // test compiler lays a function out the way the game's compiler does. The
+    // module's use of the text slot is then exercised with a verdict
+    // substituted for the self-test.
+    namespace text = bedrocktools::huditems::text;
+    {
+        const std::uint32_t aarch64Moves[] = {0x910003FDu, 0xAA0803E0u}; // add x29, sp, #0 ; mov x0, x8
+        const std::uint32_t aarch64Store[] = {0xF9000BE8u};              // str x8, [sp, #16]
+        const std::uint32_t aarch64Load[] = {0xF9400109u};               // ldr x9, [x8]
+        const std::uint32_t aarch64Type[] = {0x52800140u, 0xD65F03C0u};  // mov w0, #10 ; ret
+        const std::uint32_t aarch64Plain[] = {0xD503201Fu, 0xD65F03C0u}; // nop ; ret
+        check(text::detail::usesReturnSlotAArch64(aarch64Moves, 2) &&
+                  text::detail::usesReturnSlotAArch64(aarch64Store, 1) &&
+                  text::detail::usesReturnSlotAArch64(aarch64Load, 1) &&
+                  !text::detail::usesReturnSlotAArch64(aarch64Plain, 2),
+              "the AArch64 check sees the return slot in every instruction that keeps it");
+        check(text::detail::returnsTagTypeAArch64(aarch64Type, 2) &&
+                  !text::detail::returnsTagTypeAArch64(aarch64Plain, 2),
+              "the AArch64 check recognises the tag type getter by its body");
+        const std::uint8_t x86ReturnSlot[] = {0x55, 0x48, 0x89, 0xFD}; // push rbp ; mov rbp, rdi
+        const std::uint8_t x86Plain[] = {0x55, 0x48, 0x89, 0xE5};      // push rbp ; mov rbp, rsp
+        const std::uint8_t x86Type[] = {0xB8, 0x0A, 0x00, 0x00, 0x00, 0xC3}; // mov eax, 10 ; ret
+        check(text::detail::usesReturnSlotX86(x86ReturnSlot, 4) &&
+                  !text::detail::usesReturnSlotX86(x86Plain, 4) &&
+                  !text::detail::usesReturnSlotX86(x86Type, 6),
+              "the x86 check sees the return slot and never mistakes the tag type getter for it");
+        check(text::detail::returnsTagTypeX86(x86Type, 6) &&
+                  !text::detail::returnsTagTypeX86(x86ReturnSlot, 4),
+              "the x86 check recognises the tag type getter by its body");
+    }
+
+    // With neither a damage accessor nor a readable tag text the reader is
+    // blind, and the readout shows itself even with the option off: that is the
+    // state in which the bars and the numbers cannot be trusted.
+    text::detail::slotVerifier = [](const void*, std::size_t) { return false; };
+    auto* const savedDamageGetter = hud::itemStackBaseGetDamageValue;
+    hud::itemStackBaseGetDamageValue = nullptr;
+    frame();
+    const auto* autoLine = findTextPrefix("BT+");
+    check(autoLine && autoLine->text.find("vt0") != std::string::npos &&
+              autoLine->text.find("acc-1") != std::string::npos,
+          "a blind durability reader shows the readout without the option");
+    hud::itemStackBaseGetDamageValue = savedDamageGetter;
+
+    // The tag text slot then answers: the module has to take the slot the
+    // verdict accepted (6) and never call the tag type getter beside it (5).
+    text::detail::slotVerifier = [](const void*, std::size_t slot) { return slot == 6; };
+    {
+        text::Source probe{"11CompoundTag", {5, 6}};
+        fakeTagTextAvailable = true;
+        const bool usable = text::resolve(probe, "libminecraftpe.so");
+        check(usable && probe.usable == 1 && fakeTagTypeCalls == 0,
+              "the tag text slot is picked and the tag type getter is never called");
+        fakeTagTextAvailable = false;
+        probe = text::Source{"11CompoundTag", {5, 6}};
+        check(!text::resolve(probe, "libminecraftpe.so") && !probe.available(),
+              "a CompoundTag without a usable text slot stays unavailable");
+        fakeTagTextAvailable = true;
+    }
+
+    // The damage of a damaged stack lives in its own CompoundTag, the "Damage"
+    // key ItemStackBase::getDamageValue() reads. The module reaches it through
+    // the game's virtual tag text, so it survives both a moved field and a
+    // signature that landed on the wrong function.
+    int tagDamage = 187;
+    Storage<offsets::Inventory::ItemStackSize> tagged;
+    setStack(tagged.bytes, &counters[0], 1);
+    put(tagged.bytes, offsets::Inventory::ItemStackUserData, &tagDamage);
+    check(hud::stackDamage(tagged.bytes) == 187,
+          "the damage of a damaged stack is read out of its own CompoundTag text");
+    const auto tagDiagnostics = hud::durabilityDiagnostics();
+    check(tagDiagnostics.tagTextAvailable && tagDiagnostics.tagDamage == 187 && tagDiagnostics.userData,
+          "the diagnostics report the tag text source, its damage and the user data");
+    // The readout shows the tag text it parsed, one line per group.
+    config["m_damageDebug"] = true;
+    module.loadConfig(config);
+    frame();
+    const auto* diagnosticText = findTextPrefix("txt ");
+    const auto* diagnosticRawLine = findTextPrefix("raw ");
+    check(diagnosticText && diagnosticText->text.find("Damage") != std::string::npos,
+          "the readout shows the tag text it parsed the damage out of");
+    check(diagnosticRawLine && diagnosticText && near(diagnosticText->y, diagnosticRawLine->y + 13.0f),
+          "the readout is one line per group, not one clipped line");
+    config["m_damageDebug"] = false;
+    module.loadConfig(config);
+    frame();
+    // A damage change comes with a new tag (the game clones the user data), and
+    // a tag without a Damage key is an undamaged stack, not a broken read.
+    int replacedTagDamage = 5;
+    put(tagged.bytes, offsets::Inventory::ItemStackUserData, &replacedTagDamage);
+    check(hud::stackDamage(tagged.bytes) == 5, "a replaced tag is read again");
+    int plainTag = 0;
+    fakeTagHasDamage = false;
+    put(tagged.bytes, offsets::Inventory::ItemStackUserData, &plainTag);
+    check(hud::stackDamage(tagged.bytes) == 0, "a tag without a Damage key reads as undamaged");
+    fakeTagHasDamage = true;
+    text::detail::slotVerifier = nullptr;
 
     check(schemaJson.find("m_slotBackground") != std::string::npos &&
               schemaJson.find("m_slotBgOpacity") != std::string::npos &&
