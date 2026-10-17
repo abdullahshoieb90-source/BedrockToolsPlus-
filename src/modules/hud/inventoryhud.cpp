@@ -176,7 +176,7 @@ void InventoryHudModule::renderNative(void* context, void* client) {
     if (painter.supportsOpacityFix()) {
         painter.beginOpacityFixPass();
         for (std::size_t i = 0; i < GridSlotCount; ++i) {
-            if (!items[i] || !huditems::needsTextureOpacityPass(stacks[i])) continue;
+            if (!items[i] || !huditems::needsTextureOpacityPass(items[i])) continue;
             const SlotRect rect = layout::gridSlotRect(config.grid, i);
             painter.drawOpacityFix(stacks[i], items[i], rect.x, rect.y, rect.size);
         }

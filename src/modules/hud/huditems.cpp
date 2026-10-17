@@ -10,8 +10,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <initializer_list>
 #include <mutex>
+#include <string>
 #include <string_view>
 
 // entt resolves components by their (pretty-function derived) type name, so
@@ -86,19 +89,23 @@ using ActorGetOffhandSlotFn = const void* (*)(const void*);
 using HudCameraRendererFn = void (*)(void*, void*, void*, void*, int);
 using BaseActorRenderContextCtorFn = void (*)(void*, void*, void*, void*);
 using ItemStackBaseGetDamageValueFn = int (*)(void*);
-using ItemStackBaseGetRawNameIdFn = std::string (*)(void*);
 using ItemRendererRenderGuiItemNewFn = std::uint64_t (*)(
     void*, void*, void*, unsigned int, unsigned char, std::uint64_t,
     float, float, float, float, float);
 using MinecraftUIRenderContextFillRectangleFn = void (*)(
     void*, const RectangleArea&, const Color&, float);
 
-ActorGetOffhandSlotFn actorGetOffhandSlot = nullptr;
-BaseActorRenderContextCtorFn baseActorRenderContextCtor = nullptr;
-ItemStackBaseGetDamageValueFn itemStackBaseGetDamageValue = nullptr;
-ItemStackBaseGetRawNameIdFn itemStackBaseGetRawNameId = nullptr;
-ItemRendererRenderGuiItemNewFn itemRendererRenderGuiItemNew = nullptr;
-bool functionsResolved = false;
+// `initialize()` re-reads the optional accessors, and the item HUD modules read
+// them from the render thread every frame. A plain global is enough for a
+// check-then-call sequence to pass the check, go null, and jump to address 0,
+// so every one of these is loaded once into a local before it is called.
+std::atomic<ActorGetOffhandSlotFn> actorGetOffhandSlot{};
+std::atomic<BaseActorRenderContextCtorFn> baseActorRenderContextCtor{};
+std::atomic<ItemStackBaseGetDamageValueFn> itemStackBaseGetDamageValue{};
+std::atomic<ItemRendererRenderGuiItemNewFn> itemRendererRenderGuiItemNew{};
+std::atomic_bool functionsResolved = false;
+
+constexpr std::memory_order kOrder = std::memory_order_relaxed;
 
 struct ListenerEntry {
     RenderListener listener = nullptr;
@@ -140,8 +147,8 @@ void hudCameraRendererDetour(void* self, void* context, void* client, void* valu
 void reportUnresolvedAccessorsOnce() {
     static std::string_view lastState;
     std::string_view state = "ok";
-    if (!functionsResolved) state = "icon renderer unresolved";
-    else if (!itemStackBaseGetDamageValue) state = "durability unresolved";
+    if (!functionsResolved.load(kOrder)) state = "icon renderer unresolved";
+    else if (!itemStackBaseGetDamageValue.load(kOrder)) state = "durability unresolved";
     if (state == "ok") {
         if (lastState.empty()) return;   // nothing was ever reported
         lastState = state;
@@ -243,16 +250,18 @@ ActorEquipmentComponent* getEquipment(void* player) {
 } // namespace
 
 void initialize() {
-    if (!actorGetOffhandSlot) {
-        actorGetOffhandSlot = reinterpret_cast<ActorGetOffhandSlotFn>(
-            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorGetOffhandSlot));
+    if (!actorGetOffhandSlot.load(kOrder)) {
+        actorGetOffhandSlot.store(reinterpret_cast<ActorGetOffhandSlotFn>(
+            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorGetOffhandSlot)), kOrder);
     }
-    if (!functionsResolved) {
-        baseActorRenderContextCtor = reinterpret_cast<BaseActorRenderContextCtorFn>(
+    if (!functionsResolved.load(kOrder)) {
+        auto* ctor = reinterpret_cast<BaseActorRenderContextCtorFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::BaseActorRenderContextCtor));
-        itemRendererRenderGuiItemNew = reinterpret_cast<ItemRendererRenderGuiItemNewFn>(
+        auto* renderer = reinterpret_cast<ItemRendererRenderGuiItemNewFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemRendererRenderGuiItemNew));
-        functionsResolved = baseActorRenderContextCtor && itemRendererRenderGuiItemNew;
+        baseActorRenderContextCtor.store(ctor, kOrder);
+        itemRendererRenderGuiItemNew.store(renderer, kOrder);
+        functionsResolved = ctor && renderer;
     }
     // The durability and name accessors are optional, so they are re-read on
     // every call instead of being latched with whatever the first scan found.
@@ -260,10 +269,8 @@ void initialize() {
     // each scan, so this picks up an accessor that resolved late and drops one
     // that a later scan lost. Latching them used to freeze a null damage getter
     // for the whole session, which read as "damage is always 0".
-    itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
-    itemStackBaseGetRawNameId = reinterpret_cast<ItemStackBaseGetRawNameIdFn>(
-        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetRawNameId));
+    itemStackBaseGetDamageValue.store(reinterpret_cast<ItemStackBaseGetDamageValueFn>(
+        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue)), kOrder);
     reportUnresolvedAccessorsOnce();
     installHook();
 }
@@ -341,8 +348,10 @@ EquipmentStacks getEquipmentStacks(void* player) {
         const ContainerSlots hands = containerSlots(equipment->hand);
         if (hands.count >= 2) stacks.offhand = hands.stack(1);
     }
-    if (!stacks.offhand && actorGetOffhandSlot) {
-        stacks.offhand = const_cast<void*>(actorGetOffhandSlot(player));
+    if (!stacks.offhand) {
+        if (auto* getOffhand = actorGetOffhandSlot.load(kOrder)) {
+            stacks.offhand = const_cast<void*>(getOffhand(player));
+        }
     }
     stacks.mainhand = getCarriedItem(player);
     return stacks;
@@ -361,11 +370,12 @@ std::uint8_t stackCount(void* stack) {
 }
 
 int stackDamage(void* stack) {
-    if (!stack || !itemStackBaseGetDamageValue) return 0;
-    return std::max(0, itemStackBaseGetDamageValue(stack));
+    auto* getDamage = itemStackBaseGetDamageValue.load(kOrder);
+    if (!stack || !getDamage) return 0;
+    return std::max(0, getDamage(stack));
 }
 
-bool durabilityDataAvailable() { return itemStackBaseGetDamageValue != nullptr; }
+bool durabilityDataAvailable() { return itemStackBaseGetDamageValue.load(kOrder) != nullptr; }
 
 int itemMaxDamage(void* item) {
     void** vtable = getVtable(item);
@@ -373,15 +383,32 @@ int itemMaxDamage(void* item) {
     return std::max(0, static_cast<int>(reinterpret_cast<short (*)(void*)>(vtable[offsets::VTable::ItemGetMaxDamage])(item)));
 }
 
-bool needsTextureOpacityPass(void* stack) {
-    if (!stack || !itemStackBaseGetRawNameId) return false;
-    const std::string name = itemStackBaseGetRawNameId(stack);
-    return name == "leather_helmet" ||
-           name == "leather_chestplate" ||
-           name == "leather_leggings" ||
-           name == "leather_boots" ||
-           name == "firework_star" ||
-           name == "leather_horse_armor";
+// Item identifiers are read through the item's own vtable, the same slot and the
+// same `const std::string&` convention src/core/InventoryAccess.cpp uses. This
+// used to call `ItemStackBase::getRawNameId` through a `std::string (*)(void*)`
+// prototype: a by-value `std::string` return makes the caller pass a hidden
+// return slot in x0 and `this` in x1, so a function that returns a reference
+// receives the wrong `this` -- which is a crash on the first frame, on the render
+// thread, for every module that asked the question. The vtable route needs no
+// signature either, so a build whose dump misses that symbol degrades to "no
+// tint fix" instead of taking the game down.
+bool itemNameContains(void* item, std::initializer_list<std::string_view> parts) {
+    void** vtable = getVtable(item);
+    if (!vtable || !vtable[offsets::Inventory::ItemGetDescriptionIdVtableIndex]) return false;
+    using GetDescriptionIdFn = const std::string& (*)(const void*);
+    const auto& identifier = reinterpret_cast<GetDescriptionIdFn>(
+        vtable[offsets::Inventory::ItemGetDescriptionIdVtableIndex])(item);
+    if (identifier.size() > 128) return false; // same bound InventoryAccess trusts
+    for (const std::string_view part : parts) {
+        if (identifier.find(part) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool needsTextureOpacityPass(void* item) {
+    if (!item) return false;
+    return itemNameContains(item, {"leather_helmet", "leather_chestplate", "leather_leggings",
+                                  "leather_boots", "firework_star", "leather_horse_armor"});
 }
 
 HudMapping hudMapping(void* context) {
@@ -403,13 +430,15 @@ IconPainter::IconPainter(void* context, void* client, bool wantRender)
     : mContext(context), mClient(client) {
     if (!context || !client) return;
     mPlayer = getLocalPlayer(client);
-    if (!wantRender || !mPlayer || !baseActorRenderContextCtor || !itemRendererRenderGuiItemNew) return;
+    auto* renderContextCtor = baseActorRenderContextCtor.load(kOrder);
+    auto* renderGuiItem = itemRendererRenderGuiItemNew.load(kOrder);
+    if (!wantRender || !mPlayer || !renderContextCtor || !renderGuiItem) return;
     mMapping = hudMapping(context);
     if (!mMapping.valid) return;
     void* screenContext = read<void*>(context, offsets::ShulkerPreview::MinecraftUIRenderContextScreenContext);
     void* game = getMinecraftGame(client);
     if (!screenContext || !game) return;
-    baseActorRenderContextCtor(mStorage, screenContext, client, game);
+    renderContextCtor(mStorage, screenContext, client, game);
     mConstructed = true;
     mItemRenderer = *reinterpret_cast<void**>(mStorage + offsets::ShulkerPreview::BaseActorRenderContextItemRenderer);
 }
@@ -429,7 +458,7 @@ bool IconPainter::paint(void* stack, void* item, float hudX, float hudY, float h
     const float iconSize = std::max(1.0f, std::min(width, height));
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(iconSize)) return false;
     const unsigned int animationFrame = getItemAnimationFrame(item, mPlayer, stack);
-    itemRendererRenderGuiItemNew(
+    itemRendererRenderGuiItemNew.load(kOrder)(
         mItemRenderer,
         mStorage,
         stack,
@@ -483,7 +512,7 @@ bool IconPainter::fillRect(float hudX, float hudY, float hudW, float hudH, std::
 }
 
 bool IconPainter::supportsOpacityFix() const {
-    return ready() && itemStackBaseGetRawNameId != nullptr;
+    return ready();
 }
 
 void IconPainter::beginOpacityFixPass() {

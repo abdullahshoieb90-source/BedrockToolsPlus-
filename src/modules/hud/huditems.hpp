@@ -79,8 +79,9 @@ int itemMaxDamage(void* item);        // Item::getMaxDamage, 0 when unbreakable
 // decorations instead (see Armor/Inventory HUD storeRuntime).
 bool durabilityDataAvailable();
 // Items whose icon needs the HUD-opacity pass (dyed leather etc., see
-// IconPainter::beginOpacityFixPass).
-bool needsTextureOpacityPass(void* stack);
+// IconPainter::beginOpacityFixPass). Takes the Item*, not the stack: the name is
+// read from the item's vtable (see huditems.cpp).
+bool needsTextureOpacityPass(void* item);
 
 // ---- Drawing ----------------------------------------------------------------
 
