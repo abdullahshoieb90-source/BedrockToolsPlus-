@@ -118,7 +118,12 @@ void InventoryHudModule::storeRuntime(SlotRuntime& runtime, void* stack, void* i
     int maxDamage = 0;
     if (hasItem && wantDurability) {
         maxDamage = huditems::itemMaxDamage(item);
-        if (maxDamage > 0) damage = huditems::stackDamage(stack);
+        // itemMaxDamage comes from the item's vtable and stackDamage from a
+        // signature-scanned function. If only the second one resolved, every
+        // piece would read as undamaged forever -- a frozen "max/max" and no
+        // bar -- so drop the whole label instead of publishing a guess.
+        if (maxDamage > 0 && !huditems::durabilityDataAvailable()) maxDamage = 0;
+        else if (maxDamage > 0) damage = huditems::stackDamage(stack);
     }
     runtime.damage.store(damage, std::memory_order_release);
     runtime.maxDamage.store(maxDamage, std::memory_order_release);

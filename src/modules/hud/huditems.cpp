@@ -4,6 +4,7 @@
 
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/input/MoveInput.hpp>
+#include <pl/Logger.hpp>
 #include <pl/ModMenu.hpp>
 #include <pl/memory/Vtable.hpp>
 
@@ -133,6 +134,29 @@ void hudCameraRendererDetour(void* self, void* context, void* client, void* valu
     for (std::size_t i = 0; i < count; ++i) snapshot[i].listener(context, client, snapshot[i].user);
 }
 
+// A missing optional accessor silently degrades one module (no bars, no
+// numbers), which is indistinguishable from "the option is off" when nothing is
+// said about it. Report each state change once per session.
+void reportUnresolvedAccessorsOnce() {
+    static std::string_view lastState;
+    std::string_view state = "ok";
+    if (!functionsResolved) state = "icon renderer unresolved";
+    else if (!itemStackBaseGetDamageValue) state = "durability unresolved";
+    if (state == "ok") {
+        if (lastState.empty()) return;   // nothing was ever reported
+        lastState = state;
+        pl::log::Logger::getOrCreate("BedrockToolsPlus").info(
+            "huditems: item rendering and durability data are available again");
+        return;
+    }
+    if (lastState == state) return;
+    lastState = state;
+    pl::log::Logger::getOrCreate("BedrockToolsPlus").warn(
+        "huditems: {} -- a signature in libminecraftpe.so did not match this game build; "
+        "durability bars/numbers stay hidden rather than showing full durability",
+        state);
+}
+
 void installHook() {
     if (hudRendererHook) return;
     const std::uintptr_t hudRenderer = pl::memory::resolveVtableFunction(
@@ -226,14 +250,21 @@ void initialize() {
     if (!functionsResolved) {
         baseActorRenderContextCtor = reinterpret_cast<BaseActorRenderContextCtorFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::BaseActorRenderContextCtor));
-        itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
-            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
-        itemStackBaseGetRawNameId = reinterpret_cast<ItemStackBaseGetRawNameIdFn>(
-            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetRawNameId));
         itemRendererRenderGuiItemNew = reinterpret_cast<ItemRendererRenderGuiItemNewFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemRendererRenderGuiItemNew));
         functionsResolved = baseActorRenderContextCtor && itemRendererRenderGuiItemNew;
     }
+    // The durability and name accessors are optional, so they are re-read on
+    // every call instead of being latched with whatever the first scan found.
+    // `resolve()` is a table lookup, and the table is rewritten from scratch by
+    // each scan, so this picks up an accessor that resolved late and drops one
+    // that a later scan lost. Latching them used to freeze a null damage getter
+    // for the whole session, which read as "damage is always 0".
+    itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
+        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
+    itemStackBaseGetRawNameId = reinterpret_cast<ItemStackBaseGetRawNameIdFn>(
+        bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetRawNameId));
+    reportUnresolvedAccessorsOnce();
     installHook();
 }
 
@@ -333,6 +364,8 @@ int stackDamage(void* stack) {
     if (!stack || !itemStackBaseGetDamageValue) return 0;
     return std::max(0, itemStackBaseGetDamageValue(stack));
 }
+
+bool durabilityDataAvailable() { return itemStackBaseGetDamageValue != nullptr; }
 
 int itemMaxDamage(void* item) {
     void** vtable = getVtable(item);

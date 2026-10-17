@@ -73,6 +73,11 @@ void* stackItem(void* stack);         // Item*, nullptr for an empty slot
 std::uint8_t stackCount(void* stack); // ItemStackBase::mCount
 int stackDamage(void* stack);         // ItemStackBase::getDamageValue, >= 0
 int itemMaxDamage(void* item);        // Item::getMaxDamage, 0 when unbreakable
+// False when `ItemStackBase::getDamageValue` could not be located, in which
+// case every stackDamage() call reports 0 -- the same value an undamaged item
+// has. Callers must not present that as full durability; hide the damage-based
+// decorations instead (see Armor/Inventory HUD storeRuntime).
+bool durabilityDataAvailable();
 // Items whose icon needs the HUD-opacity pass (dyed leather etc., see
 // IconPainter::beginOpacityFixPass).
 bool needsTextureOpacityPass(void* stack);
