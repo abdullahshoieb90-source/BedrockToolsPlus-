@@ -72,7 +72,13 @@ bool Runtime::resolveSignatures() {
     if (resolved.load(std::memory_order_acquire)) return true;
     ResolveGuard guard;
     const bool ok = bedrocktools::memory::resolveAll("libminecraftpe.so");
-    resolved.store(ok, std::memory_order_release);
+    // resolveAll() is satisfied by a single match, and install() runs on that
+    // result, so latching `resolved` after a partial scan strands every id that
+    // missed its pattern at address 0 for the rest of the session -- the mod
+    // looks installed while one feature after another quietly does nothing.
+    // Treat only a whole table as final; otherwise the next load event rescans.
+    resolved.store(ok && bedrocktools::memory::unresolvedSignatureCount() == 0,
+                   std::memory_order_release);
     return ok;
 }
 

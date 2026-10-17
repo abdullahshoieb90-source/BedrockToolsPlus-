@@ -90,6 +90,7 @@ const void* offhand = nullptr;
 const void* offhandPlayer = nullptr;
 int offhandCalls = 0;
 bool offhandAvailable = false;
+bool damageGetterAvailable = true;  // flips when the durability signature misses
 int renderTag = 0;
 
 void* fakePlayer(void*) { return player; }
@@ -164,7 +165,7 @@ std::uintptr_t resolve(SignatureId id) {
         case SignatureId::ActorGetOffhandSlot:
             return offhandAvailable ? reinterpret_cast<std::uintptr_t>(fakeOffhand) : 0;
         case SignatureId::ItemStackBaseGetDamageValue:
-            return reinterpret_cast<std::uintptr_t>(fakeDamage);
+            return damageGetterAvailable ? reinterpret_cast<std::uintptr_t>(fakeDamage) : 0;
         case SignatureId::BaseActorRenderContextCtor:
             return reinterpret_cast<std::uintptr_t>(fakeCreateContext);
         case SignatureId::ItemRendererRenderGuiItemNew:
@@ -494,6 +495,32 @@ int main() {
     bus().publish(screen);
     frame();
     check(findText("220/363") && findIcon(heldStack.bytes), "closing container restores icons and numbers");
+
+    // A game build whose `ItemStackBase::getDamageValue` pattern did not match
+    // has no damage data at all, and 0 is also what an undamaged item reports.
+    // Publishing that as durability is what made the numbers look frozen and
+    // the bar look missing, so the module must drop the decoration instead.
+    config["m_showDurability"] = true;
+    config["m_showArmorDurability"] = true;
+    config["m_showStackCount"] = true;
+    module.loadConfig(config);
+    frame();
+    check(findText("220/363"), "durability numbers show while the accessor resolves");
+    damageGetterAvailable = false;
+    hud::initialize(); // optional accessors are re-read, so this picks up the miss
+    frame();
+    check(!findText("220/363") && !findText("528/528"),
+          "unavailable damage data hides durability numbers instead of freezing them at full");
+    const bool anyDurabilityBar = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+        return command.type == pl::modmenu::DrawCommandType::RectFilled;
+    });
+    check(!anyDurabilityBar, "unavailable damage data draws no durability bar");
+    check(findIcon(armor.stack(0)) && findText("16"),
+          "unavailable damage data leaves icons and stack counts working");
+    damageGetterAvailable = true;
+    hud::initialize();
+    frame();
+    check(findText("220/363"), "an accessor that resolves on a later scan is picked up again");
 
     offhand = nullptr;
     frame();

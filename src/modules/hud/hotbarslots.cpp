@@ -189,8 +189,12 @@ void HotbarSlotsModule::syncOverlayButtons() {
                 bool isBuildableBlock = false;
                 void** itemVtable = item ? *reinterpret_cast<void***>(item) : nullptr;
                 if (itemVtable && itemVtable[5]) { // ItemGetDescriptionIdVtableIndex = 5
-                    using GetNameFn = std::string (*)(void*);
-                    std::string name = reinterpret_cast<GetNameFn>(itemVtable[5])(item);
+                    // `const std::string&`, matching src/core/InventoryAccess.cpp. A
+                    // by-value `std::string` prototype would hand the callee a hidden
+                    // return slot where it expects `this`.
+                    using GetNameFn = const std::string& (*)(const void*);
+                    const std::string& name = reinterpret_cast<GetNameFn>(itemVtable[5])(item);
+                    if (name.size() > 128) return;
                     // Common buildable block identifiers used by Minecraft Bedrock.
                     static const std::array<std::string_view, 12> blockNames = {
                         "stone", "dirt", "grass_block", "sand", "gravel",
