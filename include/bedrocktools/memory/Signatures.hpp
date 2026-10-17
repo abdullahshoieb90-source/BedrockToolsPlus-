@@ -144,6 +144,11 @@ struct SignatureDefinition {
 };
 
 BEDROCKTOOLS_API bool resolveAll(std::string_view libraryName = "libminecraftpe.so");
+// Number of ids that have a pattern but resolved to nothing. resolveAll()
+// returns true as soon as one pattern matched, so callers that must not run on a
+// half-resolved table use this to tell a complete scan from a partial one.
+// Ids registered without a pattern (see Signatures.cpp) are not counted.
+BEDROCKTOOLS_API std::size_t unresolvedSignatureCount();
 BEDROCKTOOLS_API std::uintptr_t resolve(SignatureId id);
 BEDROCKTOOLS_API void clear();
 

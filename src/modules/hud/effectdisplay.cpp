@@ -1175,11 +1175,13 @@ void effectTickCallback(bedrocktools::sdk::Player* player) {
 // the vanilla bar cannot overlap this module's own panel.
 //
 // The address is located through `SignatureId::RenderPotionEffects` (see
-// src/core/memory/Signatures.cpp). The pattern registered there is a clearly
-// marked placeholder: until it is replaced with the real ARM64 byte pattern of
-// `_renderStatusEffects` for the target game build, `resolve()` returns 0,
-// `installVanillaBarHook()` bails out quietly and the vanilla bar stays
-// visible. The module itself remains fully functional either way.
+// src/core/memory/Signatures.cpp). That entry is currently a registered but
+// deliberately empty placeholder -- the id exists so the table stays complete,
+// and resolveAll() skips empty patterns. Until it is filled in with the real
+// ARM64 byte pattern of `_renderStatusEffects` for the target game build,
+// `resolve()` returns 0, `installVanillaBarHook()` bails out quietly and the
+// vanilla bar stays visible. The module itself remains fully functional either
+// way.
 //
 // The prototype below matches Bedrock's `_renderStatusEffects` signature on
 // the builds the rest of this codebase targets. If a different build renames
