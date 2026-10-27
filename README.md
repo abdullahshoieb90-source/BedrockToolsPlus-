@@ -2,7 +2,7 @@
 
 ## Upstream synchronization
 
-Based on [QYCottage/BedrockTools](https://github.com/QYCottage/BedrockTools) at `3de9a7d641c8222a9bf536d828449a27b58cd20a` (v1.5.8, Minecraft Bedrock `1.26.60.X`). Plus-specific modules, branding, resources, and configuration migration are retained. Upstream ArmorHUD lives alongside the independent Plus Armor module. The upstream MIT notice is preserved in `LICENSE.upstream`; the Plus license remains in `LICENSE`.
+Compatibility signatures, SDK offsets, and interaction-hook ABI are updated from [QYCottage/BedrockTools](https://github.com/QYCottage/BedrockTools) at `3de9a7d641c8222a9bf536d828449a27b58cd20a` (v1.5.8, Minecraft Bedrock `1.26.60.X`). The pre-update Plus module list is unchanged: upstream modules and their overlay bridge are not included. Plus branding, resources, configuration migration, and build optimizations are retained. The upstream MIT notice is preserved in `LICENSE.upstream`; the Plus license remains in `LICENSE`.
 
 Android builds are provided by the build workflow; host tests do not validate offsets or hooks against a running game.
 
@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 62 configurable modules
+- 12 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -23,13 +23,13 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Fullbright, Motion Blur, Fog Color, Glint Color, TNT Timer, NoFog, View Model, Third Person Nametag, Chunk Border, Hitbox, Block Outline, Zoom, Breadcrumbs, FPS Unlocker, Light Overlay, ShulkerPreview, Connected Glass, Swing Modifier, Wings, Cinematic Camera, Colored Lights, Freelook, MapPreview
+**Visual:** Hitbox, Block Outline, Wings
 
-**HUD:** Ping Counter, Reach Counter, Combo Display, Break Indicator, Player Coords, Compass, Speed Display, Effect Display, Debug Menu, Keystrokes, Tablist, Crosshair, ArmorHUD, Armor, Hotbar Slots, Inventory HUD, World Time, Arrow Counter, Totem Counter, Chat Heads, Pot Counter, PotionHUD
+**HUD:** Effect Display, Crosshair, Hotbar Slots, Inventory HUD, Armor
 
-**Player:** Time Changer, Weather Changer, Nick, Skin Stealer, AutoGG, AutoReQ, AutoSprint, Quick Loot, Custom Capes
+**Player:** Custom Capes
 
-**Misc:** No Disconnect, Chat Timestamps, No Touch Border, CPS Limiter, Hit Sound, ForceGlobalRP, CommentKey, Command Hotkey, Hive Utils
+**Misc:** Hit Sound, CommentKey, Command Hotkey
 
 ## Hitbox
 

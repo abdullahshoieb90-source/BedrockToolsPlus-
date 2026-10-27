@@ -1,7 +1,6 @@
 #include "ModuleMenu.hpp"
 #include "ExternalButtonRefresh.hpp"
 #include "modules/ModuleRegistry.hpp"
-#include "core/Runtime.hpp"
 #include "config/ConfigManager.hpp"
 #include <pl/ModMenu.hpp>
 #include <algorithm>
@@ -57,7 +56,7 @@ static void onModuleToggle(std::string_view module_id, bool enabled) {
 }
 
 static void onModuleKeybind(std::string_view module_id, std::string_view key, bool isDown) {
-    if (isDown && ModuleRegistry::get().keybindBlocked()) return;
+    if (ModuleRegistry::get().keybindBlocked()) return;
     auto* mod = ModuleRegistry::get().find(module_id);
     if (!mod) return;
     mod->onKeybindEvent(std::string(key), isDown);
@@ -121,7 +120,6 @@ void registerModulesWithLauncher() {
 
         pl::modmenu::ModuleBuilder builder(mod->moduleId, mod->name);
         builder.description(mod->description)
-                .modId(bedrocktools::core::Runtime::get().modId())
                 .defaultEnabled(mod->masterEnabled)
                 .hideInHudEditor(mod->hideInHudEditor)
                 .onToggle(onModuleToggle)
@@ -253,18 +251,6 @@ void registerModulesWithLauncher() {
                     // command buttons.
                     minVal = 0.5f;
                     maxVal = 2.0f;
-                } else if (kLower.find("mainhandposition") != std::string::npos ||
-                           kLower.find("offhandposition") != std::string::npos) {
-                    minVal = -3.0f;
-                    maxVal = 3.0f;
-                } else if (kLower.find("mainhandrotation") != std::string::npos ||
-                           kLower.find("offhandrotation") != std::string::npos) {
-                    minVal = -180.0f;
-                    maxVal = 180.0f;
-                } else if (kLower.find("mainhandscale") != std::string::npos ||
-                           kLower.find("offhandscale") != std::string::npos) {
-                    minVal = 0.05f;
-                    maxVal = 4.0f;
                 } else if (kLower.find("scale") != std::string::npos) {
                     minVal = 0.1f;
                     maxVal = 5.0f;
@@ -361,10 +347,6 @@ void registerModulesWithLauncher() {
             builder.config(entry.key, entry.displayName, entry.type, entry.default_value, entry.min_value, entry.max_value, entry.depends_on);
         }
 
-        if (builder.registerModule()) {
-            mod->onMenuRegistered();
-        } else {
-            pl::log::Logger::getOrCreate("BedrockTools").error("Module registration failed: {}", mod->moduleId);
-        }
+        if (builder.registerModule()) mod->onMenuRegistered();
     }
 }

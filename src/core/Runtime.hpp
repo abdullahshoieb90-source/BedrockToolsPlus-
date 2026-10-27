@@ -2,7 +2,6 @@
 
 #include <pl/Mod.hpp>
 #include <filesystem>
-#include <string>
 
 namespace bedrocktools::core {
 
@@ -15,7 +14,6 @@ public:
     bool unload(pl::mod::ModContext& context);
     void minecraftLoaded();
     const std::filesystem::path& resourceDirectory() const noexcept;
-    const std::string& modId() const noexcept;
 
 private:
     bool resolveSignatures();
@@ -23,7 +21,6 @@ private:
     bool launcherContext() const;
     void wireEvents();
     std::filesystem::path mResourceDirectory;
-    std::string mModId;
 };
 
 }
