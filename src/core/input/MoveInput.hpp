@@ -1,4 +1,4 @@
-Enter#pragma once
+#pragma once
 
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/Types.hpp>

@@ -9,3 +9,4 @@
 #include <bedrocktools/sdk/offsets/UI.hpp>
 #include <bedrocktools/sdk/offsets/Inventory.hpp>
 
+#include <bedrocktools/sdk/offsets/Inventory.hpp>

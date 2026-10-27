@@ -273,7 +273,7 @@ int main() {
     check(near(fills[26].area.x0, 24.0f + 8.0f * 36.0f) && near(fills[26].area.y0, 200.0f + 2.0f * 36.0f),
           "the last cell sits at the bottom-right of the 9x3 grid");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 114,
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 114,
           "default cells are black at the configured 45% opacity");
 
     const auto* firstIcon = findIcon(inventory.stack(9));
@@ -349,7 +349,7 @@ int main() {
               near(fills[13].area.y0, 300.0f + 36.0f),
           "styled backgrounds follow the grid geometry");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 1.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 204,
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 204,
           "background color and opacity are applied");
 
     module.onMenuRegistered();
