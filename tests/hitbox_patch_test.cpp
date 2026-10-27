@@ -116,7 +116,10 @@ struct FakeActor {
         writeAt(bytes, bedrocktools::sdk::offsets::Actor::mCategories, categories);
     }
 
-    alignas(16) std::array<std::byte, 0x230> bytes{};
+    alignas(16) std::array<std::byte,
+        bedrocktools::sdk::offsets::Actor::mStateVectorComponent +
+        bedrocktools::sdk::offsets::BuiltInActorComponents::mAABBShapeComponent +
+        sizeof(std::uintptr_t)> bytes{};
     StateVector state{};
     Shape shape{};
 };
@@ -250,7 +253,10 @@ int main() {
     check(near(raw.min.x, 10.0f) && near(raw.max.x, 10.6f),
           "raw tick AABB reads from the component");
 
-    alignas(16) std::array<std::byte, 0x230> empty{};
+    alignas(16) std::array<std::byte,
+        bedrocktools::sdk::offsets::Actor::mStateVectorComponent +
+        bedrocktools::sdk::offsets::BuiltInActorComponents::mAABBShapeComponent +
+        sizeof(std::uintptr_t)> empty{};
     const AABB missing = getActorAABB(empty.data());
     check(!isDrawableBox(missing), "missing components are not a drawable box");
 

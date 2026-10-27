@@ -6,20 +6,20 @@
 namespace bedrocktools::sdk::offsets {
 
 namespace LevelRendererPlayer {
-inline constexpr std::size_t mFogColorRed = 0x424;
-inline constexpr std::size_t mFogColorGreen = 0x428;
-inline constexpr std::size_t mFogColorBlue = 0x42C;
-inline constexpr std::size_t mBaseFogStart = 0x434;
-inline constexpr std::size_t mBaseFogEnd = 0x438;
-inline constexpr std::size_t mCurrentFogDensityMax = 0x464;
-inline constexpr std::size_t mCamPos = 0x61C;
-inline constexpr std::size_t mSelectionOverlayMaterial = 0x1048;
+inline constexpr std::size_t mFogColorRed = 0x41C;
+inline constexpr std::size_t mFogColorGreen = 0x420;
+inline constexpr std::size_t mFogColorBlue = 0x424;
+inline constexpr std::size_t mBaseFogStart = 0x42C;
+inline constexpr std::size_t mBaseFogEnd = 0x430;
+inline constexpr std::size_t mCurrentFogDensityMax = 0x45C;
+inline constexpr std::size_t mCamPos = 0x614;
+inline constexpr std::size_t mSelectionOverlayMaterial = 0x1028;
 }
 
 namespace ScreenContext {
 inline constexpr std::size_t mActorShaderConstants = 0x20;
-inline constexpr std::size_t mColorHolder = 0x30;
-inline constexpr std::size_t mTessellator = 0xB8;
+inline constexpr std::size_t mColorHolder = 0x28;
+inline constexpr std::size_t mTessellator = 0xB0;
 }
 
 namespace ActorShaderConstants {
@@ -50,12 +50,12 @@ inline constexpr std::size_t mSize = 0x70;
 }
 
 namespace NameTag {
-inline constexpr std::size_t mExtractNameTagsPatchOffset = 0x1A0;
+inline constexpr std::size_t mExtractNameTagsPatchOffset = 0x19C;
 }
 
 namespace ItemInHandRenderer {
-inline constexpr std::size_t mRenderFirstPersonTransformPatchOffset1 = 0x194C;
-inline constexpr std::size_t mRenderFirstPersonTransformPatchOffset2 = 0x1950;
+inline constexpr std::size_t mRenderFirstPersonTransformPatchOffset1 = 0x2CAC;
+inline constexpr std::size_t mRenderFirstPersonTransformPatchOffset2 = 0x2CB0;
 }
 
 
@@ -70,12 +70,15 @@ inline constexpr std::size_t mCurrentShapeBB = 0x5F0;
 }
 
 namespace Tessellator {
-inline constexpr std::size_t mTextureU = 0x17C;
-inline constexpr std::size_t mTextureV = 0x180;
+inline constexpr std::size_t mTextureU = 0x18C;
+inline constexpr std::size_t mTextureV = 0x190;
+inline constexpr std::size_t mNextColor = 0x1B0;
+inline constexpr std::size_t mNextColorSet = 0x1B4;
 }
 
 namespace Block {
 inline constexpr std::size_t mBlockType = 0x68;
+inline constexpr std::size_t mLightEmission = 0xA4;
 }
 
 namespace BlockType {
@@ -113,7 +116,7 @@ inline constexpr std::uint8_t DontRotate = 5;
 
 namespace LevelRenderer {
 inline constexpr std::size_t mRenderChunkCoordinators = 0x28;
-inline constexpr std::size_t mLevelRendererPlayer = 0x420;
+inline constexpr std::size_t mLevelRendererPlayer = 0x430;
 }
 
 namespace HashTable {
@@ -127,6 +130,10 @@ inline constexpr std::size_t mValuePointer = 0x18;
 
 namespace RenderChunkCoordinator {
 inline constexpr std::size_t MaxNodes = 64;
+}
+
+namespace CameraComponent {
+inline constexpr std::size_t mOrientation = 0x28;
 }
 
 }

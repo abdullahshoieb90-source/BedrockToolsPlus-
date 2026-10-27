@@ -84,7 +84,7 @@ for source in "${root}"/tests/*_test.cpp; do
             # preloader/nlohmann_json headers it includes come from the
             # xmake packages when available and from the host fakes
             # (tests/fakepl, tests/fakejson) otherwise.
-            extra+=(-I "${root}/third_party")
+            extra+=(-I "${root}/third_party" -I "${root}/tests/fakepl")
             if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
                 extra+=(-I "${json_inc}")
             else

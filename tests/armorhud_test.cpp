@@ -303,7 +303,7 @@ int main() {
     check(near(fills[4].area.y0, 200.0f + 4.0f * 36.0f) && near(fills[4].area.x0, 24.0f),
           "the offhand slot has its own cell below the boots");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 114,
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 114,
           "default cells are black at the configured 45% opacity");
     const auto* label = findText("220/363");
     check(label && near(label->h, 32.0f) && near(label->size, 12.0f), "armor label is centered within its row");
@@ -429,7 +429,7 @@ int main() {
     check(fills.size() == 5 && near(fills[0].area.x0, 500.0f),
           "styled backgrounds still cover every visible slot");
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 1.0f) && near(fills[0].color.b, 0.0f) &&
-              static_cast<int>(fills[0].color.a * 255.0f + 0.5f) == 204,
+              static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 204,
           "background color and opacity are applied to the cells");
 
     config["m_showArmorDurability"] = true;
