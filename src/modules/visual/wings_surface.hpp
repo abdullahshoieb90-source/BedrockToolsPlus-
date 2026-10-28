@@ -460,27 +460,76 @@ inline void addRibs(Sink& sink, const Vec3 joint[4], const WingDesign& d, const 
     }
 }
 
+// Radial struts: a fan converging on the shoulder pivot, one spoke per finger,
+// each ending exactly on the bottom of a scallop low point. They are straight
+// lines from the pivot to that point - NOT paths that follow the sheet, because
+// a sheet that follows every scallop would kink at each one and read as a bent
+// wire. Only the depth is taken from the membrane, so the spoke stays on the
+// bow of the surface instead of hovering in front of it.
+inline void addRadialRibs(Sink& sink, const Vec3 joint[4], const WingDesign& d,
+                          const WingPose& pose) {
+    constexpr int kRadialSegments = 5;
+    const int fingers = d.fingers < 1 ? 1 : d.fingers;
+    const int struts = d.radialStruts > 0 ? d.radialStruts : fingers;
+    const Vec3 root = membranePoint(joint, d, pose, 0.0f, 0.0f);
+    for (int k = 1; k <= struts; ++k) {
+        // Land on the bottom of a scallop arc when the counts line up (otherwise
+        // anywhere on the edge): the struts are the fingers of the membrane and
+        // the sheet hangs between them.
+        const float uEnd = (struts == fingers)
+            ? clampf((static_cast<float>(k) - 0.5f) / static_cast<float>(fingers), 0.08f, 0.985f)
+            : clampf(0.14f + (static_cast<float>(k) - 0.5f) * (0.74f / static_cast<float>(struts)),
+                     0.08f, 0.985f);
+        const Vec3 endPt = membranePoint(joint, d, pose, uEnd, 1.0f);
+        const FaceColor col = lerpColor(d.frame, d.trail, 0.12f);
+        Vec3 prev = root + Vec3{0.0f, 0.0f, 0.10f};
+        float w = 0.16f;
+        for (int s = 1; s <= kRadialSegments; ++s) {
+            const float t = static_cast<float>(s) / static_cast<float>(kRadialSegments);
+            Vec3 cur{prev.x + (endPt.x - root.x) * (1.0f / kRadialSegments),
+                     prev.y + (endPt.y - root.y) * (1.0f / kRadialSegments), 0.0f};
+            // Straight in the wing plane, but riding the sheet's bow in depth.
+            const Vec3 surf = membranePoint(joint, d, pose, uEnd * t, t);
+            cur.z = surf.z + 0.10f;
+            const float w1 = lerpFloat(0.16f, 0.28f, t);
+            sink.beam(prev, cur, w, w1, 0.05f, Vec3{0.0f, 0.0f, 1.0f}, col, col,
+                      uEnd * t, 0.0f);
+            w = w1;
+            prev = cur;
+        }
+    }
+}
+
 // Leading-edge spar with a bright rim, plus the claw at the wing tip.
 inline void addSpar(Sink& sink, const Vec3 joint[4], const WingDesign& d, const WingPose& pose) {
     const FaceColor rimColor = d.glowStrength > 0.0f ? lerpColor(d.glow, d.tip, 0.30f)
                                                      : lerpColor(d.lead, d.tip, 0.35f);
+    // A flat-topped sheet is carried by one straight rail: constant width the
+    // whole way out, so the top edge reads as a bar and not as a tapering blade.
+    const bool rail = d.railPx > 0.0f;
     Vec3 prev = membranePoint(joint, d, pose, 0.012f, 0.0f);
     for (int i = 1; i <= kSparSegments; ++i) {
         const float u = 0.012f + 0.988f * (static_cast<float>(i) / kSparSegments);
         const Vec3 cur = membranePoint(joint, d, pose, u, 0.0f);
-        const float w0 = lerpFloat(0.86f, 0.34f, clamp01((u - 0.012f) / 0.988f));
-        const float w1 = lerpFloat(0.86f, 0.34f, clamp01(u));
+        const float w0 = rail ? d.railPx
+                              : lerpFloat(0.86f, 0.34f, clamp01((u - 0.012f) / 0.988f));
+        const float w1 = rail ? d.railPx : lerpFloat(0.86f, 0.34f, clamp01(u));
         sink.beam(prev, cur, w0, w1, 0.26f, Vec3{0.0f, 0.0f, 1.0f}, d.frame, d.trail, u,
                   d.glowStrength * 0.85f);
         // Rim: a thinner, brighter strip sitting on the outer side of the spar,
-        // so the silhouette always keeps a highlight along the leading edge.
+        // so the silhouette always keeps a highlight along the leading edge. A
+        // flat rail is already a highlight, so it skips this - adding it would
+        // turn the bar into a slab with a bright cap.
+        if (rail) { prev = cur; continue; }
         sink.beam(prev + Vec3{0.0f, 0.0f, 0.36f}, cur + Vec3{0.0f, 0.0f, 0.36f},
                   w0 * 0.24f, w1 * 0.24f, 0.08f, Vec3{0.0f, 0.0f, 1.0f}, rimColor, rimColor, u,
                   d.glowStrength > 0.0f ? 0.70f : 0.24f);
         prev = cur;
     }
 
-    // Claw: a short spike continuing the arm past the wing tip.
+    // Claw: a short spike continuing the arm past the wing tip. A rail style
+    // ends on a blunt bar instead, so it skips this.
+    if (rail) return;
     const Vec3 tip = membranePoint(joint, d, pose, 1.0f, 0.0f);
     const Vec3 tangent = leadingEdgeTangent(joint, d, 1.0f);
     const Vec3 claw = tip + tangent * (d.handPx * 0.22f) + Vec3{0.0f, 0.0f, 0.30f};
@@ -594,6 +643,7 @@ inline int buildWing(const WingDesign& d, const WingPose& pose, int side,
     if (d.fairing) detail::addFairing(sink, joint, d, pose);
     detail::addMembrane(sink, joint, d, pose);
     if (d.ribs) detail::addRibs(sink, joint, d, pose);
+    if (d.radialRibs) detail::addRadialRibs(sink, joint, d, pose);
     if (d.feathers) detail::addFeathers(sink, joint, d, pose);
     detail::addSpar(sink, joint, d, pose);
 

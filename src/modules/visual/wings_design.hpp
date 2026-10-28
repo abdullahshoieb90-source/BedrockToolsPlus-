@@ -70,10 +70,21 @@ struct WingDesign {
     // whose chord collapses towards the tip would grow a fan of struts at the
     // shoulder that curls into a hook, so those styles turn them off.
     bool ribs = true;
+    // Radial struts instead of span-wise ones: each strut runs from the shoulder
+    // pivot out to a point on the trailing edge, so the sheet is crossed by a
+    // fan that converges at the back. That is what holds up a membrane whose
+    // chord stays long all the way out, where span-wise struts would instead
+    // pile up at the shoulder.
+    bool radialRibs = false;
+    int radialStruts = 0;       // 0 = one per finger
     // The shoulder fairing is a 2.2 px collar drawn around the root pivot. It
     // assumes a thin root; on a sheet that already covers the shoulder it reads
     // as a pair of horns, so it is optional too.
     bool fairing = true;
+    // Thickness of a flat leading-edge rail. 0 keeps the tapered spar the
+    // pointed styles use; a positive value draws a constant-width bar carrying
+    // the whole wing, which is what a straight-topped sheet needs.
+    float railPx = 0.0f;
 
     // --- Feather layer (feather styles only) ---
     bool feathers = false;
@@ -104,15 +115,18 @@ constexpr float kRootPivotY = 21.0f;
 // Palettes
 // ---------------------------------------------------------------------------
 
-// Veil: charcoal membrane under a mid-grey band. Sampled from the reference
-// art, which is a near-black sheet (14,14,16) crossed by one greyer fold
-// (~54,56,60): the whole wing reads as a silhouette with a single lit crease.
-inline constexpr FaceColor kVeilFrame{70, 72, 78};
-inline constexpr FaceColor kVeilLead{104, 108, 116};
-inline constexpr FaceColor kVeilBack{22, 23, 27};
-inline constexpr FaceColor kVeilFront{30, 31, 36};
-inline constexpr FaceColor kVeilTrail{12, 12, 15};
-inline constexpr FaceColor kVeilTip{132, 137, 146};
+// Veil: a near-black sheet carrying a mid-grey bar. The values are sampled
+// straight off the reference screenshot - membrane 15,15,15, struts 54,54,54,
+// rail 58,58,58 - so the wing reads as one dark silhouette with only the
+// structure lit. back, front, trail and lead are deliberately within a few
+// levels of each other: the membrane must NOT show a gradient, because in the
+// reference there is no visible shading across it at all.
+inline constexpr FaceColor kVeilFrame{58, 58, 58};
+inline constexpr FaceColor kVeilLead{21, 21, 23};
+inline constexpr FaceColor kVeilBack{15, 15, 16};
+inline constexpr FaceColor kVeilFront{17, 17, 19};
+inline constexpr FaceColor kVeilTrail{13, 13, 14};
+inline constexpr FaceColor kVeilTip{72, 72, 74};
 inline constexpr FaceColor kVeilGlow{96, 100, 110};
 inline constexpr FaceColor kVeilMembraneOuter{22, 23, 27};
 inline constexpr FaceColor kVeilMembraneInner{30, 31, 36};
@@ -381,22 +395,29 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kRedBatGlow, .glowStrength = 0.58f, .backLight = 0.40f,
     },
     {
-        // Modelled on the author's in-game reference. The defining features are
-        // a dead-flat top edge that runs straight out over the shoulders and a
-        // membrane that is deepest at the root, tapering to a point outboard -
-        // the opposite of a bat sail, whose chord is longest at the tip.
+        // Modelled on the author's in-game reference, which is a straight-topped
+        // sail rather than a bat wing. Four things define it:
         //
-        // This needs an arm that stays horizontal (raise 0, elbow 0, wrist 0 in
-        // this design's own terms, which is what puts the leading edge on a
-        // level line) plus a falling chord (chordTipPx < chordRootPx) so the
-        // trailing edge sweeps up towards the tip instead of hanging down.
+        //   * the top edge is a dead-flat rail running straight out over the
+        //     shoulders, so the arm is level (raise 0, elbow 0, wrist 0),
+        //   * the rail is a bar of constant width, not a taper (railPx),
+        //   * the membrane keeps a nearly constant chord the whole way out and
+        //     then simply ends, giving a broad sheet with a flat outer edge
+        //     instead of a point (chordTipPx stays close to chordRootPx),
+        //   * light struts cross the sheet in a fan converging on the shoulder
+        //     (radialRibs), which is how that shape is held up in the reference.
+        //
+        // Span-wise struts and the shoulder collar are off: the first would fan
+        // out around the shoulder into a hook, the second reads as a pair of
+        // horns on a sheet that already covers the joint.
         .id = "veil", .label = "Veil",
-        .upperPx = 12.0f, .forePx = 12.2f, .handPx = 11.0f,
+        .upperPx = 9.0f, .forePx = 8.5f, .handPx = 8.5f,
         .raiseDeg = 0.0f, .elbowDeg = 0.0f, .wristDeg = 0.0f,
-        .chordRootPx = 17.0f, .chordTipPx = 2.4f, .chordMidPx = 1.0f, .chordBias = 2.30f,
-        .fanDeg = 5.0f, .scallopPx = 2.0f, .fingers = 4,
-        .camberPx = 0.5f, .sweepPx = 0.8f, .rootZPx = 3.1f, .flutterPx = 0.22f,
-        .ribs = false, .fairing = false,
+        .chordRootPx = 13.5f, .chordTipPx = 12.8f, .chordMidPx = 0.0f, .chordBias = 1.0f,
+        .fanDeg = 0.0f, .scallopPx = 0.9f, .fingers = 4,
+        .camberPx = 0.5f, .sweepPx = 0.6f, .rootZPx = 3.1f, .flutterPx = 0.22f,
+        .ribs = false, .radialRibs = true, .radialStruts = 3, .fairing = false,
+        .railPx = 0.55f,
         .feathers = false,
         .frame = kVeilFrame, .lead = kVeilLead, .back = kVeilBack,
         .front = kVeilFront, .trail = kVeilTrail, .tip = kVeilTip,

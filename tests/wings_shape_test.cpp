@@ -254,6 +254,31 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    // Rail styles: the leading edge is a bar of constant width, which is what
+    // makes a flat-topped sheet read as a straight rail instead of a taper.
+    // ------------------------------------------------------------------
+    for (int s = 0; s < wings::kWingStyleCount; ++s) {
+        const wings::WingDesign& d = wings::kWingDesigns[s];
+        if (d.railPx <= 0.0f) continue;
+        wings::Vec3 joint[4];
+        // The design's own rest angles (no animation), because that is the pose
+        // the shape is authored in; flapping tilts the rail on purpose.
+        wings::WingPose rest;
+        wings::buildArmJoints(d, rest, joint);
+        // A level arm: shoulder, elbow and tip all at the same height, so the
+        // rail cannot sag below the shoulders.
+        float minY = 1e9f, maxY = -1e9f;
+        for (int i = 0; i < 4; ++i) {
+            minY = std::fmin(minY, joint[i].y);
+            maxY = std::fmax(maxY, joint[i].y);
+        }
+        check(maxY - minY < 0.5f, std::string(d.id) + ": the rail runs dead level");
+        // And the sheet keeps its chord outboard instead of tapering to a point.
+        check(wings::chordLength(d, 0.9f) > 0.75f * wings::chordLength(d, 0.1f),
+              std::string(d.id) + ": the sheet stays broad out to the tip");
+    }
+
+    // ------------------------------------------------------------------
     // Feather styles: the quills overhang the sheet, so the outline is feathered
     // (the plain sheet never reaches past its own chord).
     // ------------------------------------------------------------------
