@@ -64,6 +64,17 @@ struct WingDesign {
     float rootZPx = 2.9f;       // depth of the shoulder pivot (behind the torso)
     float flutterPx = 0.85f;    // membrane ripple amplitude
 
+    // --- Detail layers ---
+    // Finger struts are what make a bat sail read as a bat sail, but they only
+    // work when the chord is long near the tip as well as at the root. A sheet
+    // whose chord collapses towards the tip would grow a fan of struts at the
+    // shoulder that curls into a hook, so those styles turn them off.
+    bool ribs = true;
+    // The shoulder fairing is a 2.2 px collar drawn around the root pivot. It
+    // assumes a thin root; on a sheet that already covers the shoulder it reads
+    // as a pair of horns, so it is optional too.
+    bool fairing = true;
+
     // --- Feather layer (feather styles only) ---
     bool feathers = false;
     int featherCount = 9;
@@ -370,18 +381,22 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kRedBatGlow, .glowStrength = 0.58f, .backLight = 0.40f,
     },
     {
-        // The reference is a broad hanging sheet, not a bat sail: it is narrow
-        // where it meets the shoulder, barely widens until two thirds of the
-        // span, then flares into a wide skirt with a nearly straight bottom
-        // edge. fanDeg is small so the skirt hangs instead of sweeping inboard,
-        // and the low chordBias is what keeps the deep notch between the two
-        // wings at the top.
+        // Modelled on the author's in-game reference. The defining features are
+        // a dead-flat top edge that runs straight out over the shoulders and a
+        // membrane that is deepest at the root, tapering to a point outboard -
+        // the opposite of a bat sail, whose chord is longest at the tip.
+        //
+        // This needs an arm that stays horizontal (raise 0, elbow 0, wrist 0 in
+        // this design's own terms, which is what puts the leading edge on a
+        // level line) plus a falling chord (chordTipPx < chordRootPx) so the
+        // trailing edge sweeps up towards the tip instead of hanging down.
         .id = "veil", .label = "Veil",
-        .upperPx = 10.4f, .forePx = 10.6f, .handPx = 9.8f,
-        .raiseDeg = 1.0f, .elbowDeg = -6.0f, .wristDeg = -4.0f,
-        .chordRootPx = 2.5f, .chordTipPx = 26.0f, .chordMidPx = 0.0f, .chordBias = 0.82f,
-        .fanDeg = 19.0f, .scallopPx = 1.4f, .fingers = 3,
-        .camberPx = 0.55f, .sweepPx = 1.1f, .rootZPx = 3.1f, .flutterPx = 0.24f,
+        .upperPx = 12.0f, .forePx = 12.2f, .handPx = 11.0f,
+        .raiseDeg = 0.0f, .elbowDeg = 0.0f, .wristDeg = 0.0f,
+        .chordRootPx = 17.0f, .chordTipPx = 2.4f, .chordMidPx = 1.0f, .chordBias = 2.30f,
+        .fanDeg = 5.0f, .scallopPx = 2.0f, .fingers = 4,
+        .camberPx = 0.5f, .sweepPx = 0.8f, .rootZPx = 3.1f, .flutterPx = 0.22f,
+        .ribs = false, .fairing = false,
         .feathers = false,
         .frame = kVeilFrame, .lead = kVeilLead, .back = kVeilBack,
         .front = kVeilFront, .trail = kVeilTrail, .tip = kVeilTip,

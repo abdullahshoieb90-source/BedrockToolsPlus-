@@ -591,9 +591,9 @@ inline int buildWing(const WingDesign& d, const WingPose& pose, int side,
     buildArmJoints(d, pose, joint);
 
     detail::Sink sink{out, cap};
-    detail::addFairing(sink, joint, d, pose);
+    if (d.fairing) detail::addFairing(sink, joint, d, pose);
     detail::addMembrane(sink, joint, d, pose);
-    detail::addRibs(sink, joint, d, pose);
+    if (d.ribs) detail::addRibs(sink, joint, d, pose);
     if (d.feathers) detail::addFeathers(sink, joint, d, pose);
     detail::addSpar(sink, joint, d, pose);
 
