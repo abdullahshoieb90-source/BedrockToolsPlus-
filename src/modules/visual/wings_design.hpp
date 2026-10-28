@@ -42,6 +42,10 @@ namespace bedrocktools::modules::wings {
 struct WingDesign {
     const char* id = "dragon";
     const char* label = "Dragon";
+    // One line description of the silhouette, shown under the name in the
+    // launcher's style picker. Written for someone choosing between ten names
+    // they have never seen.
+    const char* shape = "Broad bat sail, deep scallops, swept-back tips";
 
     // --- Arm (leading edge) ---
     float upperPx = 9.5f;
@@ -232,7 +236,7 @@ inline constexpr FaceColor kRedBatJointInner{48, 0, 6};
 
 inline constexpr WingDesign kWingDesigns[] = {
     {
-        .id = "dragon", .label = "Dragon",
+        .id = "dragon", .label = "Dragon", .shape = "Broad bat sail, deep scallops, swept-back tips",
         .upperPx = 9.5f, .forePx = 9.2f, .handPx = 8.4f,
         .raiseDeg = -8.0f, .elbowDeg = -12.0f, .wristDeg = -8.0f,
         .chordRootPx = 14.5f, .chordTipPx = 10.5f, .chordMidPx = 6.5f, .chordBias = 0.95f,
@@ -244,7 +248,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kDragonGlow, .glowStrength = 0.0f, .backLight = 0.10f,
     },
     {
-        .id = "angel", .label = "Angel",
+        .id = "angel", .label = "Angel", .shape = "Tall feathered wings held high, long pale quills",
         .upperPx = 9.6f, .forePx = 10.2f, .handPx = 10.4f,
         .raiseDeg = 6.0f, .elbowDeg = -2.0f, .wristDeg = -10.0f,
         .chordRootPx = 5.6f, .chordTipPx = 3.6f, .chordMidPx = 8.4f, .chordBias = 1.0f,
@@ -257,7 +261,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kAngelGlow, .glowStrength = 0.12f, .backLight = 0.16f,
     },
     {
-        .id = "demon", .label = "Demon",
+        .id = "demon", .label = "Demon", .shape = "Heavy angular sail with hard, spiked finger points",
         .upperPx = 9.8f, .forePx = 9.4f, .handPx = 8.6f,
         .raiseDeg = -10.0f, .elbowDeg = -10.0f, .wristDeg = -6.0f,
         .chordRootPx = 15.0f, .chordTipPx = 10.5f, .chordMidPx = 6.5f, .chordBias = 0.95f,
@@ -269,7 +273,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kDemonGlow, .glowStrength = 0.55f, .backLight = 0.30f,
     },
     {
-        .id = "bat", .label = "Bat",
+        .id = "bat", .label = "Bat", .shape = "Wide flat bat wing, short span, harsh trailing edge",
         .upperPx = 8.0f, .forePx = 7.6f, .handPx = 6.6f,
         .raiseDeg = -6.0f, .elbowDeg = -14.0f, .wristDeg = -12.0f,
         .chordRootPx = 13.0f, .chordTipPx = 9.2f, .chordMidPx = 5.2f, .chordBias = 0.95f,
@@ -281,7 +285,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kBatGlow, .glowStrength = 0.0f, .backLight = 0.08f,
     },
     {
-        .id = "butterfly", .label = "Butterfly",
+        .id = "butterfly", .label = "Butterfly", .shape = "Round wide lobes with a soft mid-span bulge",
         .upperPx = 9.0f, .forePx = 9.0f, .handPx = 8.0f,
         .raiseDeg = 17.0f, .elbowDeg = -8.0f, .wristDeg = -8.0f,
         .chordRootPx = 14.0f, .chordTipPx = 9.0f, .chordMidPx = 4.0f, .chordBias = 0.9f,
@@ -293,7 +297,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kButterflyGlow, .glowStrength = 0.18f, .backLight = 0.28f,
     },
     {
-        .id = "phoenix", .label = "Phoenix",
+        .id = "phoenix", .label = "Phoenix", .shape = "Tall flame-coloured sail with long streaming quills",
         .upperPx = 10.2f, .forePx = 10.8f, .handPx = 10.6f,
         .raiseDeg = 11.0f, .elbowDeg = -2.0f, .wristDeg = -10.0f,
         .chordRootPx = 5.4f, .chordTipPx = 3.6f, .chordMidPx = 9.8f, .chordBias = 1.05f,
@@ -306,7 +310,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kPhoenixGlow, .glowStrength = 0.26f, .backLight = 0.34f,
     },
     {
-        .id = "fairy", .label = "Fairy",
+        .id = "fairy", .label = "Fairy", .shape = "Small upright wings, translucent feel, rounded tips",
         .upperPx = 8.0f, .forePx = 8.4f, .handPx = 7.8f,
         .raiseDeg = 15.0f, .elbowDeg = 0.0f, .wristDeg = -14.0f,
         .chordRootPx = 8.4f, .chordTipPx = 4.6f, .chordMidPx = 7.0f, .chordBias = 1.0f,
@@ -319,7 +323,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kFairyGlow, .glowStrength = 0.20f, .backLight = 0.34f,
     },
     {
-        .id = "demon_wings", .label = "Demon Wings",
+        .id = "demon_wings", .label = "Demon Wings", .shape = "Long ragged sail, torn trailing edge, dark palette",
         .upperPx = 10.2f, .forePx = 9.8f, .handPx = 9.0f,
         .raiseDeg = -10.0f, .elbowDeg = -9.0f, .wristDeg = -6.0f,
         .chordRootPx = 15.5f, .chordTipPx = 11.0f, .chordMidPx = 6.8f, .chordBias = 0.95f,
@@ -331,7 +335,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kDemonWingsGlow, .glowStrength = 0.62f, .backLight = 0.42f,
     },
     {
-        .id = "vampire", .label = "Vampire Bat",
+        .id = "vampire", .label = "Vampire Bat", .shape = "High arched sail, hooked tips, deep red membrane",
         .upperPx = 8.4f, .forePx = 8.0f, .handPx = 7.0f,
         .raiseDeg = -8.0f, .elbowDeg = -14.0f, .wristDeg = -10.0f,
         .chordRootPx = 13.5f, .chordTipPx = 9.6f, .chordMidPx = 5.4f, .chordBias = 0.95f,
@@ -343,7 +347,7 @@ inline constexpr WingDesign kWingDesigns[] = {
         .glow = kVampireGlow, .glowStrength = 0.48f, .backLight = 0.36f,
     },
     {
-        .id = "red_bat", .label = "Red Bat",
+        .id = "red_bat", .label = "Red Bat", .shape = "Compact crimson bat wing with a sharp hooked tip",
         .upperPx = 7.6f, .forePx = 7.2f, .handPx = 6.4f,
         .raiseDeg = -6.0f, .elbowDeg = -15.0f, .wristDeg = -12.0f,
         .chordRootPx = 12.5f, .chordTipPx = 9.0f, .chordMidPx = 5.0f, .chordBias = 0.95f,

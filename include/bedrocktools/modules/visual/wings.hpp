@@ -84,8 +84,23 @@ public:
     void onInit() override;
     void onEnable() override;
     void onDisable() override;
+    void onFrame() override;
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j) override;
+
+    // Draws the launcher overlay for this module: the silhouette of the style
+    // that is currently selected, so the menu shows a shape and not only a name.
+    // Called from the module tick while the module is enabled.
+    void drawWings();
+
+    // Registers the launcher menu page. The style picker is rebuilt as a v2
+    // schema so the menu can carry a silhouette preview of the selected style,
+    // which the classic key/value list cannot express.
+    void onMenuRegistered() override;
+
+    // Keeps the preview in step with the picker: changing the style redraws the
+    // silhouette immediately, so browsing the list shows each shape.
+    bool onMenuConfigChanged(std::string_view key, std::string_view value) override;
 
     // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
@@ -128,6 +143,10 @@ public:
     // wingsDirectory() (without overwriting existing files).
     void ensureWingsAssetFiles();
 
+    // Pushes the current menu schema (style picker + silhouette preview) to the
+    // launcher. Cheap enough to call on every style change.
+    void refreshMenuSchema();
+
     // Flap speed multiplier shown in the launcher menu (0.1 = slow,
     // 10 = very fast, 1.0 = default).
     float m_flapSpeed = 1.0f;
@@ -140,6 +159,11 @@ public:
     // without touching the std::string from the render thread.
     std::string m_wingStyle = "dragon";
     int m_wingStyleIndex = 0;
+
+    // Draw the selected style's silhouette in the launcher overlay. Always on;
+    // exposed as a member so the setting can be added without touching the
+    // renderer.
+    bool m_showStylePreview = true;
 
     // Test / rendering helpers
     float flapTime() const { return m_flapTime; }

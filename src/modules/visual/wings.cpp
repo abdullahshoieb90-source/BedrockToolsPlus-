@@ -5,6 +5,7 @@
 #include "modules/visual/wings_shape.hpp"
 #include "modules/visual/wings_design.hpp"
 #include "modules/visual/wings_surface.hpp"
+#include "modules/visual/wings_menu.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/Types.hpp>
 #include <bedrocktools/events/EventBus.hpp>
@@ -625,6 +626,104 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 
 } // namespace
 
+// draws the shape of the style the picker is about to apply.
+//
+// The launcher's module page is text only (the schema it renders carries titles
+// and choice labels, and the image path belongs to the in-game HUD), so the
+// style is chosen from a dropdown that carries a one line description of each
+// shape. As soon as a shape is picked it is drawn here - as big as the screen
+// allows, well above the menu - so you can compare it against what was on your
+// back. Switching wings is a visible decision rather than a name.
+namespace {
+
+constexpr int kWingPreviewCols = 41;
+constexpr int kWingPreviewRows = 15;
+
+// The launcher reads coordinates <= -19000 as offsets from the screen centre,
+// with -20000 being the exact centre (the same convention the Crosshair module
+// uses). Anything above that is treated as absolute pixels, which would pin the
+// silhouette to the top-left corner on every device.
+constexpr float kWingPreviewCenter = -20000.0f;
+
+// Clipped text drawer for the silhouette. Stops at the screen edge instead of
+// relying on the launcher to clip.
+struct PreviewPainter {
+    std::vector<PLModMenu_DrawCommand>& commands;
+    float x;
+    float y;
+    float cellW;
+    float cellH;
+    std::uint32_t color;
+
+    void run(int row, int col, int runLength) {
+        PLModMenu_DrawCommand cell = {};
+        cell.type = PL_DRAW_RECT_FILLED;
+        cell.x = x + static_cast<float>(col) * cellW;
+        cell.y = y + static_cast<float>(row) * cellH;
+        cell.w = cellW * static_cast<float>(runLength);
+        cell.h = cellH;
+        cell.color = color;
+        commands.push_back(std::move(cell));
+    }
+};
+
+}  // namespace
+
+void WingsModule::drawWings() {
+    std::vector<PLModMenu_DrawCommand> commands;
+
+    int styleIndex = m_wingStyleIndex;
+    if (styleIndex < 0 || styleIndex >= wings::kWingStyleCount) styleIndex = 0;
+
+    if (m_showStylePreview) {
+        const std::string art = wings::wingStyleArt(styleIndex, kWingPreviewCols,
+                                                    kWingPreviewRows);
+        if (!art.empty()) {
+            constexpr float kCellW = 6.0f;
+            constexpr float kCellH = 6.0f;
+            constexpr float kLineWidth = static_cast<float>(kWingPreviewCols) * kCellW;
+            PreviewPainter painter{commands, 0.0f,
+                                   kWingPreviewCenter -
+                                       static_cast<float>(kWingPreviewRows) * kCellH * 0.5f,
+                                   kCellW, kCellH, 0xC8D2E6FFu};
+
+            // Centre each row on its own drawn width instead of centring the
+            // character grid. Trailing blanks are stripped from the art (they
+            // would only be guessed at by the launcher's text layout), so the
+            // block is not symmetric and centring the grid would push the
+            // picture off to one side.
+            int row = 0;
+            std::size_t col = 0;
+            int runStart = -1;
+            for (std::size_t i = 0; i <= art.size(); ++i) {
+                const char c = (i < art.size()) ? art[i] : '\n';
+                if (c == '#') {
+                    if (runStart < 0) runStart = static_cast<int>(col);
+                } else if (runStart >= 0) {
+                    painter.run(row, runStart, static_cast<int>(col) - runStart);
+                    runStart = -1;
+                }
+                if (c == '\n') {
+                    // Recentre the finished row on its own ink width.
+                    painter.x = kWingPreviewCenter -
+                                static_cast<float>(col) * kCellW * 0.5f;
+                    ++row;
+                    col = 0;
+                } else {
+                    ++col;
+                }
+            }
+            (void)kLineWidth;
+        }
+    }
+
+    submitDrawCommands(moduleId, commands);
+}
+
+// Screen-space (negative) units: the launcher interprets values <= -19000 as
+// offsets from the screen centre, with -20000 being dead centre. The silhouette
+// is submitted around that origin so it never depends on the phone's resolution.
+
 WingsModule::WingsModule()
     : Module("Wings", "Renders animated 3D wings on your back, driven by your movement. Pick a shape in the Wing Style selector: Dragon, Angel, Demon, Bat, Butterfly, Phoenix, Fairy, Demon Wings, Vampire Bat or Red Bat. Does not modify your skin.") {
     g_wings = this;
@@ -677,6 +776,13 @@ void WingsModule::onInit() {
         });
 }
 
+void WingsModule::onFrame() {
+    // Modules tick from the game thread and the overlay is a plain draw command
+    // list, so the style is read here rather than from the render hook: the HUD
+    // runs on its own thread and must not touch the std::string style id.
+    drawWings();
+}
+
 void WingsModule::applyPatch() {
     if (m_patched || !m_patchTarget) return;
     auto handle = bedrocktools::hooks::install(m_patchTarget, (void*)_renderLevel_hook, (void**)&_renderLevel_orig);
@@ -708,6 +814,10 @@ void WingsModule::onEnable() {
 }
 
 void WingsModule::onDisable() {
+    // The preview overlay stops being drawn with the module, so clear it here:
+    // onFrame stops running for disabled modules and nothing else would remove
+    // it from the screen.
+    submitDrawCommands(moduleId, std::vector<PLModMenu_DrawCommand>{});
     // No skin to restore; just clear tracked player so overlay disappears immediately
     std::lock_guard<std::mutex> lock(s_stateMutex);
     s_hasPlayer = false;
@@ -1007,6 +1117,29 @@ void WingsModule::ensureWingsAssetFiles() {
     }
 }
 
+void WingsModule::refreshMenuSchema() {
+    pl::modmenu::setConfigSchemaJson(moduleId,
+                                     wings::wingMenuSchema(m_wingStyleIndex, m_flapSpeed));
+}
+
+void WingsModule::onMenuRegistered() {
+    refreshMenuSchema();
+}
+
+bool WingsModule::onMenuConfigChanged(std::string_view key, std::string_view value) {
+    if (key != "m_wingStyle") return false;
+
+    // The launcher reports the chosen option's value, which is the style id;
+    // older launchers report the numeric index. resolveWingStyleIndex handles
+    // both, and the full "<index>,<id>,..." radio string as well.
+    m_wingStyleIndex = wings::resolveWingStyleIndex(std::string(value));
+    m_wingStyle = wings::kWingDesigns[m_wingStyleIndex].id;
+
+    // Redraw the silhouette for the new style so the menu updates as you browse.
+    refreshMenuSchema();
+    return true;
+}
+
 void WingsModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
     if (j.contains("m_flapSpeed")) {
@@ -1015,6 +1148,9 @@ void WingsModule::loadConfig(const nlohmann::json& j) {
     } else if (j.contains("flapSpeed")) {
         float speed = j["flapSpeed"].get<float>();
         m_flapSpeed = std::clamp(speed, 0.1f, 10.0f);
+    }
+    if (j.contains("m_showStylePreview")) {
+        m_showStylePreview = j["m_showStylePreview"].get<bool>();
     }
     if (j.contains("m_wingStyle")) {
         m_wingStyleIndex = wings::resolveWingStyleIndex(j["m_wingStyle"].get<std::string>());
@@ -1030,6 +1166,7 @@ void WingsModule::saveConfig(nlohmann::json& j) {
     float flapSpeed = std::clamp(m_flapSpeed, 0.1f, 10.0f);
     j["m_flapSpeed"] = flapSpeed;
     j["flapSpeed"] = flapSpeed; // keep both keys for compatibility
+    j["m_showStylePreview"] = m_showStylePreview;
     m_wingStyleIndex = wings::wingStyleIndexForId(m_wingStyle);
     j["m_wingStyle"] = wings::wingStyleRadioValue(m_wingStyleIndex);
 }
