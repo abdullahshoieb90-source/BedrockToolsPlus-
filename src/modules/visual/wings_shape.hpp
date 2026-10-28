@@ -109,12 +109,16 @@ inline FaceColor lerpColor(const FaceColor& a, const FaceColor& b, float t) {
 // silhouette when the sun is behind the player. Range is
 // [ambient, ambient + head + sky].
 struct WingLight {
-    float ambient = 0.56f;
-    float head = 0.30f;
-    float sky = 0.22f;
+    float ambient = 0.52f;
+    float head = 0.26f;
+    float sky = 0.20f;
 };
 
-constexpr WingLight kDefaultLight{0.56f, 0.30f, 0.22f};
+// Peak = ambient + head + sky = 0.98. It deliberately stays just under 1.0: the
+// palette already encodes the target look, so lighting must shade it down, not
+// push it up. With a peak above 1.0 the light palettes (Angel, Fairy) clipped
+// to a flat white sheet and lost every gradient.
+constexpr WingLight kDefaultLight{0.52f, 0.26f, 0.20f};
 
 // How much brighter the wing tips are than the shoulder (spanT 0 -> 1).
 constexpr float kSpanGradient = 0.18f;
@@ -134,6 +138,20 @@ inline float faceBrightness(const Vec3& normal, const Vec3& toCamera, const Wing
 inline float spanTint(float spanT, float boneTint = 1.0f) {
     const float t = spanT < 0.0f ? 0.0f : (spanT > 1.0f ? 1.0f : spanT);
     return boneTint * (1.0f + kSpanGradient * (t - 0.5f));
+}
+
+// Vector from a point on the surface to the camera, used by the overlay's
+// headlight term.
+//
+// This has to be measured between two positions in the SAME space. The overlay
+// builds its vertices camera-relative but computes the shading center in world
+// space, so negating the center there (as if it were already camera-relative)
+// pointed the headlight at the world origin: the wings then changed brightness
+// whenever the player walked somewhere else, which read as a washed-out sheet
+// from one angle and a dark one from another. Named helper + host test so the
+// two spaces cannot be mixed up again.
+inline Vec3 toCameraVector(const Vec3& camPos, const Vec3& surfaceCenter) {
+    return camPos - surfaceCenter;
 }
 
 // ---------------------------------------------------------------------------

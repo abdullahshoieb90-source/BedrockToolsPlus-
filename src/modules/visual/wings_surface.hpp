@@ -234,14 +234,19 @@ inline FaceColor membraneBackColor(const WingDesign& d, float u, float v) {
     return c;
 }
 
-// Seen from the body: the same sheet lit through (backLight), so the wings do
-// not turn into a black slab when the camera swings in front of them.
+// Seen from in front of the player. This is the side the body shadows, so it is
+// deliberately a darker, flatter version of the palette: no bright leading
+// highlight and no tip colour. Solving it that way keeps the wings readable
+// from a front-facing camera without turning them into a pale sheet that
+// competes with the sky (backLight only softens how dark it gets).
 inline FaceColor membraneFrontColor(const WingDesign& d, float u, float v) {
-    FaceColor c = lerpColor(d.front, d.trail,
-                            std::pow(clamp01(v), 0.95f) * (0.80f - 0.35f * clamp01(d.backLight)));
-    c = lerpColor(c, d.lead, (1.0f - smoothstep(0.0f, 0.30f, v)) * 0.40f);
-    c = lerpColor(c, d.tip, clamp01(d.backLight) * 0.22f * (1.0f - smoothstep(0.1f, 0.6f, v)));
-    c = lerpColor(c, d.trail, (1.0f - smoothstep(0.02f, 0.32f, u)) * 0.28f);
+    const float soften = 1.0f - 0.22f * clamp01(d.backLight);
+    FaceColor c = lerpColor(d.front, d.trail, 0.42f + 0.34f * clamp01(v));
+    // A hint of the leading edge, heavily damped: enough to show the arm line,
+    // not enough to blow out.
+    c = lerpColor(c, d.lead, (1.0f - smoothstep(0.0f, 0.26f, v)) * 0.16f);
+    c = shadeFace(c, soften);
+    c = lerpColor(c, d.trail, (1.0f - smoothstep(0.03f, 0.40f, u)) * 0.30f);
     return c;
 }
 
@@ -555,6 +560,10 @@ inline void addFeathers(Sink& sink, const Vec3 joint[4], const WingDesign& d, co
                 FaceColor f1 = shadeFace(lerpColor(rootFront, d.tip, std::pow(k1, 1.7f)), tint);
                 FaceColor b0 = shadeFace(lerpColor(root, d.trail, 0.30f + 0.25f * k0), tint);
                 FaceColor b1 = shadeFace(lerpColor(root, d.trail, 0.30f + 0.25f * k1), tint);
+                // Front (body-facing) side: the same vane seen in shadow, so it
+                // stays a step darker than the back instead of glowing gold.
+                FaceColor f0Shadow = shadeFace(b0, 0.92f);
+                FaceColor f1Shadow = shadeFace(b1, 0.92f);
                 // Dark rim on the last segment: the shadow each quill casts on
                 // the row below is what makes the feather layers visible.
                 if (s == kFeatherSegments - 1) {
@@ -563,8 +572,8 @@ inline void addFeathers(Sink& sink, const Vec3 joint[4], const WingDesign& d, co
                     b0 = lerpColor(b0, d.trail, 0.22f);
                     b1 = lerpColor(b1, d.trail, 0.42f);
                 }
-                sink.blade(pts[s], pts[s + 1], w0, w1, Vec3{0.0f, 0.0f, 1.0f}, f0, f1, b0, b1, u,
-                           d.glowStrength * 0.30f);
+                sink.blade(pts[s], pts[s + 1], w0, w1, Vec3{0.0f, 0.0f, 1.0f},
+                           f0Shadow, f1Shadow, f0, f1, u, d.glowStrength * 0.30f);
             }
         }
     }

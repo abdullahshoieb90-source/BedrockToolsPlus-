@@ -360,6 +360,43 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    // Headlight direction (regression: wings.cpp used to shade with the
+    // negated *world* center, so a wing changed brightness whenever the
+    // player walked somewhere else and looked washed out from the front).
+    // ------------------------------------------------------------------
+    {
+        const wings::Vec3 surface{500.0f, 72.0f, -299.0f};
+        const wings::Vec3 camera{500.0f, 71.5f, -305.0f};
+        const wings::Vec3 toCam = wings::toCameraVector(camera, surface);
+        check(std::fabs(toCam.x - (camera.x - surface.x)) < 1e-6f &&
+                  std::fabs(toCam.y - (camera.y - surface.y)) < 1e-6f &&
+                  std::fabs(toCam.z - (camera.z - surface.z)) < 1e-6f,
+              "toCameraVector points from the surface to the camera");
+
+        // The exact bug: the headlight must not be the negated world center.
+        const wings::Vec3 negatedWorldCenter{-surface.x, -surface.y, -surface.z};
+        check(wings::length(toCam - negatedWorldCenter) > 1.0f,
+              "the headlight vector is not the negated world center");
+
+        // Same geometry, player standing 1000 blocks away: the shading may not
+        // change. Negating the world center fails this check.
+        const wings::Vec3 offset{1234.0f, 64.0f, -987.0f};
+        const wings::Vec3 n{0.0f, 0.0f, 1.0f};
+        const float near = wings::faceBrightness(
+            n, wings::toCameraVector(camera, surface), wings::kDefaultLight);
+        const float far = wings::faceBrightness(
+            n, wings::toCameraVector(camera + offset, surface + offset), wings::kDefaultLight);
+        check(std::fabs(near - far) < 1e-4f,
+              "wing shading does not depend on the player's world position");
+
+        // And the light must actually come from the camera: a surface facing
+        // the camera is brighter than one facing away.
+        const float facing = wings::faceBrightness(n, {0.0f, 0.0f, 1.0f}, wings::kDefaultLight);
+        const float away = wings::faceBrightness(n, {0.0f, 0.0f, -1.0f}, wings::kDefaultLight);
+        check(facing > away, "a surface facing the camera is lit more than one facing away");
+    }
+
+    // ------------------------------------------------------------------
     // Shading model
     // ------------------------------------------------------------------
     std::printf("shading\n");

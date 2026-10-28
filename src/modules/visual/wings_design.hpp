@@ -107,11 +107,11 @@ inline constexpr FaceColor kDragonFeatherTip{224, 176, 108};
 inline constexpr FaceColor kDragonJointInner{96, 66, 40};
 
 // Angel: warm-white feathers with gold primary tips.
-inline constexpr FaceColor kAngelFrame{248, 244, 234};
-inline constexpr FaceColor kAngelLead{255, 253, 246};
-inline constexpr FaceColor kAngelBack{190, 192, 198};
-inline constexpr FaceColor kAngelFront{206, 208, 214};
-inline constexpr FaceColor kAngelTrail{142, 146, 156};
+inline constexpr FaceColor kAngelFrame{232, 228, 216};
+inline constexpr FaceColor kAngelLead{244, 240, 228};
+inline constexpr FaceColor kAngelBack{170, 174, 184};
+inline constexpr FaceColor kAngelFront{192, 196, 204};
+inline constexpr FaceColor kAngelTrail{120, 126, 138};
 inline constexpr FaceColor kAngelTip{255, 206, 104};
 inline constexpr FaceColor kAngelGlow{255, 250, 226};
 inline constexpr FaceColor kAngelMembraneOuter{190, 192, 198};
@@ -147,9 +147,9 @@ inline constexpr FaceColor kBatJointInner{38, 35, 48};
 
 // Butterfly: pink forewing over an orange hindwing, cyan accents.
 inline constexpr FaceColor kButterflyFrame{92, 44, 146};
-inline constexpr FaceColor kButterflyLead{255, 186, 226};
-inline constexpr FaceColor kButterflyBack{248, 116, 174};
-inline constexpr FaceColor kButterflyFront{255, 168, 208};
+inline constexpr FaceColor kButterflyLead{250, 172, 216};
+inline constexpr FaceColor kButterflyBack{236, 100, 160};
+inline constexpr FaceColor kButterflyFront{246, 148, 194};
 inline constexpr FaceColor kButterflyTrail{124, 202, 255};
 inline constexpr FaceColor kButterflyTip{255, 224, 128};
 inline constexpr FaceColor kButterflyGlow{255, 216, 240};
@@ -161,22 +161,22 @@ inline constexpr FaceColor kButterflyJointInner{126, 66, 172};
 // Phoenix: fiery orange primaries with gold tips.
 inline constexpr FaceColor kPhoenixFrame{176, 92, 22};
 inline constexpr FaceColor kPhoenixLead{255, 186, 66};
-inline constexpr FaceColor kPhoenixBack{196, 62, 24};
-inline constexpr FaceColor kPhoenixFront{226, 110, 36};
-inline constexpr FaceColor kPhoenixTrail{138, 26, 8};
+inline constexpr FaceColor kPhoenixBack{184, 52, 18};
+inline constexpr FaceColor kPhoenixFront{206, 84, 26};
+inline constexpr FaceColor kPhoenixTrail{118, 20, 6};
 inline constexpr FaceColor kPhoenixTip{255, 240, 148};
 inline constexpr FaceColor kPhoenixGlow{255, 196, 80};
-inline constexpr FaceColor kPhoenixMembraneOuter{196, 62, 24};
-inline constexpr FaceColor kPhoenixMembraneInner{226, 110, 36};
+inline constexpr FaceColor kPhoenixMembraneOuter{184, 52, 18};
+inline constexpr FaceColor kPhoenixMembraneInner{206, 84, 26};
 inline constexpr FaceColor kPhoenixFeatherTip{255, 240, 148};
 inline constexpr FaceColor kPhoenixJointInner{150, 70, 14};
 
 // Fairy: translucent cyan/pink petals.
 inline constexpr FaceColor kFairyFrame{110, 214, 204};
-inline constexpr FaceColor kFairyLead{232, 255, 252};
-inline constexpr FaceColor kFairyBack{142, 224, 246};
-inline constexpr FaceColor kFairyFront{246, 202, 252};
-inline constexpr FaceColor kFairyTrail{92, 176, 198};
+inline constexpr FaceColor kFairyLead{222, 250, 246};
+inline constexpr FaceColor kFairyBack{126, 208, 234};
+inline constexpr FaceColor kFairyFront{234, 184, 244};
+inline constexpr FaceColor kFairyTrail{78, 158, 184};
 inline constexpr FaceColor kFairyTip{255, 255, 250};
 inline constexpr FaceColor kFairyGlow{210, 250, 255};
 inline constexpr FaceColor kFairyMembraneOuter{142, 224, 246};

@@ -198,11 +198,21 @@ static MaterialPtr getMaterial(const char* name) {
     return reinterpret_cast<getMat_t>(vtable[2])((void*)s_renderMaterialGroup, &hs);
 }
 
+// Material for the membrane quads.
+//
+// Depth test is the requirement here, not looks: the wings are mounted on the
+// player's back, so from the front (or from any tight orbit) the player's body
+// has to occlude them. ui_fill_color is deliberately NOT preferred, even though
+// it gives the cleanest vertex-colour fill: on current Bedrock builds it has no
+// terrain/depth test (see the Through Walls note in blockoutline.cpp), so the
+// whole wing gets painted straight over the torso and reads as a translucent
+// white sheet. selection_box is what the game itself uses for the block
+// highlight - it is depth tested, takes the tessellator colour and alpha.
 static void ensureMaterials() {
     if (!s_renderMaterialGroup) return;
     if (!s_matSelection) s_matSelection = getMaterial("selection_box");
     if (!s_matFill) {
-        static const char* kFillNames[] = { "ui_fill_color", "ui_textured_and_glcolor", "debug_filled_box", "selection_box" };
+        static const char* kFillNames[] = { "selection_box", "debug_filled_box", "ui_fill_color", "ui_textured_and_glcolor" };
         for (const char* n : kFillNames) {
             s_matFill = getMaterial(n);
             if (s_matFill) break;
@@ -264,8 +274,12 @@ static void emitWingQuads(void* tess, const wings::WingQuad* quads, int count,
         }
         center = center * 0.25f;
 
-        // Camera-relative corners, so the view vector is simply -center.
-        const wings::Vec3 toCamera = center * -1.0f;
+        // The headlight vector runs from the surface towards the camera.
+        // `center` is a WORLD point (the corners above are camera-relative),
+        // so it must be subtracted from the camera position - negating it would
+        // treat a world point as camera-relative and point the light at the
+        // world origin, making the wings change brightness as the player moves.
+        const wings::Vec3 toCamera = wings::toCameraVector(cam, center);
         const wings::Vec3 normal = wings::modelDirToWorld(q.n, right, forward);
         const wings::Vec3 litNormal = seeBack ? normal : normal * -1.0f;
 
