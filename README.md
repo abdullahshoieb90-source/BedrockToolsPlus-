@@ -105,8 +105,6 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 *Top row: the old per-bone box renderer. Bottom row: the membrane wing
 (Dragon, Angel, Demon).*
 
-The style picker in the mod menu shows each shape rather than only its name: the menu carries a one-line description of every silhouette and a text preview drawn from the real geometry, and while the module is enabled the selected shape is also drawn over the screen (large enough to compare against the wings on your back) until you close the menu. The preview is rendered from `buildWing()` itself, so it cannot drift from what the game draws.
-
 Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
 
 ## Custom Capes

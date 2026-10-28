@@ -79,11 +79,6 @@ for source in "${root}"/tests/*_test.cpp; do
             # render hook frame by frame, so it needs threads for the sleeps.
             extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson" -pthread)
             ;;
-        wings_menu_test)
-            # Builds the launcher schema and the menu silhouettes; needs the
-            # preloader config header, which the host fake provides.
-            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
-            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
