@@ -93,6 +93,21 @@ constexpr float kRootPivotY = 21.0f;
 // Palettes
 // ---------------------------------------------------------------------------
 
+// Veil: charcoal membrane under a mid-grey band. Sampled from the reference
+// art, which is a near-black sheet (14,14,16) crossed by one greyer fold
+// (~54,56,60): the whole wing reads as a silhouette with a single lit crease.
+inline constexpr FaceColor kVeilFrame{70, 72, 78};
+inline constexpr FaceColor kVeilLead{104, 108, 116};
+inline constexpr FaceColor kVeilBack{22, 23, 27};
+inline constexpr FaceColor kVeilFront{30, 31, 36};
+inline constexpr FaceColor kVeilTrail{12, 12, 15};
+inline constexpr FaceColor kVeilTip{132, 137, 146};
+inline constexpr FaceColor kVeilGlow{96, 100, 110};
+inline constexpr FaceColor kVeilMembraneOuter{22, 23, 27};
+inline constexpr FaceColor kVeilMembraneInner{30, 31, 36};
+inline constexpr FaceColor kVeilFeatherTip{132, 137, 146};
+inline constexpr FaceColor kVeilJointInner{54, 56, 60};
+
 // Dragon: warm bone spars over a slate-violet membrane.
 inline constexpr FaceColor kDragonFrame{132, 92, 54};
 inline constexpr FaceColor kDragonLead{196, 148, 92};
@@ -353,6 +368,24 @@ inline constexpr WingDesign kWingDesigns[] = {
         .frame = kRedBatFrame, .lead = kRedBatLead, .back = kRedBatBack,
         .front = kRedBatFront, .trail = kRedBatTrail, .tip = kRedBatTip,
         .glow = kRedBatGlow, .glowStrength = 0.58f, .backLight = 0.40f,
+    },
+    {
+        // The reference is a broad hanging sheet, not a bat sail: it is narrow
+        // where it meets the shoulder, barely widens until two thirds of the
+        // span, then flares into a wide skirt with a nearly straight bottom
+        // edge. fanDeg is small so the skirt hangs instead of sweeping inboard,
+        // and the low chordBias is what keeps the deep notch between the two
+        // wings at the top.
+        .id = "veil", .label = "Veil",
+        .upperPx = 10.4f, .forePx = 10.6f, .handPx = 9.8f,
+        .raiseDeg = 1.0f, .elbowDeg = -6.0f, .wristDeg = -4.0f,
+        .chordRootPx = 2.5f, .chordTipPx = 26.0f, .chordMidPx = 0.0f, .chordBias = 0.82f,
+        .fanDeg = 19.0f, .scallopPx = 1.4f, .fingers = 3,
+        .camberPx = 0.55f, .sweepPx = 1.1f, .rootZPx = 3.1f, .flutterPx = 0.24f,
+        .feathers = false,
+        .frame = kVeilFrame, .lead = kVeilLead, .back = kVeilBack,
+        .front = kVeilFront, .trail = kVeilTrail, .tip = kVeilTip,
+        .glow = kVeilGlow, .glowStrength = 0.0f, .backLight = 0.05f,
     },
 };
 
