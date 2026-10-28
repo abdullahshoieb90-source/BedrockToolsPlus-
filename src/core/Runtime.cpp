@@ -3,7 +3,6 @@
 #include "config/ConfigManager.hpp"
 #include "launcher/ExternalButtonRefresh.hpp"
 #include "launcher/ModuleMenu.hpp"
-#include "launcher/OverlayBridge.hpp"
 #include "modules/ModuleRegistry.hpp"
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/events/EventBus.hpp>
@@ -56,10 +55,6 @@ const std::filesystem::path& Runtime::resourceDirectory() const noexcept {
     return mResourceDirectory;
 }
 
-const std::string& Runtime::modId() const noexcept {
-    return mModId;
-}
-
 bool Runtime::launcherContext() const {
     int fd = open("/proc/self/cmdline", O_RDONLY);
     if (fd < 0) return false;
@@ -85,10 +80,7 @@ void Runtime::wireEvents() {
     if (eventsWired) return;
     eventsWired = true;
     using namespace bedrocktools::events;
-    bus().subscribe<FrameEvent>([](auto&) {
-        ModuleRegistry::get().onFrame();
-        launcher::pollOverlayBridge();
-    });
+    bus().subscribe<FrameEvent>([](auto&) { ModuleRegistry::get().onFrame(); });
     bus().subscribe<MouseInputEvent>([](auto& event) {
         if (ModuleRegistry::get().onMouseEvent(event.button, event.down)) event.cancel();
     });
@@ -136,8 +128,6 @@ void Runtime::minecraftLoaded() {
 
 bool Runtime::load(pl::mod::ModContext& context) {
     bedrocktools::launcher::setJavaVm(context.javaVm());
-    mModId = context.id();
-    launcher::initializeOverlayBridge(context.javaVm());
     mResourceDirectory = context.resourceDir();
     bedrocktools::config::ConfigManager::get().setConfigPath((context.configDir() / "config.json").string());
     if (!launcherContext()) return true;
