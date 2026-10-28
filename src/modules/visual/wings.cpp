@@ -3,7 +3,8 @@
 
 #include "modules/ModuleRegistry.hpp"
 #include "modules/visual/wings_shape.hpp"
-#include "modules/visual/wings_styles.hpp"
+#include "modules/visual/wings_design.hpp"
+#include "modules/visual/wings_surface.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/Types.hpp>
 #include <bedrocktools/events/EventBus.hpp>
@@ -217,108 +218,76 @@ static std::string wingsDirectoryForConfig() {
 }
 
 // ---------------------------------------------------------------------------
-// Articulated 3D wings.
+// Wings as one continuous membrane per side.
 //
-// The bone tables, the rest-pose fan, the taper and the face shading live in
-// modules/visual/wings_styles.hpp and wings_shape.hpp, so the host tests and
-// tools/wings_preview.cpp build exactly the same wings the game draws. What
-// is left here is the tessellator plumbing: pose each bone, turn its prism
-// into camera-relative vertices and shade every face.
+// The style table (modules/visual/wings_design.hpp) and the surface builder
+// (modules/visual/wings_surface.hpp) are pure: they turn a pose into a list of
+// double-sided quads in Bedrock model pixels, and the host tests plus
+// tools/wings_preview.cpp evaluate exactly the same code. What is left here is
+// the tessellator plumbing - map the quads into camera-relative world space,
+// shade each side and submit both windings.
 //
-// Bone chain per side (mirrors wings_default::GeometryJson):
-//
-//   shoulder (root)
-//   +-- upper
-//   |   +-- feather_1
-//   |   +-- feather_2
-//   |   +-- tip
-//   |       +-- feather_3
-//   |       +-- feather_4
-//
-// Every bone rotates inside the wing plane (the model z axis) by the angle
-// the animation controller produced plus its own rest-pose fan. Positive
-// "raise" lifts the wing tip; right-side bones apply the negated angle (their
-// span runs along -x) and left-side bones apply it directly.
-// ---------------------------------------------------------------------------
+// This replaced the old per-bone prism renderer. Seven disjoint boxes per wing
+// read as a comb of planks: gaps between the "feathers", flat faces and no
+// silhouette. The membrane gives a real leading edge, scalloped fingers, ribs,
+// a claw and layered feathers, and it is cheaper to draw (one tessellator call
+// per wing either way, but far fewer overdraw slivers).
 
-// Left-side (spans +x) mirrors of each style's right-side table, generated
-// once at runtime so the two sides can never drift apart.
-static wings::WingBone s_leftBones[wings::kWingStyleCount][wings::kMaxWingBones];
-static bool s_leftBonesReady = false;
+static wings::WingQuad s_rightQuads[wings::kMaxWingQuads];
+static wings::WingQuad s_leftQuads[wings::kMaxWingQuads];
 
-static void ensureWingStyleBones() {
-    if (s_leftBonesReady) return;
-    for (int s = 0; s < wings::kWingStyleCount; ++s) {
-        const int n = wings::kWingStyles[s].boneCount;
-        wings::mirrorWingBones(wings::kWingStyles[s].rightBones,
-                               (n > wings::kMaxWingBones) ? wings::kMaxWingBones : n,
-                               s_leftBones[s]);
-    }
-    s_leftBonesReady = true;
+// Maps the animated bone angles onto the surface builder's pose. The mapping
+// itself lives in wings_surface.hpp so the host tests cover it.
+static wings::WingPose poseFromAngles(const WingBoneAngles& a) {
+    return wings::makeWingPose(a.shoulderDeg, a.upperDeg, a.tipDeg, a.flapPhase,
+                               a.intensity, a.glide);
 }
 
-static const wings::WingBone* leftBonesFor(int styleIndex) {
-    if (styleIndex < 0 || styleIndex >= wings::kWingStyleCount) styleIndex = 0;
-    ensureWingStyleBones();
-    return s_leftBones[styleIndex];
-}
+// Emits one wing's quads. Both windings are submitted for every quad, so
+// back-face culling can never eat the membrane when the wing folds over itself.
+static void emitWingQuads(void* tess, const wings::WingQuad* quads, int count,
+                          const wings::Vec3& feet, const wings::Vec3& right,
+                          const wings::Vec3& forward, const wings::Vec3& cam,
+                          bool seeBack) {
+    for (int i = 0; i < count; ++i) {
+        const wings::WingQuad& q = quads[i];
 
-// One face of one bone prism. Both windings are emitted so back-face culling
-// can never eat a face when the wing folds over itself.
-static void emitFace(void* tess, const float corners[wings::kCornerCount][3], const int ring[4],
-                     const wings::FaceColor& color) {
-    s_tessColor(tess, color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, 1.0f);
-    for (int i = 0; i < 4; ++i) {
-        const float* v = corners[ring[i]];
-        s_tessVertex(tess, v[0], v[1], v[2]);
-    }
-    for (int i = 3; i >= 0; --i) {
-        const float* v = corners[ring[i]];
-        s_tessVertex(tess, v[0], v[1], v[2]);
-    }
-}
-
-static void emitWingBox(void* tess, const wings::WingBone& bone, const wings::Pose2D& pose,
-                        const wings::Vec3& feet, const wings::Vec3& right, const wings::Vec3& forward,
-                        const wings::Vec3& cam) {
-    const wings::WingBox box = wings::buildWingBox(bone, pose);
-
-    // Camera-relative world corners. Bedrock model space faces -z (north), so
-    // the back/cape side is +z: model axes map as x -> -right, y -> up and
-    // z -> -forward. Wing boxes carry positive z (see the bone tables) and so
-    // always land behind the player, never inside the chest.
-    float corners[wings::kCornerCount][3];
-    for (int i = 0; i < wings::kCornerCount; ++i) {
-        const wings::Vec3 p = wings::modelPointToWorld(box.px[i], box.py[i], box.pz[i], feet, right, forward);
-        corners[i][0] = p.x - cam.x;
-        corners[i][1] = p.y - cam.y;
-        corners[i][2] = p.z - cam.z;
-    }
-
-    const unsigned char* faceColors[wings::kFaceCount] = {
-        bone.colInner, bone.colOuter, bone.colEdge, bone.colEdge, bone.colBottom, bone.colEdge,
-    };
-
-    // Flat per-face shading: a soft headlight plus a sky lift (wings_shape.hpp)
-    // times the shoulder-to-tip gradient and the per-bone tint. Without it the
-    // overlay is a flat cut-out - every face of every bone has the same value
-    // and the wings lose all volume.
-    const float tint = wings::spanTint(bone.spanT, bone.tint);
-    for (int f = 0; f < wings::kFaceCount; ++f) {
-        const int* ring = wings::kFaceRings[f];
-
-        wings::Vec3 faceCenter{0.0f, 0.0f, 0.0f};
-        for (int i = 0; i < 4; ++i) {
-            faceCenter = faceCenter + wings::Vec3{corners[ring[i]][0], corners[ring[i]][1], corners[ring[i]][2]};
+        float corners[4][3];
+        wings::Vec3 center{0.0f, 0.0f, 0.0f};
+        for (int k = 0; k < 4; ++k) {
+            const wings::Vec3 p = wings::modelPointToWorld(q.p[k].x, q.p[k].y, q.p[k].z,
+                                                           feet, right, forward);
+            corners[k][0] = p.x - cam.x;
+            corners[k][1] = p.y - cam.y;
+            corners[k][2] = p.z - cam.z;
+            center = center + p;
         }
-        faceCenter = faceCenter * 0.25f;
+        center = center * 0.25f;
 
-        // The corners are already camera relative, so the vector from the face
-        // to the camera is simply the negated center.
-        const wings::Vec3 toCamera = faceCenter * -1.0f;
-        const wings::Vec3 normal = wings::modelDirToWorld(wings::faceNormalModel(f, pose), right, forward);
-        const float brightness = wings::faceBrightness(normal, toCamera, wings::kDefaultLight) * tint;
-        emitFace(tess, corners, ring, wings::shadeFace(faceColors[f], brightness));
+        // Camera-relative corners, so the view vector is simply -center.
+        const wings::Vec3 toCamera = center * -1.0f;
+        const wings::Vec3 normal = wings::modelDirToWorld(q.n, right, forward);
+        const wings::Vec3 litNormal = seeBack ? normal : normal * -1.0f;
+
+        float brightness = wings::faceBrightness(litNormal, toCamera, wings::kDefaultLight) *
+                           wings::spanTint(q.spanT);
+        if (q.emissive > 0.0f && brightness < q.emissive) brightness = q.emissive;
+
+        // Per-corner colours: the tessellator interpolates them across the quad
+        // (Gouraud), so the sail shows its leading-edge highlight, trailing
+        // shadow and shoulder-to-tip gradient instead of one flat tone.
+        const wings::FaceColor* cornerColors = seeBack ? q.backC : q.frontC;
+        wings::FaceColor shaded[4];
+        for (int k = 0; k < 4; ++k) shaded[k] = wings::shadeFace(cornerColors[k], brightness);
+
+        for (int k = 0; k < 4; ++k) {
+            s_tessColor(tess, shaded[k].r / 255.0f, shaded[k].g / 255.0f, shaded[k].b / 255.0f, 1.0f);
+            s_tessVertex(tess, corners[k][0], corners[k][1], corners[k][2]);
+        }
+        for (int k = 3; k >= 0; --k) {
+            s_tessColor(tess, shaded[k].r / 255.0f, shaded[k].g / 255.0f, shaded[k].b / 255.0f, 1.0f);
+            s_tessVertex(tess, corners[k][0], corners[k][1], corners[k][2]);
+        }
     }
 }
 
@@ -327,24 +296,6 @@ static void emitWingBox(void* tess, const wings::WingBone& bone, const wings::Po
 // box); the small margin absorbs jitter at the box edges. A third-person
 // camera is pulled back well outside the box.
 constexpr float kFirstPersonMargin = 0.05f;  // blocks
-
-static void emitWing(void* tess, const wings::WingBone* bones, int boneCount, float rootPivotX,
-                     const float anglesDeg[7], float angleSign,
-                     const wings::Vec3& feet, const wings::Vec3& right, const wings::Vec3& forward,
-                     const wings::Vec3& cam) {
-    wings::Pose2D poses[wings::kMaxWingBones];
-    for (int i = 0; i < boneCount && i < wings::kMaxWingBones; ++i) {
-        const wings::WingBone& bone = bones[i];
-        const int ai = (bone.angleIndex >= 0 && bone.angleIndex < 7) ? bone.angleIndex : 0;
-        const float angleRad = angleSign * (anglesDeg[ai] + bone.restDeg) * wings::kDegToRad;
-        if (bone.parent < 0 || bone.parent >= i) {
-            poses[i] = wings::makePose(angleRad, rootPivotX, wings::kRootPivotY);
-        } else {
-            poses[i] = wings::composePose(poses[bone.parent], bone.anchorX, bone.anchorY, angleRad);
-        }
-        emitWingBox(tess, bone, poses[i], feet, right, forward, cam);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Wing rendering
@@ -481,6 +432,22 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     void* matFill = s_matFill ? (void*)&s_matFill : matInner;
     if (!matFill) matFill = overlayMat;
 
+    // Resolve the selected wing style (index is kept in sync with m_wingStyle
+    // on the tick/config thread; reading an int here is safe for the render
+    // thread).
+    int styleIdx = 0;
+    if (g_wings) styleIdx = g_wings->m_wingStyleIndex;
+    if (styleIdx < 0 || styleIdx >= wings::kWingStyleCount) styleIdx = 0;
+    const wings::WingDesign& design = wings::kWingDesigns[styleIdx];
+
+    // Build both sides first so the exact vertex count can be handed to the
+    // tessellator (Bedrock needs it up front). This runs before the GPU colour
+    // holder is touched, so the early return below cannot leave it at white.
+    const wings::WingPose pose = poseFromAngles(angles);
+    const int rightCount = wings::buildWing(design, pose, -1, s_rightQuads, wings::kMaxWingQuads);
+    const int leftCount = wings::buildWing(design, pose, 1, s_leftQuads, wings::kMaxWingQuads);
+    if (rightCount <= 0 && leftCount <= 0) return;
+
     std::uintptr_t colorHolderPtr = *(std::uintptr_t*)((std::uintptr_t)screenContext + ScreenContext::mColorHolder);
     if (!colorHolderPtr || colorHolderPtr < 0x1000) return;
     float* colorHolder = (float*)colorHolderPtr;
@@ -505,38 +472,22 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     float fwdX = -sinYaw;
     float fwdZ = cosYaw;
 
-    // Resolve the selected wing style (index is kept in sync with m_wingStyle
-    // on the tick/config thread; reading an int here is safe for the render
-    // thread).
-    int styleIdx = 0;
-    if (g_wings) styleIdx = g_wings->m_wingStyleIndex;
-    if (styleIdx < 0 || styleIdx >= wings::kWingStyleCount) styleIdx = 0;
-    const wings::WingStyle& style = wings::kWingStyles[styleIdx];
-
-    // Per-bone, raise-positive angles in animation order:
-    // [shoulder, upper, tip, feather_1, feather_2, feather_3, feather_4]
-    const float wingAngles[7] = {
-        angles.shoulderDeg, angles.upperDeg, angles.tipDeg,
-        angles.featherDeg[0], angles.featherDeg[1], angles.featherDeg[2], angles.featherDeg[3],
-    };
-
     char pad[0x58];
     std::memset(pad, 0, sizeof(pad));
-
-    const int vertexCount = 2 * style.boneCount * wings::kFaceCount * 4 * 2; // both windings
-    s_tessBegin(tess, nullptr, 1, vertexCount, 0); // 1 = quad
 
     const wings::Vec3 feet{feetX, feetY, feetZ};
     const wings::Vec3 rightVec{rightX, 0.0f, rightZ};
     const wings::Vec3 forwardVec{fwdX, 0.0f, fwdZ};
     const wings::Vec3 cam{camX, camY, camZ};
+    const wings::Vec3 bodyCenter{feetX, feetY + 1.25f, feetZ};
 
-    // Right wing (span along -X, so a positive lift angle is a negative Z
-    // rotation); left wing mirrors it.
-    emitWing(tess, style.rightBones, style.boneCount, wings::kRightRootPivotX, wingAngles, -1.0f,
-             feet, rightVec, forwardVec, cam);
-    emitWing(tess, leftBonesFor(styleIdx), style.boneCount, wings::kLeftRootPivotX, wingAngles, 1.0f,
-             feet, rightVec, forwardVec, cam);
+    // Both windings per quad, so the membrane is visible from either side.
+    const int vertexCount = (rightCount + leftCount) * 4 * 2;
+    s_tessBegin(tess, nullptr, 1, vertexCount, 0);  // 1 = quad
+
+    const bool seeBack = wings::cameraSeesBackSide(cam, bodyCenter, rightVec, forwardVec);
+    emitWingQuads(tess, s_rightQuads, rightCount, feet, rightVec, forwardVec, cam, seeBack);
+    emitWingQuads(tess, s_leftQuads, leftCount, feet, rightVec, forwardVec, cam, seeBack);
 
     s_renderMesh(screenContext, tess, matFill, pad);
 
@@ -556,7 +507,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 } // namespace
 
 WingsModule::WingsModule()
-    : Module("Wings", "Renders 3D articulated wings attached to your back, animated by your movement speed. Pick a shape in the Wing Style selector: Dragon, Angel, Demon, Bat, Butterfly, Phoenix or Fairy. Does not modify your skin.") {
+    : Module("Wings", "Renders animated 3D wings on your back, driven by your movement. Pick a shape in the Wing Style selector: Dragon, Angel, Demon, Bat, Butterfly, Phoenix, Fairy, Demon Wings, Vampire Bat or Red Bat. Does not modify your skin.") {
     g_wings = this;
     showInMenu = true;
     hideInHudEditor = true; // world overlay, not HUD
@@ -569,7 +520,6 @@ WingsModule::~WingsModule() {
 void WingsModule::onInit() {
     m_wingsDir = wingsDirectoryForConfig();
     ensureWingsAssetFiles();
-    ensureWingStyleBones();
 
     std::uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::RenderLevel);
     if (addr != 0) m_patchTarget = (void*)addr;
@@ -949,10 +899,10 @@ void WingsModule::loadConfig(const nlohmann::json& j) {
     }
     if (j.contains("m_wingStyle")) {
         m_wingStyleIndex = wings::resolveWingStyleIndex(j["m_wingStyle"].get<std::string>());
-        m_wingStyle = wings::kWingStyles[m_wingStyleIndex].id;
+        m_wingStyle = wings::kWingDesigns[m_wingStyleIndex].id;
     } else if (j.contains("wingStyle")) {
         m_wingStyleIndex = wings::resolveWingStyleIndex(j["wingStyle"].get<std::string>());
-        m_wingStyle = wings::kWingStyles[m_wingStyleIndex].id;
+        m_wingStyle = wings::kWingDesigns[m_wingStyleIndex].id;
     }
 }
 

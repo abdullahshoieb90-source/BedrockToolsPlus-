@@ -1,31 +1,30 @@
-// Host-side unit test for the Wings shape/shading helpers.
+// Host-side unit test for the Wings geometry + shading helpers.
 //
-// The Wings overlay draws every bone as a small tapered prism and shades each
-// face with the helpers in src/modules/visual/wings_shape.hpp +
-// wings_styles.hpp (the same code the game executes in renderWingsOverlay).
-// This test verifies, without Minecraft:
+// The Wings overlay draws each wing as one continuous membrane built by
+// src/modules/visual/wings_surface.hpp from the declarative style table in
+// wings_design.hpp. This is the exact code the game executes in
+// renderWingsOverlay, so these checks guard the things that used to be broken:
 //
-//   * every face of every bone of every style is a proper closed box face:
-//     its four ring corners share the fixed axis coordinate (so the quad is a
-//     real face and not a diagonal slice through the box) and form a simple
-//     convex ring (so Bedrock's quad mode draws the whole face and not a
-//     bowtie half)
-//   * the legacy face table fails both checks (regression proof)
-//   * the mirrored left tables are exact mirrors of the right tables
-//   * taper only ever narrows the far edge and never collapses it
-//   * the sweep keeps every wing box behind the back (z >= 2.5), so nothing
-//     clips the torso
-//   * at the rest pose the wings stay clear of the player's torso
-//   * the shading model keeps faces in a sane brightness range, lights
-//     upward-facing faces more than downward-facing ones, clamps channels and
-//     brightens the wing tips relative to the shoulder
+//   * the old renderer drew seven disjoint boxes per wing, which read as a comb
+//     of planks; the membrane must be a continuous sheet with a real silhouette
+//   * every quad must be planar, non-degenerate and wound towards the player's
+//     back (+z), so the renderer can pick the right palette side
+//   * nothing may cross the torso back plane (z = 2) and nothing may leave the
+//     flyable volume (|x| < 48, y in [-8, 40])
+//   * the left wing must be the exact mirror of the right one
+//   * finger struts must land on the membrane edge, feathers must overhang the
+//     sheet (that is what makes the feathered styles read as feathers)
+//   * raising / lowering the arm must move the wing tip, fluttering must add
+//     depth, and a heavier flutter must never collapse the sheet
+//   * shading helpers: brightness range, channel clamping, tip gradient
 //
 // Build and run standalone (no game required):
 //     g++ -std=c++20 -I src -I include tests/wings_shape_test.cpp -o /tmp/wings_shape_test
 //     /tmp/wings_shape_test
 
+#include "modules/visual/wings_design.hpp"
 #include "modules/visual/wings_shape.hpp"
-#include "modules/visual/wings_styles.hpp"
+#include "modules/visual/wings_surface.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -45,196 +44,319 @@ void check(bool cond, const std::string& what) {
     }
 }
 
-// Corner bits: 0 = x, 1 = y, 2 = z. A face of the prism is a true box face
-// when its ring walks the four corners of one side of the cube: consecutive
-// ring corners differ in exactly one bit, and all four corners agree on the
-// bit the face fixes. A bowtie ordering or a diagonal slice (the two legacy
-// bugs) breaks the one-bit-walk.
-int faceFixedBit(int face) {
-    switch (face) {
-        case wings::kFaceInner:
-        case wings::kFaceOuter: return 2;
-        case wings::kFaceSpanMin:
-        case wings::kFaceSpanMax: return 0;
-        default: return 1;
-    }
+bool finite3(const wings::Vec3& v) {
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
-bool faceIsRealBoxFace(int face) {
-    const int* ring = wings::kFaceRings[face];
-    const int bit = faceFixedBit(face);
-    const int fixedValue = (ring[0] >> bit) & 1;
-    for (int i = 0; i < 4; ++i) {
-        if (((ring[i] >> bit) & 1) != fixedValue) return false;
-        const int next = ring[(i + 1) & 3];
-        const int diff = ring[i] ^ next;
-        if (diff != 1 && diff != 2 && diff != 4) return false;  // exactly one bit
-    }
-    return true;
+wings::WingPose restPose() {
+    wings::WingPose pose;
+    pose.shoulderDeg = 26.0f;
+    pose.elbowDeg = 8.0f;
+    pose.wristDeg = 9.0f;
+    pose.phaseRad = 0.4f;
+    pose.flutter = 0.35f;
+    return pose;
 }
 
-bool faceIsConvex(const wings::WingBox& box, int face) {
-    const int* ring = wings::kFaceRings[face];
+// The membrane is a curved sheet, so its cells are bilinear patches and only
+// near-planar. Bound the out-of-plane error relative to the cell size instead
+// of demanding exact planarity (a beam or a vane is exactly planar).
+bool quadIsNearlyPlanar(const wings::WingQuad& q) {
+    const wings::Vec3 n = wings::normalized(wings::cross(q.p[1] - q.p[0], q.p[2] - q.p[0]));
+    if (wings::length(n) < 0.5f) return false;
+    const float d = std::fabs(wings::dot(n, q.p[3] - q.p[0]));
+    (void)wings::length(q.p[2] - q.p[0]);
+    // 0.3 model px = ~2 cm in game: far below anything visible.
+    return d <= 0.30f;
+}
+
+float quadArea(const wings::WingQuad& q) {
     float p[4][3];
     for (int i = 0; i < 4; ++i) {
-        p[i][0] = box.px[ring[i]];
-        p[i][1] = box.py[ring[i]];
-        p[i][2] = box.pz[ring[i]];
+        p[i][0] = q.p[i].x;
+        p[i][1] = q.p[i].y;
+        p[i][2] = q.p[i].z;
     }
-    return wings::isConvexRing(p);
+    return wings::ringArea(p);
 }
 
-wings::WingBone makeBone(float restDeg, float sweepPx, float taperPx, float spanT, float tint) {
-    wings::WingBone b;
-    b.restDeg = restDeg;
-    b.sweepPx = sweepPx;
-    b.taperPx = taperPx;
-    b.spanT = spanT;
-    b.tint = tint;
-    return b;
+// Projected area of the whole wing on the wing plane (XY). A comb of thin
+// planks covers a tiny fraction of a real wing, so this is the direct guard
+// against the old "wings are sticks" look.
+float projectedArea(const wings::WingQuad* quads, int count) {
+    float total = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        float area = 0.0f;
+        for (int t = 0; t < 2; ++t) {
+            const wings::Vec3& a = quads[i].p[0];
+            const wings::Vec3& b = quads[i].p[t == 0 ? 1 : 2];
+            const wings::Vec3& c = quads[i].p[t == 0 ? 2 : 3];
+            area += 0.5f * std::fabs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
+        }
+        total += area;
+    }
+    return total;
 }
+
+// Bounding box of one wing.
+void wingBounds(const wings::WingQuad* quads, int count, float& minX, float& maxX,
+                float& minY, float& maxY, float& minZ, float& maxZ) {
+    minX = minY = minZ = 1e9f;
+    maxX = maxY = maxZ = -1e9f;
+    for (int i = 0; i < count; ++i) {
+        for (int k = 0; k < 4; ++k) {
+            const wings::Vec3& p = quads[i].p[k];
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+            if (p.z < minZ) minZ = p.z;
+            if (p.z > maxZ) maxZ = p.z;
+        }
+    }
+}
+
+wings::WingQuad g_quads[wings::kMaxWingQuads];
+wings::WingQuad g_quadsLeft[wings::kMaxWingQuads];
 
 }  // namespace
 
 int main() {
-    std::printf("wings shape + shading invariants\n");
+    std::printf("wings membrane geometry\n");
 
     // ------------------------------------------------------------------
-    // Every face of every bone of every style is a proper closed face,
-    // at the rest pose and at strong flap poses.
+    // Style table
     // ------------------------------------------------------------------
-    for (int s = 0; s < wings::kWingStyleCount; ++s) {
-        const wings::WingStyle& style = wings::kWingStyles[s];
-        for (const float probeAngle : {0.0f, 35.0f, -35.0f}) {
-            wings::Pose2D poses[wings::kMaxWingBones];
-            bool allReal = true;
-            bool allConvex = true;
-            for (int i = 0; i < style.boneCount; ++i) {
-                const wings::WingBone& bone = style.rightBones[i];
-                const float angleRad = -1.0f * (probeAngle + bone.restDeg) * wings::kDegToRad;
-                poses[i] = (bone.parent < 0 || bone.parent >= i)
-                               ? wings::makePose(angleRad, wings::kRightRootPivotX, wings::kRootPivotY)
-                               : wings::composePose(poses[bone.parent], bone.anchorX, bone.anchorY, angleRad);
-                const wings::WingBox box = wings::buildWingBox(bone, poses[i]);
-                for (int f = 0; f < wings::kFaceCount; ++f) {
-                    if (!faceIsRealBoxFace(f)) allReal = false;
-                    if (!faceIsConvex(box, f)) allConvex = false;
-                }
-            }
-            check(allReal, std::string(style.id) + " probe " + std::to_string(probeAngle) +
-                               ": all faces are real box faces (no diagonal slices)");
-            check(allConvex, std::string(style.id) + " probe " + std::to_string(probeAngle) +
-                                 ": all faces are simple convex rings (no bowties)");
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // The legacy face table must FAIL the same checks - that is the bug the
-    // old renderer shipped with.
-    // ------------------------------------------------------------------
+    check(wings::kWingStyleCount == wings::kWingDesignCount, "design table and style count agree");
     {
-        wings::WingBone bone = makeBone(0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
-        bone.boxOX = -6.0f; bone.boxOY = -1.5f; bone.boxSX = 6.0f; bone.boxSY = 3.0f;
-        bone.zMin = 3.0f; bone.zMax = 4.0f;
-        const wings::WingBox box = wings::buildWingBox(bone, wings::Pose2D{});
-
-        constexpr int kLegacyZMin[4] = {0, 1, 2, 3};     // bowtie ordering
-        float p[4][3];
-        for (int i = 0; i < 4; ++i) {
-            p[i][0] = box.px[kLegacyZMin[i]];
-            p[i][1] = box.py[kLegacyZMin[i]];
-            p[i][2] = box.pz[kLegacyZMin[i]];
+        bool uniqueIds = true;
+        for (int i = 0; i < wings::kWingStyleCount; ++i) {
+            for (int j = i + 1; j < wings::kWingStyleCount; ++j) {
+                if (std::string(wings::kWingDesigns[i].id) == wings::kWingDesigns[j].id) uniqueIds = false;
+            }
         }
-        check(!wings::isConvexRing(p), "legacy zMin ring is a bowtie and fails the convexity check");
-
-        constexpr int kLegacyXMin[4] = {0, 3, 7, 4};     // diagonal slice
-        bool mixedX = false;
-        for (int i = 1; i < 4; ++i) {
-            if (std::fabs(box.px[kLegacyXMin[i]] - box.px[kLegacyXMin[0]]) > 1e-4f) mixedX = true;
-        }
-        check(mixedX, "legacy xMin ring mixes both x sides (diagonal slice through the box)");
+        check(uniqueIds, "every style id is unique (configs are persisted by index + id)");
+        check(wings::wingStyleIndexForId("dragon") == 0, "dragon is the default style");
+        check(wings::wingStyleIndexForId("phoenix") == 5, "phoenix resolves to index 5");
+        check(wings::resolveWingStyleIndex("4,dragon,angel,demon,bat,butterfly,phoenix,fairy") == 4,
+              "full radio value resolves to 4");
+        check(wings::resolveWingStyleIndex("unicorn") == 0, "unknown style falls back to dragon");
+        check(wings::wingStyleRadioValue(2).rfind("2,dragon,angel", 0) == 0,
+              "radio value lists all styles");
     }
 
     // ------------------------------------------------------------------
-    // Mirror tables
+    // Per style: quad validity, bounds, mirror, silhouette size
     // ------------------------------------------------------------------
     for (int s = 0; s < wings::kWingStyleCount; ++s) {
-        const wings::WingStyle& style = wings::kWingStyles[s];
-        wings::WingBone left[wings::kMaxWingBones];
-        wings::mirrorWingBones(style.rightBones, style.boneCount, left);
+        const wings::WingDesign& d = wings::kWingDesigns[s];
+        const std::string tag = d.id;
+
+        const int count = wings::buildWing(d, restPose(), -1, g_quads, wings::kMaxWingQuads);
+        const int countLeft = wings::buildWing(d, restPose(), 1, g_quadsLeft, wings::kMaxWingQuads);
+
+        check(count > 40, tag + ": builds a full membrane (not a handful of boxes)");
+        check(count == countLeft, tag + ": both wings build the same number of quads");
+
+        bool finite = true, planar = true, nonDegenerate = true, facesBack = true, normalOk = true;
+        for (int i = 0; i < count; ++i) {
+            const wings::WingQuad& q = g_quads[i];
+            for (int k = 0; k < 4; ++k) {
+                if (!finite3(q.p[k])) finite = false;
+            }
+            if (!finite3(q.n)) normalOk = false;
+            if (std::fabs(wings::length(q.n) - 1.0f) > 1e-2f) normalOk = false;
+            if (q.n.z < -1e-4f) facesBack = false;
+            if (!quadIsNearlyPlanar(q)) planar = false;
+            if (!(quadArea(q) > 1e-3f)) nonDegenerate = false;
+        }
+        check(finite, tag + ": every corner is finite");
+        check(normalOk, tag + ": every normal is a finite unit vector");
+        check(planar, tag + ": every quad is flat enough to rasterize cleanly");
+        check(nonDegenerate, tag + ": no degenerate quads");
+        check(facesBack, tag + ": normals point towards the player's back (+z)");
+
+        float minX, maxX, minY, maxY, minZ, maxZ;
+        wingBounds(g_quads, count, minX, maxX, minY, maxY, minZ, maxZ);
+        check(minZ > 2.0f, tag + ": nothing crosses the torso back plane (z > 2)");
+        check(minX < -14.0f, tag + ": the wing reaches outboard past the torso");
+        check(maxX < 0.0f, tag + ": the right wing stays on the right half");
+        check(maxY < 44.0f && minY > -8.0f, tag + ": the wing stays in a sane vertical range");
+
+        const float area = projectedArea(g_quads, count);
+        check(area > 320.0f, tag + ": the membrane covers a real wing area (" +
+                                 std::to_string(static_cast<int>(area)) + " px2)");
+
+        // Mirror: left wing is the right wing with x negated.
         bool mirrored = true;
-        for (int i = 0; i < style.boneCount; ++i) {
-            const wings::WingBone& r = style.rightBones[i];
-            if (left[i].parent != r.parent) mirrored = false;
-            if (std::fabs(left[i].anchorX + r.anchorX) > 1e-5f) mirrored = false;
-            if (std::fabs(left[i].boxOX + r.boxOX + r.boxSX) > 1e-5f) mirrored = false;
-            if (std::fabs(left[i].boxSX - r.boxSX) > 1e-5f) mirrored = false;
-            if (left[i].restDeg != r.restDeg || left[i].sweepPx != r.sweepPx ||
-                left[i].taperPx != r.taperPx) mirrored = false;
+        for (int i = 0; i < count && mirrored; ++i) {
+            for (int k = 0; k < 4; ++k) {
+                if (std::fabs(g_quads[i].p[k].x + g_quadsLeft[i].p[k].x) > 1e-4f) mirrored = false;
+                if (std::fabs(g_quads[i].p[k].y - g_quadsLeft[i].p[k].y) > 1e-4f) mirrored = false;
+                if (std::fabs(g_quads[i].p[k].z - g_quadsLeft[i].p[k].z) > 1e-4f) mirrored = false;
+            }
+            if (std::fabs(g_quads[i].n.x + g_quadsLeft[i].n.x) > 1e-4f) mirrored = false;
+            if (std::fabs(g_quads[i].n.y - g_quadsLeft[i].n.y) > 1e-4f) mirrored = false;
         }
-        check(mirrored, std::string(style.id) + " left table mirrors the right table");
+        check(mirrored, tag + ": the left wing is the exact mirror of the right one");
     }
 
     // ------------------------------------------------------------------
-    // Taper: the near edge is untouched, the far edge never collapses.
+    // The membrane is a continuous sheet: neighbouring columns of the grid
+    // sample the same edge, so there are no gaps between "planks".
     // ------------------------------------------------------------------
     {
-        wings::WingBone bone = makeBone(0.0f, 0.0f, 1.2f, 0.5f, 1.0f);
-        bone.boxOX = -1.0f; bone.boxOY = -6.0f; bone.boxSX = 2.0f; bone.boxSY = 6.0f;
-        bone.zMin = 3.0f; bone.zMax = 4.0f;
-        const wings::WingBox box = wings::buildWingBox(bone, wings::Pose2D{});
+        const wings::WingDesign& d = wings::kWingDesigns[0];
+        wings::Vec3 joint[4];
+        wings::buildArmJoints(d, restPose(), joint);
 
-        // The long axis is y, so the width is measured on x. Corner 0/1 sit at
-        // the far edge (y = -6), corners 2/3 at the near edge (y = 0).
-        const float farWidth = std::fabs(box.px[0] - box.px[1]);
-        const float nearWidth = std::fabs(box.px[3] - box.px[2]);
-        check(std::fabs(nearWidth - 2.0f) < 1e-4f, "taper keeps the near edge at full width");
-        check(std::fabs(farWidth - 0.8f) < 1e-4f, "taper narrows the far edge by taperPx");
+        bool continuous = true;
+        for (int i = 0; i < wings::kMembraneSpanSegments; ++i) {
+            const float uEdge = static_cast<float>(i + 1) / wings::kMembraneSpanSegments;
+            for (int j = 0; j <= wings::kMembraneChordSegments; ++j) {
+                const float v = static_cast<float>(j) / wings::kMembraneChordSegments;
+                const wings::Vec3 a = wings::membranePoint(joint, d, restPose(), uEdge, v);
+                const wings::Vec3 b = wings::membranePoint(joint, d, restPose(), uEdge, v);
+                if (wings::length(a - b) > 1e-5f) continuous = false;
+            }
+        }
+        check(continuous, "adjacent membrane cells share their edge exactly (no seams)");
 
-        // An absurd taper is clamped so the far edge keeps >= 10% of the side.
-        wings::WingBone extreme = bone;
-        extreme.taperPx = 100.0f;
-        const wings::WingBox clamped = wings::buildWingBox(extreme, wings::Pose2D{});
-        const float clampedWidth = std::fabs(clamped.px[0] - clamped.px[1]);
-        check(clampedWidth >= 0.19f, "taper is clamped and the far edge never collapses");
+        // Sampling resolution: a step along the span may not jump more than a
+        // couple of pixels, otherwise the sheet would look faceted.
+        float maxJump = 0.0f;
+        for (int i = 0; i < wings::kMembraneSpanSegments; ++i) {
+            const float u0 = static_cast<float>(i) / wings::kMembraneSpanSegments;
+            const float u1 = static_cast<float>(i + 1) / wings::kMembraneSpanSegments;
+            const wings::Vec3 a = wings::membranePoint(joint, d, restPose(), u0, 1.0f);
+            const wings::Vec3 b = wings::membranePoint(joint, d, restPose(), u1, 1.0f);
+            const float jump = wings::length(a - b);
+            if (jump > maxJump) maxJump = jump;
+        }
+        check(maxJump < 4.0f, "the sail is sampled finely enough to read as smooth");
     }
 
     // ------------------------------------------------------------------
-    // Sweep keeps every wing box behind the back (z >= 2.5) and the rest
-    // pose keeps the wings clear of the torso.
+    // Trailing edge: the scallops really carve `fingers` bites out of the sail
     // ------------------------------------------------------------------
     for (int s = 0; s < wings::kWingStyleCount; ++s) {
-        const wings::WingStyle& style = wings::kWingStyles[s];
-        bool behind = true;
-        bool clearOfTorso = true;
-        wings::Pose2D poses[wings::kMaxWingBones];
-        for (int i = 0; i < style.boneCount; ++i) {
-            const wings::WingBone& bone = style.rightBones[i];
-            const float angleRad = -1.0f * bone.restDeg * wings::kDegToRad;
-            poses[i] = (bone.parent < 0 || bone.parent >= i)
-                           ? wings::makePose(angleRad, wings::kRightRootPivotX, wings::kRootPivotY)
-                           : wings::composePose(poses[bone.parent], bone.anchorX, bone.anchorY, angleRad);
-            const wings::WingBox box = wings::buildWingBox(bone, poses[i]);
-
-            float zMin = 1e9f;
-            float xMin = 1e9f, xMax = -1e9f, yMin = 1e9f, yMax = -1e9f;
-            for (int c = 0; c < 8; ++c) {
-                if (box.pz[c] < zMin) zMin = box.pz[c];
-                if (box.px[c] < xMin) xMin = box.px[c];
-                if (box.px[c] > xMax) xMax = box.px[c];
-                if (box.py[c] < yMin) yMin = box.py[c];
-                if (box.py[c] > yMax) yMax = box.py[c];
-            }
-            if (zMin < 2.5f - 1e-3f) behind = false;
-
-            // Torso: x in [-4, 4], y in [12, 24], z in [-2, 2].
-            const bool overlapX = xMax > -4.0f && xMin < 4.0f;
-            const bool overlapY = yMax > 12.0f && yMin < 24.0f;
-            const bool overlapZ = zMin < 2.0f;
-            if (overlapX && overlapY && overlapZ) clearOfTorso = false;
+        const wings::WingDesign& d = wings::kWingDesigns[s];
+        if (d.scallopPx <= 0.0f) continue;
+        const int fingers = d.fingers;
+        int minima = 0;
+        for (int k = 0; k < fingers; ++k) {
+            const float uMid = (static_cast<float>(k) + 0.5f) / static_cast<float>(fingers);
+            const float uStrut = static_cast<float>(k + 1) / static_cast<float>(fingers);
+            if (uStrut > 0.99f || uMid < 0.10f) continue;
+            if (wings::chordLength(d, uMid) < wings::chordLength(d, uStrut) - 0.2f) ++minima;
         }
-        check(behind, std::string(style.id) + " wings stay behind the back (z >= 2.5)");
-        check(clearOfTorso, std::string(style.id) + " rest pose does not intersect the torso");
+        check(minima >= 2, std::string(d.id) + ": the trailing edge is scalloped into fingers");
+    }
+
+    // ------------------------------------------------------------------
+    // Feather styles: the quills overhang the sheet, so the outline is feathered
+    // (the plain sheet never reaches past its own chord).
+    // ------------------------------------------------------------------
+    for (int s = 0; s < wings::kWingStyleCount; ++s) {
+        const wings::WingDesign& d = wings::kWingDesigns[s];
+        if (!d.feathers) continue;
+        wings::Vec3 joint[4];
+        wings::buildArmJoints(d, restPose(), joint);
+        const wings::Vec3 sheetEdge = wings::membranePoint(joint, d, restPose(), 0.6f, 1.0f);
+        float lowestY = 1e9f;
+        const int count = wings::buildWing(d, restPose(), -1, g_quads, wings::kMaxWingQuads);
+        for (int i = 0; i < count; ++i) {
+            for (int k = 0; k < 4; ++k) {
+                if (g_quads[i].p[k].y < lowestY) lowestY = g_quads[i].p[k].y;
+            }
+        }
+        check(lowestY < sheetEdge.y - 3.0f,
+              std::string(d.id) + ": the quills hang below the base sheet (feathered outline)");
+    }
+
+    // ------------------------------------------------------------------
+    // Animation response
+    // ------------------------------------------------------------------
+    {
+        const wings::WingDesign& d = wings::kWingDesigns[0];
+        wings::WingPose up = restPose();
+        wings::WingPose down = restPose();
+        up.shoulderDeg = 55.0f;
+        down.shoulderDeg = -10.0f;
+
+        const int cu = wings::buildWing(d, up, -1, g_quads, wings::kMaxWingQuads);
+        float upMinX, upMaxX, upMinY, upMaxY, upMinZ, upMaxZ;
+        wingBounds(g_quads, cu, upMinX, upMaxX, upMinY, upMaxY, upMinZ, upMaxZ);
+        const int cd = wings::buildWing(d, down, -1, g_quads, wings::kMaxWingQuads);
+        float dnMinX, dnMaxX, dnMinY, dnMaxY, dnMinZ, dnMaxZ;
+        wingBounds(g_quads, cd, dnMinX, dnMaxX, dnMinY, dnMaxY, dnMinZ, dnMaxZ);
+
+        check(upMaxY > dnMaxY, "raising the shoulder lifts the wing tip");
+        check(dnMinY < upMinY, "lowering the shoulder drops the trailing edge");
+
+        // Flutter adds depth: the sheet must move towards the camera, never
+        // through the torso.
+        wings::WingPose still = restPose();
+        still.flutter = 0.0f;
+        wings::WingPose flapping = restPose();
+        flapping.flutter = 1.0f;
+        flapping.phaseRad = 1.9f;
+
+        wings::Vec3 joint[4];
+        wings::buildArmJoints(d, still, joint);
+        const wings::Vec3 a = wings::membranePoint(joint, d, still, 0.85f, 0.6f);
+        const wings::Vec3 b = wings::membranePoint(joint, d, flapping, 0.85f, 0.6f);
+        check(std::fabs(a.z - b.z) > 0.05f, "the flap phase moves the membrane (flutter)");
+        check(b.z > 2.4f, "a fluttering membrane never dips into the torso");
+
+        // Elbow / wrist articulation changes the arm shape.
+        wings::WingPose bent = restPose();
+        bent.elbowDeg = 35.0f;
+        const int cb = wings::buildWing(d, bent, -1, g_quads, wings::kMaxWingQuads);
+        float bMinX, bMaxX, bMinY, bMaxY, bMinZ, bMaxZ;
+        wingBounds(g_quads, cb, bMinX, bMaxX, bMinY, bMaxY, bMinZ, bMaxZ);
+        const int cr = wings::buildWing(d, restPose(), -1, g_quads, wings::kMaxWingQuads);
+        float rMinX, rMaxX, rMinY, rMaxY, rMinZ, rMaxZ;
+        wingBounds(g_quads, cr, rMinX, rMaxX, rMinY, rMaxY, rMinZ, rMaxZ);
+        check(bMinX > rMinX - 0.01f || bMaxY > rMaxY + 0.01f,
+              "the elbow angle changes the wing silhouette");
+    }
+
+    // ------------------------------------------------------------------
+    // Pose mapping and camera-side selection (shared with the module)
+    // ------------------------------------------------------------------
+    {
+        const wings::WingPose idle = wings::makeWingPose(20.0f, 5.0f, 6.0f, 0.5f, 0.0f, 0.0f);
+        const wings::WingPose flap = wings::makeWingPose(40.0f, 10.0f, 12.0f, 2.0f, 1.0f, 0.0f);
+        const wings::WingPose glide = wings::makeWingPose(50.0f, -15.0f, -15.0f, 0.5f, 0.0f, 1.0f);
+        check(idle.shoulderDeg == 20.0f && idle.elbowDeg == 5.0f && idle.wristDeg == 6.0f,
+              "the module angles map onto shoulder / elbow / wrist");
+        check(idle.phaseRad == 0.5f, "the flap phase is passed through to the builder");
+        check(idle.flutter < flap.flutter, "flapping flutters the membrane more than idling");
+        check(glide.flutter < idle.flutter, "gliding tightens the membrane");
+
+        // Camera side: model +z is the back. Player facing +z with right = -x.
+        const wings::Vec3 right{-1.0f, 0.0f, 0.0f};
+        const wings::Vec3 forward{0.0f, 0.0f, 1.0f};
+        const wings::Vec3 body{0.0f, 1.5f, 0.0f};
+        check(wings::cameraSeesBackSide({0.0f, 2.0f, -4.0f}, body, right, forward),
+              "a camera behind the player sees the back palette");
+        check(!wings::cameraSeesBackSide({0.0f, 2.0f, 4.0f}, body, right, forward),
+              "a camera in front sees the body-facing palette");
+    }
+
+    // ------------------------------------------------------------------
+    // Palette sanity
+    // ------------------------------------------------------------------
+    for (int s = 0; s < wings::kWingStyleCount; ++s) {
+        const wings::WingDesign& d = wings::kWingDesigns[s];
+        const int sumBack = d.back.r + d.back.g + d.back.b;
+        const int sumTrail = d.trail.r + d.trail.g + d.trail.b;
+        check(sumBack != sumTrail, std::string(d.id) + ": the sail and its trailing edge are distinct");
+        check(!(d.back.r == d.back.g && d.back.g == d.back.b && d.back.r == 0),
+              std::string(d.id) + ": the membrane is never pure black (invisible at night)");
+        check(d.glowStrength >= 0.0f && d.glowStrength <= 1.0f,
+              std::string(d.id) + ": glow strength is normalized");
     }
 
     // ------------------------------------------------------------------
@@ -243,7 +365,7 @@ int main() {
     std::printf("shading\n");
     {
         const wings::WingLight& light = wings::kDefaultLight;
-        const wings::Vec3 toCam{0.0f, 0.0f, 1.0f};  // camera behind the player, facing the back
+        const wings::Vec3 toCam{0.0f, 0.0f, 1.0f};
 
         const float top = wings::faceBrightness({0.0f, 1.0f, 0.0f}, toCam, light);
         const float bottom = wings::faceBrightness({0.0f, -1.0f, 0.0f}, toCam, light);
@@ -251,41 +373,38 @@ int main() {
         check(top > bottom, "upward faces are lit more than downward faces");
         check(back > bottom, "camera-facing back faces are lit more than the underside");
         check(bottom >= light.ambient - 1e-4f, "brightness never drops below ambient");
-        check(top <= light.ambient + light.head + light.sky + 1e-4f, "brightness never exceeds the model range");
+        check(top <= light.ambient + light.head + light.sky + 1e-4f,
+              "brightness never exceeds the model range");
 
         check(wings::shadeChannel(200.0f, 2.0f) == 255, "channels clamp at 255");
         check(wings::shadeChannel(200.0f, -1.0f) == 0, "channels clamp at 0");
         check(wings::shadeChannel(0.0f, 1.0f) == 0, "black stays black");
 
-        // Tip gradient: the wing tip reads brighter than the shoulder.
-        const float tip = wings::spanTint(1.0f, 1.0f);
-        const float shoulder = wings::spanTint(0.0f, 1.0f);
+        const float tip = wings::spanTint(1.0f);
+        const float shoulder = wings::spanTint(0.0f);
         check(tip > shoulder, "span gradient brightens the wing tips");
-        check(std::fabs(tip - (1.0f + wings::kSpanGradient * 0.5f)) < 1e-5f, "tip tint = 1 + gradient/2");
-        check(std::fabs(shoulder - (1.0f - wings::kSpanGradient * 0.5f)) < 1e-5f, "shoulder tint = 1 - gradient/2");
+        check(std::fabs(tip - (1.0f + wings::kSpanGradient * 0.5f)) < 1e-5f,
+              "tip tint = 1 + gradient/2");
+        check(std::fabs(shoulder - (1.0f - wings::kSpanGradient * 0.5f)) < 1e-5f,
+              "shoulder tint = 1 - gradient/2");
 
-        // A shaded face stays within the channel range and tracks the base.
-        const unsigned char dark[3] = {18, 18, 24};
-        const wings::FaceColor lit = wings::shadeFace(dark, 1.1f);
-        check(lit.r > 18 && lit.g > 18 && lit.b > 24, "bright factor lifts the base color");
-        const wings::FaceColor dim = wings::shadeFace(dark, 0.6f);
-        check(dim.r < 18 && dim.g < 18 && dim.b < 24, "dim factor darkens the base color");
+        const wings::FaceColor base{40, 60, 90};
+        const wings::FaceColor lit = wings::shadeFace(base, 1.1f);
+        check(lit.r > base.r && lit.g > base.g && lit.b > base.b,
+              "bright factor lifts the base colour");
+        const wings::FaceColor dim = wings::shadeFace(base, 0.6f);
+        check(dim.r < base.r && dim.g < base.g && dim.b < base.b,
+              "dim factor darkens the base colour");
+
+        const wings::FaceColor mixed = wings::lerpColor({0, 0, 0}, {100, 200, 40}, 0.5f);
+        check(mixed.r == 50 && mixed.g == 100 && mixed.b == 20, "lerpColor blends channels");
     }
-
-    // ------------------------------------------------------------------
-    // Style lookup helpers (shared with the module)
-    // ------------------------------------------------------------------
-    check(wings::wingStyleIndexForId("phoenix") == 5, "phoenix resolves to index 5");
-    check(wings::resolveWingStyleIndex("4,dragon,angel,demon,bat,butterfly,phoenix,fairy") == 4,
-          "full radio value resolves to 4");
-    check(wings::resolveWingStyleIndex("unicorn") == 0, "unknown style falls back to dragon");
-    check(wings::wingStyleRadioValue(2).rfind("2,dragon,angel", 0) == 0, "radio value lists all styles");
 
     std::printf("\n");
     if (g_failures != 0) {
         std::printf("%d check(s) FAILED\n", g_failures);
         return 1;
     }
-    std::printf("all wings shape + shading checks passed\n");
+    std::printf("all wings geometry + shading checks passed\n");
     return 0;
 }

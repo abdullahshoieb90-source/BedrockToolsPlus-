@@ -1,27 +1,24 @@
 #pragma once
 
-// Pure geometry + shading helpers for the Wings module.
+// Pure math + shading helpers for the Wings module.
 //
-// The world-space overlay draws every wing bone as a small prism with the
-// Bedrock tessellator. Everything that decides *where* those prisms sit and
-// *how bright* each of their faces is lives here, so it compiles and can be
-// unit-tested on the host without Minecraft (tests/wings_shape_test.cpp) and
-// so tools/wings_preview.cpp can render the exact same shapes offline.
+// Everything that has no Minecraft dependency lives here so it compiles and can
+// be unit-tested on the host (tests/wings_shape_test.cpp) and so
+// tools/wings_preview.cpp can render the exact same geometry the game draws.
 //
-//   Pose2D        2D transform of a bone inside the wing plane
-//   WingBone      one bone: parent, anchor, box, rest fan, sweep, taper
-//   buildWingBox  the 8 prism corners in Bedrock model pixels
-//   kFaceRings    ring-ordered corner indices of the six faces
-//   faceBrightness  flat per-face shading used by the overlay
+//   Vec3 / FaceColor   small value types
+//   colour helpers     lerp, channel clamping, shading
+//   WingLight          the cosmetic overlay lighting model
+//   model -> world     the player-yaw basis mapping the overlay uses
+//   ring helpers       quad validation used by the host tests
 //
 // Coordinate conventions (identical to Bedrock model space, 16 px = 1 block):
 //   +x  the player's left  (the right wing spans towards -x)
 //   +y  up
 //   +z  backwards - the back/cape side; the torso spans z in [-2, +2]
 //
-// A bone only ever rotates inside the wing plane (around the model z axis),
-// so the pose is a plain 2D rotation + translation and the box keeps a
-// constant z range.
+// The wing surface itself is built in wings_surface.hpp on top of these
+// primitives; the selectable styles live in wings_design.hpp.
 
 #include <cmath>
 #include <cstddef>
@@ -44,6 +41,10 @@ inline Vec3 operator*(const Vec3& a, float k) { return {a.x * k, a.y * k, a.z * 
 inline float dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 inline float length(const Vec3& a) { return std::sqrt(dot(a, a)); }
 
+inline Vec3 cross(const Vec3& a, const Vec3& b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
 // Returns the zero vector for a degenerate input so callers never divide by
 // zero while rendering.
 inline Vec3 normalized(const Vec3& a) {
@@ -52,175 +53,92 @@ inline Vec3 normalized(const Vec3& a) {
     return {a.x / len, a.y / len, a.z / len};
 }
 
-// ---------------------------------------------------------------------------
-// 2D pose inside the wing plane
-// ---------------------------------------------------------------------------
+inline float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+inline float lerpFloat(float a, float b, float t) { return a + (b - a) * t; }
 
-struct Pose2D {
-    float c = 1.0f;   // cos of the accumulated rotation
-    float s = 0.0f;   // sin of the accumulated rotation
-    float tx = 0.0f;  // pivot position in model px
-    float ty = 0.0f;
-};
-
-inline Pose2D makePose(float angleRad, float pivotX, float pivotY) {
-    return {std::cos(angleRad), std::sin(angleRad), pivotX, pivotY};
-}
-
-// Child pose: rotate around the parent frame, then offset by the anchor.
-inline Pose2D composePose(const Pose2D& parent, float anchorX, float anchorY, float angleRad) {
-    const float rc = std::cos(angleRad);
-    const float rs = std::sin(angleRad);
-    Pose2D out;
-    out.c = parent.c * rc - parent.s * rs;
-    out.s = parent.s * rc + parent.c * rs;
-    out.tx = parent.c * anchorX - parent.s * anchorY + parent.tx;
-    out.ty = parent.s * anchorX + parent.c * anchorY + parent.ty;
-    return out;
-}
-
-inline void transformPoint(const Pose2D& pose, float x, float y, float& outX, float& outY) {
-    outX = pose.c * x - pose.s * y + pose.tx;
-    outY = pose.s * x + pose.c * y + pose.ty;
+inline float smoothstep(float edge0, float edge1, float x) {
+    if (edge1 <= edge0) return x < edge0 ? 0.0f : 1.0f;
+    const float t = clamp01((x - edge0) / (edge1 - edge0));
+    return t * t * (3.0f - 2.0f * t);
 }
 
 // ---------------------------------------------------------------------------
-// Bone description
+// Colour
 // ---------------------------------------------------------------------------
 
-struct WingBone {
-    int parent = -1;                 // bone table index; -1 for the shoulder root
-    float anchorX = 0.0f;            // pivot offset from the parent pivot (px)
-    float anchorY = 0.0f;
-    float boxOX = 0.0f;              // box origin relative to the own pivot (px)
-    float boxOY = 0.0f;
-    float boxSX = 0.0f;              // box size on the wing plane (px)
-    float boxSY = 0.0f;
-    float zMin = 0.0f;               // absolute model z of the box (px)
-    float zMax = 0.0f;
-
-    // --- Shape detail added on top of the plain box layout ---
-    // restDeg: rest-pose angle (deg, "raise positive") added to the animated
-    //   angle. Used to fan the feathers open and curl the wing tip so the
-    //   silhouette reads as a wing instead of a straight plank.
-    float restDeg = 0.0f;
-    // sweepPx: extra backwards offset of this bone's box, so the wing curves
-    //   away from the back towards its tips instead of lying in one plane.
-    float sweepPx = 0.0f;
-    // taperPx: the edge far from the bone pivot is narrowed by this many px,
-    //   turning the box into a tapered feather. Clamped so the far edge can
-    //   never collapse or flip (see buildWingBox).
-    float taperPx = 0.0f;
-    // spanT: 0 at the shoulder .. 1 at the wing tip; drives the tip gradient.
-    float spanT = 0.0f;
-    // tint: per-bone brightness multiplier, used to alternate neighbouring
-    //   feathers so they stay readable as separate feathers.
-    float tint = 1.0f;
-
-    const unsigned char* colOuter = nullptr;   // zMax face (faces away from the body)
-    const unsigned char* colInner = nullptr;   // zMin face (faces the body)
-    const unsigned char* colEdge = nullptr;    // x faces and the top face
-    const unsigned char* colBottom = nullptr;  // yMin face (feather tips highlight)
-    int angleIndex = 0;                        // 0=shoulder, 1=upper, 2=tip, 3..6=feathers
+struct FaceColor {
+    unsigned char r = 0;
+    unsigned char g = 0;
+    unsigned char b = 0;
 };
 
-// ---------------------------------------------------------------------------
-// Prism mesh (model px)
-// ---------------------------------------------------------------------------
-
-constexpr int kCornerCount = 8;
-constexpr int kFaceCount = 6;
-
-// Corner index bits: bit0 = box x side, bit1 = box y side, bit2 = z side.
-//   0 (x0,y0,zMin)  1 (x1,y0,zMin)  2 (x0,y1,zMin)  3 (x1,y1,zMin)
-//   4 (x0,y0,zMax)  5 (x1,y0,zMax)  6 (x0,y1,zMax)  7 (x1,y1,zMax)
-struct WingBox {
-    float px[kCornerCount];
-    float py[kCornerCount];
-    float pz[kCornerCount];
-};
-
-enum FaceSlot {
-    kFaceInner = 0,    // zMin - faces the body
-    kFaceOuter = 1,    // zMax - faces away from the body
-    kFaceSpanMin = 2,  // box x-min side
-    kFaceSpanMax = 3,  // box x-max side
-    kFaceBottom = 4,   // box y-min (feather tips)
-    kFaceTop = 5,      // box y-max
-};
-
-// Ring-ordered corner indices. Bedrock's quad primitive fans each quad from
-// its first vertex, so the four corners MUST walk around the face: a
-// Z-ordered list draws only half of the face and a mixed list draws a
-// diagonal slice through the box. Both happened with the old flat wing
-// faces, which is why the wings used to render as broken half-boxes.
-constexpr int kFaceRings[kFaceCount][4] = {
-    {0, 1, 3, 2},  // zMin
-    {4, 5, 7, 6},  // zMax
-    {0, 2, 6, 4},  // x min
-    {1, 5, 7, 3},  // x max
-    {0, 1, 5, 4},  // y min (bottom)
-    {2, 3, 7, 6},  // y max (top)
-};
-
-// Builds the eight prism corners of a bone in model px.
-inline WingBox buildWingBox(const WingBone& bone, const Pose2D& pose) {
-    const float lx[2] = {bone.boxOX, bone.boxOX + bone.boxSX};
-    const float ly[2] = {bone.boxOY, bone.boxOY + bone.boxSY};
-
-    // Taper the edge far from the bone pivot (the feather/segment tip) so the
-    // wing reads as a set of tapered feathers instead of a comb of bricks.
-    const float sizeX = std::fabs(bone.boxSX);
-    const float sizeY = std::fabs(bone.boxSY);
-    const bool longAxisX = sizeX >= sizeY;
-    const float shortSide = longAxisX ? sizeY : sizeX;
-    float inset = bone.taperPx * 0.5f;
-    if (!(inset > 0.0f)) inset = 0.0f;
-    const float maxInset = shortSide * 0.45f;  // the far edge always keeps >= 10%
-    if (inset > maxInset) inset = maxInset;
-    const float keep = (shortSide > 1e-4f) ? (shortSide - 2.0f * inset) / shortSide : 1.0f;
-
-    // "Far" = the end of the long axis that is further from the bone pivot.
-    const int farX = (std::fabs(lx[0]) >= std::fabs(lx[1])) ? 0 : 1;
-    const int farY = (std::fabs(ly[0]) >= std::fabs(ly[1])) ? 0 : 1;
-    const float midX = (lx[0] + lx[1]) * 0.5f;
-    const float midY = (ly[0] + ly[1]) * 0.5f;
-
-    float quadX[4], quadY[4];
-    for (int i = 0; i < 4; ++i) {
-        float x = lx[i & 1];
-        float y = ly[(i >> 1) & 1];
-        if (longAxisX) {
-            if ((i & 1) == farX) y = midY + (y - midY) * keep;
-        } else if (((i >> 1) & 1) == farY) {
-            x = midX + (x - midX) * keep;
-        }
-        transformPoint(pose, x, y, quadX[i], quadY[i]);
-    }
-
-    WingBox out{};
-    const float zLo = bone.zMin + bone.sweepPx;
-    const float zHi = bone.zMax + bone.sweepPx;
-    for (int i = 0; i < kCornerCount; ++i) {
-        out.px[i] = quadX[i & 3];
-        out.py[i] = quadY[i & 3];
-        out.pz[i] = ((i >> 2) & 1) ? zHi : zLo;
-    }
-    return out;
+inline unsigned char shadeChannel(float channel, float factor) {
+    const float v = channel * factor;
+    if (!(v > 0.0f)) return 0;
+    if (v >= 255.0f) return 255;
+    return static_cast<unsigned char>(v + 0.5f);
 }
 
-// Outward normal of a face in model space. The four side faces rotate with
-// the bone; the two flat faces always point along z.
-inline Vec3 faceNormalModel(int face, const Pose2D& pose) {
-    switch (face) {
-        case kFaceInner: return {0.0f, 0.0f, -1.0f};
-        case kFaceOuter: return {0.0f, 0.0f, 1.0f};
-        case kFaceSpanMin: return {-pose.c, -pose.s, 0.0f};
-        case kFaceSpanMax: return {pose.c, pose.s, 0.0f};
-        case kFaceBottom: return {pose.s, -pose.c, 0.0f};
-        default: return {-pose.s, pose.c, 0.0f};  // kFaceTop
-    }
+inline float channelToFloat(unsigned char c) { return static_cast<float>(c); }
+
+inline FaceColor shadeFace(const FaceColor& base, float brightness) {
+    return {
+        shadeChannel(channelToFloat(base.r), brightness),
+        shadeChannel(channelToFloat(base.g), brightness),
+        shadeChannel(channelToFloat(base.b), brightness),
+    };
 }
+
+inline FaceColor lerpColor(const FaceColor& a, const FaceColor& b, float t) {
+    const float k = clamp01(t);
+    return {
+        shadeChannel(lerpFloat(channelToFloat(a.r), channelToFloat(b.r), k), 1.0f),
+        shadeChannel(lerpFloat(channelToFloat(a.g), channelToFloat(b.g), k), 1.0f),
+        shadeChannel(lerpFloat(channelToFloat(a.b), channelToFloat(b.b), k), 1.0f),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Lighting
+// ---------------------------------------------------------------------------
+
+// Cosmetic-overlay lighting: a soft headlight plus a sky lift. It is view
+// dependent on purpose - the wings are drawn after the world as an overlay, so
+// they have to stay readable from every angle and never collapse into a black
+// silhouette when the sun is behind the player. Range is
+// [ambient, ambient + head + sky].
+struct WingLight {
+    float ambient = 0.56f;
+    float head = 0.30f;
+    float sky = 0.22f;
+};
+
+constexpr WingLight kDefaultLight{0.56f, 0.30f, 0.22f};
+
+// How much brighter the wing tips are than the shoulder (spanT 0 -> 1).
+constexpr float kSpanGradient = 0.18f;
+
+inline float faceBrightness(const Vec3& normal, const Vec3& toCamera, const WingLight& light) {
+    const Vec3 n = normalized(normal);
+    const Vec3 v = normalized(toCamera);
+    const float headTerm = dot(n, v);
+    const float skyTerm = n.y;
+    return light.ambient
+         + light.head * (headTerm > 0.0f ? headTerm : 0.0f)
+         + light.sky * (skyTerm > 0.0f ? skyTerm : 0.0f);
+}
+
+// Brightness multiplier on top of the face shading: a gentle gradient from
+// the shoulder to the wing tips.
+inline float spanTint(float spanT, float boneTint = 1.0f) {
+    const float t = spanT < 0.0f ? 0.0f : (spanT > 1.0f ? 1.0f : spanT);
+    return boneTint * (1.0f + kSpanGradient * (t - 0.5f));
+}
+
+// ---------------------------------------------------------------------------
+// Model -> world
+// ---------------------------------------------------------------------------
 
 // Maps a model-space direction into the world using the player's yaw basis
 // (model +x is the player's left, model +z is their back).
@@ -246,65 +164,6 @@ inline Vec3 modelPointToWorld(float px, float py, float pz, const Vec3& origin,
 }
 
 // ---------------------------------------------------------------------------
-// Shading
-// ---------------------------------------------------------------------------
-
-// Cosmetic-overlay lighting: a soft headlight plus a sky lift. It is view
-// dependent on purpose - the wings are drawn after the world as an overlay,
-// so they have to stay readable from every angle and never collapse into a
-// black silhouette when the sun is behind the player. Range is
-// [ambient, ambient + head + sky].
-struct WingLight {
-    float ambient = 0.56f;
-    float head = 0.30f;
-    float sky = 0.22f;
-};
-
-constexpr WingLight kDefaultLight{0.56f, 0.30f, 0.22f};
-
-// How much brighter the wing tips are than the shoulder (spanT 0 -> 1).
-constexpr float kSpanGradient = 0.18f;
-
-inline float faceBrightness(const Vec3& normal, const Vec3& toCamera, const WingLight& light) {
-    const Vec3 n = normalized(normal);
-    const Vec3 v = normalized(toCamera);
-    const float headTerm = dot(n, v);
-    const float skyTerm = n.y;
-    return light.ambient
-         + light.head * (headTerm > 0.0f ? headTerm : 0.0f)
-         + light.sky * (skyTerm > 0.0f ? skyTerm : 0.0f);
-}
-
-// Brightness multiplier on top of the face shading: a gentle gradient from
-// the shoulder to the wing tips plus the per-bone tint.
-inline float spanTint(float spanT, float boneTint) {
-    const float t = spanT < 0.0f ? 0.0f : (spanT > 1.0f ? 1.0f : spanT);
-    return boneTint * (1.0f + kSpanGradient * (t - 0.5f));
-}
-
-inline unsigned char shadeChannel(float channel, float factor) {
-    const float v = channel * factor;
-    if (!(v > 0.0f)) return 0;
-    if (v >= 255.0f) return 255;
-    return static_cast<unsigned char>(v + 0.5f);
-}
-
-struct FaceColor {
-    unsigned char r = 0;
-    unsigned char g = 0;
-    unsigned char b = 0;
-};
-
-inline FaceColor shadeFace(const unsigned char* base, float brightness) {
-    if (base == nullptr) return {0, 0, 0};
-    return {
-        shadeChannel(static_cast<float>(base[0]), brightness),
-        shadeChannel(static_cast<float>(base[1]), brightness),
-        shadeChannel(static_cast<float>(base[2]), brightness),
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Host-side validation helpers (used by tests and the preview tool)
 // ---------------------------------------------------------------------------
 
@@ -326,8 +185,7 @@ inline float ringArea(const float p[4][3]) {
 }
 
 // True when four points form a simple (non self-intersecting) convex quad.
-// A Z-ordered "bowtie" ring or a ring that cuts through the box fails this,
-// which is exactly what the old wing faces were.
+// A Z-ordered "bowtie" ring or a ring that cuts through the quad fails this.
 inline bool isConvexRing(const float p[4][3], float eps = 1e-3f) {
     const float ux = p[1][0] - p[0][0], uy = p[1][1] - p[0][1], uz = p[1][2] - p[0][2];
     const float vx = p[2][0] - p[0][0], vy = p[2][1] - p[0][1], vz = p[2][2] - p[0][2];

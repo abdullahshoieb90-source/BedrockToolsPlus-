@@ -87,15 +87,25 @@ Selecting **Vanilla** gives the crosshair back to the game: the module then only
 
 The **Wings** module renders animated 3D wings on your back that flap, idle and glide with your movement. Open the module's **Wing Style** selector to choose a shape:
 
-- **Dragon** — the default articulated membrane wing
-- **Angel** — white feathered blades with gold tips
-- **Demon** — deep-red spiky membrane
-- **Bat** — small dark membrane
-- **Butterfly** — pink/orange panels with blue accents
-- **Phoenix** — fiery orange feathers
+- **Dragon** — the default: a broad bone-framed membrane wing
+- **Angel** — layered white primaries with gold tips
+- **Demon** — black bones with a glowing blood-red membrane
+- **Bat** — a small, dark violet membrane wing
+- **Butterfly** — rounded pink and blue lobes
+- **Phoenix** — long fiery orange primaries
 - **Fairy** — small translucent cyan/pink wings
+- **Demon Wings** — larger black-framed crimson wing with a glow aura
+- **Vampire Bat** — a narrower crimson membrane with deeper fingers
+- **Red Bat** — the shortest, most saturated bat wing
 
-The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. Each style is drawn as closed, tapered feather prisms with a rest-pose fan, a backwards sweep and per-face shading, so the wings read as real 3D volume. Developers can preview every style offline (and compare against the legacy renderer) with `./scripts/gen_wings_preview.sh`, which writes PNGs to `build/wings-preview/`.
+The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. Every style is one continuous membrane instead of a chain of boxes: an articulated arm (shoulder, elbow, wrist) is bent into a smooth leading edge, and a cambered sail hangs off it with a swept, scalloped trailing edge, finger struts, a spar and wing-tip claw, a shoulder fairing and — on the feathered styles — three overlapping rows of quills. The sheet ripples while you flap and goes taut while you glide, and it is shaded per face with a headlight plus a sky lift so it keeps its volume from every angle.
+
+![Wings before and after](docs/wings-before-after.png)
+
+*Top row: the old per-bone box renderer. Bottom row: the membrane wing
+(Dragon, Angel, Demon).*
+
+Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
 
 ## Custom Capes
 
