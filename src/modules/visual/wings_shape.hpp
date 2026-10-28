@@ -182,6 +182,126 @@ inline Vec3 modelPointToWorld(float px, float py, float pz, const Vec3& origin,
 }
 
 // ---------------------------------------------------------------------------
+// Body occlusion
+// ---------------------------------------------------------------------------
+//
+// The wings are mounted on the back, so when the camera is in front of the
+// player the body must hide them. Whether the fill material actually depth
+// tests is build dependent (ui_fill_color has no depth test on current Bedrock
+// builds - see blockoutline.cpp), so the overlay cannot rely on it: it culls
+// the wing quads that sit behind the player's own collision box instead. This
+// is the same "cull what the camera cannot see" approach the Hitbox module uses
+// for solid blocks, applied to the player's body.
+
+// Slab test for the segment origin -> target against an axis-aligned box.
+// Returns the normalized entry/exit parameters along the segment.
+inline bool segmentHitsBox(const Vec3& origin, const Vec3& target, const Vec3& boxMin,
+                           const Vec3& boxMax, float& tEnter, float& tExit) {
+    const Vec3 d = target - origin;
+    const float o[3] = {origin.x, origin.y, origin.z};
+    const float dir[3] = {d.x, d.y, d.z};
+    const float mn[3] = {boxMin.x, boxMin.y, boxMin.z};
+    const float mx[3] = {boxMax.x, boxMax.y, boxMax.z};
+
+    float tmin = 0.0f;
+    float tmax = 1.0f;
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(dir[i]) < 1e-9f) {
+            // Parallel to this slab: the segment is inside it or misses.
+            if (o[i] < mn[i] || o[i] > mx[i]) return false;
+            continue;
+        }
+        const float inv = 1.0f / dir[i];
+        float t1 = (mn[i] - o[i]) * inv;
+        float t2 = (mx[i] - o[i]) * inv;
+        if (t1 > t2) {
+            const float tmp = t1;
+            t1 = t2;
+            t2 = tmp;
+        }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) return false;
+    }
+    tEnter = tmin;
+    tExit = tmax;
+    return true;
+}
+
+inline bool pointInsideBox(const Vec3& p, const Vec3& boxMin, const Vec3& boxMax, float margin) {
+    return p.x >= boxMin.x - margin && p.x <= boxMax.x + margin &&
+           p.y >= boxMin.y - margin && p.y <= boxMax.y + margin &&
+           p.z >= boxMin.z - margin && p.z <= boxMax.z + margin;
+}
+
+// Cosine between the player's BACK direction and the direction from the body
+// to the camera:
+//   +1 = camera directly behind the player (normal third-person view)
+//    0 = camera exactly side-on
+//   -1 = camera directly in front of the player
+// The wings are mounted on the back, so this is the value that decides whether
+// drawing them makes any sense at all.
+inline float cameraBackness(const Vec3& cam, const Vec3& bodyCenter, const Vec3& forward) {
+    const Vec3 toCam = cam - bodyCenter;
+    const float len = length(toCam);
+    if (!(len > 1e-6f)) return 0.0f;
+    const Vec3 back = forward * -1.0f;
+    return dot(back, toCam * (1.0f / len));
+}
+
+// Fade window for the front-view gate, in backness units. 0.30 is about 72
+// degrees off the player's back, so the overlay is fully solid for every normal
+// third-person angle and only thins out in the last stretch towards side-on.
+constexpr float kWingFadeStart = 0.30f;
+
+// Vertex alpha for the overlay. 1.0 for every camera behind ~72 degrees, easing
+// to 0.0 at the side-on plane.
+//
+// If a fill material ignores vertex alpha this collapses to the hard gate in the
+// renderer (nothing drawn at or in front of side-on), which is the intended
+// fallback - the fade is a nicety, never a requirement.
+inline float wingFadeAlpha(float backness) {
+    if (!(backness > 0.0f)) return 0.0f;
+    if (backness >= kWingFadeStart) return 1.0f;
+    const float t = backness / kWingFadeStart;
+    return t * t * (3.0f - 2.0f * t);  // smoothstep
+}
+
+// Box the body actually occupies, built from the collision AABB.
+//
+// The collision box is square in plan (0.6 x 0.6) but the rendered player is
+// thin: the model torso is only 4 px deep, i.e. z in [-0.125, +0.125] blocks.
+// Using the collision box as the occluder would swallow the wing mounts (they
+// sit 0.18 blocks behind the center), so the roots would be treated as "inside
+// the body" and painted over the torso - exactly the artefact this is meant to
+// remove. Shrink the z axis to the model depth and keep the collision box for
+// the x/y extents, which is what the arms and torso actually span.
+inline void bodyOccluderFromAabb(const Vec3& aabbMin, const Vec3& aabbMax, Vec3& outMin,
+                                 Vec3& outMax) {
+    constexpr float kModelHalfDepth = 0.125f;  // 2 model px, the torso's half depth
+    const float centerZ = (aabbMin.z + aabbMax.z) * 0.5f;
+    outMin = {aabbMin.x, aabbMin.y, centerZ - kModelHalfDepth};
+    outMax = {aabbMax.x, aabbMax.y, centerZ + kModelHalfDepth};
+}
+
+// True when the box (the player's body) sits between the camera and `target`,
+// i.e. that point of the wing is on the far side of the body and would be
+// hidden by it.
+//
+// Points inside the box are the wing roots mounted on the body, so they are
+// never culled - otherwise the wings would detach from the back.
+inline bool hiddenBehindBody(const Vec3& cam, const Vec3& target, const Vec3& boxMin,
+                            const Vec3& boxMax, float insideMargin = 0.02f) {
+    if (pointInsideBox(target, boxMin, boxMax, insideMargin)) return false;
+
+    float tEnter = 0.0f;
+    float tExit = 0.0f;
+    if (!segmentHitsBox(cam, target, boxMin, boxMax, tEnter, tExit)) return false;
+    // The body has to be crossed strictly before the wing point is reached.
+    return tEnter > 1e-4f && tEnter < 1.0f - 1e-4f;
+}
+
+// ---------------------------------------------------------------------------
 // Host-side validation helpers (used by tests and the preview tool)
 // ---------------------------------------------------------------------------
 

@@ -360,6 +360,129 @@ int main() {
     }
 
     // ------------------------------------------------------------------
+    // Front-view gate: the wings are only drawn while the camera is behind the
+    // player. Everything at or in front of side-on must produce alpha 0 (the
+    // renderer skips the frame entirely), so the sails can never be seen
+    // sticking out either side of the torso.
+    // ------------------------------------------------------------------
+    {
+        const wings::Vec3 center{0.0f, 1.25f, 0.0f};
+        const wings::Vec3 forward{0.0f, 0.0f, 1.0f};  // player faces +z
+        const wings::Vec3 backDir{0.0f, 0.0f, -1.0f};
+
+        check(wings::cameraBackness(center + backDir * 4.0f, center, forward) > 0.99f,
+              "a camera directly behind the player has backness ~ +1");
+        check(wings::cameraBackness(center + forward * 4.0f, center, forward) < -0.99f,
+              "a camera directly in front has backness ~ -1");
+        check(std::fabs(wings::cameraBackness(center + wings::Vec3{4.0f, 0.0f, 0.0f}, center,
+                                              forward)) < 0.01f,
+              "a side-on camera has backness ~ 0");
+
+        // The renderer's gate: nothing at all from the front or side-on.
+        for (float z : {4.0f, 0.0f, -0.0f}) {
+            const wings::Vec3 cam{0.0f, 1.5f, z};
+            check(!(wings::cameraBackness(cam, center, forward) > 0.0f),
+                  "the overlay is skipped when the camera is not behind the player");
+        }
+
+        // Normal third-person angles must be fully solid, not half faded.
+        for (float ang : {0.0f, 15.0f, 30.0f, 45.0f, 60.0f}) {
+            const float r = ang * 3.14159265f / 180.0f;
+            const wings::Vec3 cam = center + wings::Vec3{std::sin(r) * 4.0f, 0.0f,
+                                                         -std::cos(r) * 4.0f};
+            const float a = wings::wingFadeAlpha(wings::cameraBackness(cam, center, forward));
+            check(a > 0.999f, "a third-person angle behind the player keeps the wings opaque");
+        }
+
+        // The fade is monotonic and reaches zero exactly at the gate.
+        float prev = 0.0f;
+        bool monotonic = true;
+        for (int i = 0; i <= 40; ++i) {
+            const float b = -0.1f + 0.03f * static_cast<float>(i);
+            const float a = wings::wingFadeAlpha(b);
+            if (a < prev - 1e-6f) monotonic = false;
+            if (b <= 0.0f && a != 0.0f) monotonic = false;
+            prev = a;
+        }
+        check(monotonic, "the front-view fade never increases towards the front");
+        check(wings::wingFadeAlpha(0.0f) == 0.0f, "the fade is zero at the side-on plane");
+        check(wings::wingFadeAlpha(-1.0f) == 0.0f, "the fade is zero in front of the player");
+    }
+
+    // ------------------------------------------------------------------
+    // Body occlusion: from the front the player's body hides the wings; from
+    // behind it must never hide them.
+    // ------------------------------------------------------------------
+    //
+    // Conventions used here (matching the overlay): the player faces +z, so
+    // their BACK is -z (model +z maps to world -z) and the player's right is
+    // -x. Body box = the vanilla 0.6 x 1.8 x 0.6 collision AABB.
+    {
+        const wings::Vec3 bodyMin{-0.3f, 0.0f, -0.3f};
+        const wings::Vec3 bodyMax{0.3f, 1.8f, 0.3f};
+        const wings::Vec3 wingPoint{0.0f, 1.3f, -0.35f};  // just behind the back
+
+        const wings::Vec3 frontCam{0.0f, 1.5f, 4.0f};    // in front of the player
+        const wings::Vec3 backCam{0.0f, 1.5f, -4.0f};    // behind the player
+        const wings::Vec3 sideCam{4.0f, 1.5f, 4.0f};     // front-right
+
+        check(wings::hiddenBehindBody(frontCam, wingPoint, bodyMin, bodyMax),
+              "a wing point behind the body is hidden from a front camera");
+        check(!wings::hiddenBehindBody(backCam, wingPoint, bodyMin, bodyMax),
+              "the same wing point stays visible from behind (wings are not culled)");
+
+        // A point further out along the wing is genuinely beside the body, so a
+        // three-quarter camera still sees it.
+        const wings::Vec3 outerWing{-2.0f, 1.6f, -0.35f};
+        check(!wings::hiddenBehindBody(sideCam, outerWing, bodyMin, bodyMax),
+              "a three-quarter view keeps the outer wing visible");
+
+        // Wing mounts sit 0.18 blocks behind the center (3 model px). With the
+        // model-depth occluder they are OUTSIDE the body, so a front camera
+        // culls them - this is the case that used to paint the wing roots over
+        // the player's chest.
+        wings::Vec3 occMin, occMax;
+        wings::bodyOccluderFromAabb(bodyMin, bodyMax, occMin, occMax);
+        check(std::fabs(occMax.z - 0.125f) < 1e-4f && std::fabs(occMin.z + 0.125f) < 1e-4f,
+              "the occluder is the model depth, not the square collision box");
+        check(occMin.x == bodyMin.x && occMax.x == bodyMax.x,
+              "the occluder keeps the collision box width (arms and torso)");
+
+        const wings::Vec3 mount{0.0f, 1.31f, -0.18f};
+        check(wings::hiddenBehindBody(frontCam, mount, occMin, occMax),
+              "a wing mount behind the back is hidden from a front camera");
+        check(!wings::hiddenBehindBody(backCam, mount, occMin, occMax),
+              "the same mount is visible from behind (wings stay attached)");
+
+        // A whole quad behind the torso is skipped; a quad off to the side is
+        // kept. This is the predicate the overlay uses to size its vertex batch.
+        const wings::Vec3 origin{0.0f, 0.0f, 0.0f};
+        const wings::Vec3 right{-1.0f, 0.0f, 0.0f};
+        const wings::Vec3 forward{0.0f, 0.0f, 1.0f};
+
+        // model pz = 10 px -> 0.625 blocks behind the back, clear of the box.
+        wings::WingQuad behind{};
+        for (int k = 0; k < 4; ++k) {
+            behind.p[k] = wings::Vec3{-1.0f + 2.0f * static_cast<float>(k & 1),
+                                      19.0f + static_cast<float>((k >> 1) & 1),
+                                      10.0f};
+        }
+        check(wings::quadHiddenByBody(behind, occMin, occMax, origin, right, forward, frontCam),
+              "a quad directly behind the torso is culled from the front");
+        check(!wings::quadHiddenByBody(behind, occMin, occMax, origin, right, forward, backCam),
+              "nothing is culled when looking at the player's back");
+
+        // Same depth, but far out along the wing: still drawn from the front.
+        wings::WingQuad wide = behind;
+        for (int k = 0; k < 4; ++k) {
+            wide.p[k].x = -26.0f + 2.0f * static_cast<float>(k & 1);
+            wide.p[k].y = 20.0f + static_cast<float>((k >> 1) & 1);
+        }
+        check(!wings::quadHiddenByBody(wide, occMin, occMax, origin, right, forward, frontCam),
+              "the outer part of the wing is still drawn from the front");
+    }
+
+    // ------------------------------------------------------------------
     // Headlight direction (regression: wings.cpp used to shade with the
     // negated *world* center, so a wing changed brightness whenever the
     // player walked somewhere else and looked washed out from the front).

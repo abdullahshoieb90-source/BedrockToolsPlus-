@@ -18,6 +18,8 @@
 //     <outdir>/<style>_hero.png 3/4 close-up at the idle pose
 //     <outdir>/<style>_sides.png behind vs. in front (both palette sides)
 //     <outdir>/showcase.png     every style at the idle pose
+//     <outdir>/front_gate.png   orbit sweep of the front-view gate
+//     <outdir>/front_before_after.png  front view: wings over the body vs. hidden
 
 #include "modules/visual/wings_design.hpp"
 #include "modules/visual/wings_shape.hpp"
@@ -64,6 +66,31 @@ struct FrameBuffer {
                 depth[static_cast<std::size_t>(y) * w + x] = 1e30f;
             }
         }
+    }
+
+    // Overwrite regardless of depth: reproduces a fill material without a depth
+    // test (ui_fill_color on current Bedrock builds).
+    // Alpha blend against whatever is already there (the overlay submits a
+    // vertex alpha for the front-view fade).
+    void blend(int x, int y, float z, wings::FaceColor c, float a) {
+        if (a >= 0.999f) { set(x, y, z, c); return; }
+        if (a <= 0.001f) return;
+        if (x < 0 || y < 0 || x >= w || y >= h) return;
+        const std::size_t i = static_cast<std::size_t>(y) * w + x;
+        if (!(z < depth[i])) return;
+        for (int k = 0; k < 3; ++k) {
+            const float src = (k == 0 ? c.r : k == 1 ? c.g : c.b) * a;
+            const float dst = rgb[i * 3 + k] * (1.0f - a);
+            rgb[i * 3 + k] = static_cast<unsigned char>(std::lround(src + dst));
+        }
+    }
+
+    void setOver(int x, int y, wings::FaceColor c) {
+        if (x < 0 || y < 0 || x >= w || y >= h) return;
+        const std::size_t i = static_cast<std::size_t>(y) * w + x;
+        rgb[i * 3 + 0] = c.r;
+        rgb[i * 3 + 1] = c.g;
+        rgb[i * 3 + 2] = c.b;
     }
 
     void set(int x, int y, float z, wings::FaceColor c) {
@@ -128,7 +155,8 @@ ScreenPoint project(const Camera& cam, wings::Vec3 p, int cx, int cy) {
 // Gouraud triangle: each corner carries a colour and the pixels are
 // barycentric-blended between them, matching what the tessellator does in game.
 void fillTriangle(FrameBuffer& fb, const ScreenPoint& a, const ScreenPoint& b, const ScreenPoint& c,
-                  const wings::FaceColor& ca, const wings::FaceColor& cb, const wings::FaceColor& cc) {
+                  const wings::FaceColor& ca, const wings::FaceColor& cb, const wings::FaceColor& cc,
+                  bool ignoreDepth = false, float alpha = 1.0f) {
     float minX = a.x, maxX = a.x;
     float minY = a.y, maxY = a.y;
     const ScreenPoint* pts[3] = {&a, &b, &c};
@@ -162,7 +190,8 @@ void fillTriangle(FrameBuffer& fb, const ScreenPoint& a, const ScreenPoint& b, c
                 static_cast<unsigned char>(w0 * ca.r + w1 * cb.r + w2 * cc.r + 0.5f),
                 static_cast<unsigned char>(w0 * ca.g + w1 * cb.g + w2 * cc.g + 0.5f),
                 static_cast<unsigned char>(w0 * ca.b + w1 * cb.b + w2 * cc.b + 0.5f)};
-            fb.set(x, y, z, blended);
+            if (ignoreDepth) fb.setOver(x, y, blended);
+            else fb.blend(x, y, z, blended, alpha);
         }
     }
 }
@@ -178,6 +207,8 @@ struct Scene {
     wings::Vec3 feet{0.0f, 0.0f, 0.0f};
     int centerX = 0;
     int centerY = 0;
+    bool cullBehindBody = true;  // the geometry cull the module applies
+    bool frontGate = true;       // skip the wings entirely unless the camera is behind
 };
 
 // Shades and rasterizes one double-sided quad exactly like the overlay does:
@@ -185,7 +216,8 @@ struct Scene {
 // from an interpolated normal, which flips across a curved sheet and turns it
 // into a front/back patchwork), light it, and fill it with per-corner colours so
 // the tessellator/preview interpolates a gradient across the cell.
-void drawQuad(FrameBuffer& fb, const Scene& scene, const wings::WingQuad& q, float extraTint = 1.0f) {
+void drawQuad(FrameBuffer& fb, const Scene& scene, const wings::WingQuad& q, float extraTint = 1.0f,
+              bool ignoreDepth = false, float alpha = 1.0f) {
     wings::Vec3 world[4];
     for (int i = 0; i < 4; ++i) {
         world[i] = wings::modelPointToWorld(q.p[i].x, q.p[i].y, q.p[i].z, scene.feet, scene.right,
@@ -216,8 +248,8 @@ void drawQuad(FrameBuffer& fb, const Scene& scene, const wings::WingQuad& q, flo
 
     wings::FaceColor shaded[4];
     for (int k = 0; k < 4; ++k) shaded[k] = wings::shadeFace(cornerColors[k], brightness);
-    fillTriangle(fb, sp[0], sp[1], sp[2], shaded[0], shaded[1], shaded[2]);
-    fillTriangle(fb, sp[0], sp[2], sp[3], shaded[0], shaded[2], shaded[3]);
+    fillTriangle(fb, sp[0], sp[1], sp[2], shaded[0], shaded[1], shaded[2], ignoreDepth, alpha);
+    fillTriangle(fb, sp[0], sp[2], sp[3], shaded[0], shaded[2], shaded[3], ignoreDepth, alpha);
 }
 
 // Axis-aligned box -> quads, so the player mannequin goes through the same
@@ -295,11 +327,37 @@ void drawWings(FrameBuffer& fb, const Scene& scene, int styleIndex, const wings:
     if (styleIndex < 0 || styleIndex >= wings::kWingStyleCount) styleIndex = 0;
     const wings::WingDesign& design = wings::kWingDesigns[styleIndex];
 
+    // The module's front-view gate, applied before anything is drawn.
+    const wings::Vec3 gateCenter = scene.feet + wings::Vec3{0.0f, 1.25f, 0.0f};
+    const float backness = wings::cameraBackness(scene.cam.pos, gateCenter, scene.forward);
+    if (scene.frontGate && !(backness > 0.0f)) return;
+    const float wingAlpha = scene.frontGate ? wings::wingFadeAlpha(backness) : 1.0f;
+
+    // Occluder the module uses: collision width, model depth.
+    wings::Vec3 bodyMin, bodyMax;
+    wings::bodyOccluderFromAabb({scene.feet.x - 0.3f, scene.feet.y, scene.feet.z - 0.3f},
+                                {scene.feet.x + 0.3f, scene.feet.y + 1.8f, scene.feet.z + 0.3f},
+                                bodyMin, bodyMax);
+
     static wings::WingQuad quads[wings::kMaxWingQuads];
     const int count = wings::buildWing(design, pose, -1, quads, wings::kMaxWingQuads);
-    for (int i = 0; i < count; ++i) drawQuad(fb, scene, quads[i]);
+    for (int i = 0; i < count; ++i) {
+        if (scene.cullBehindBody &&
+            wings::quadHiddenByBody(quads[i], bodyMin, bodyMax, scene.feet, scene.right,
+                                    scene.forward, scene.cam.pos)) {
+            continue;
+        }
+        drawQuad(fb, scene, quads[i], 1.0f, false, wingAlpha);
+    }
     const int countLeft = wings::buildWing(design, pose, 1, quads, wings::kMaxWingQuads);
-    for (int i = 0; i < countLeft; ++i) drawQuad(fb, scene, quads[i]);
+    for (int i = 0; i < countLeft; ++i) {
+        if (scene.cullBehindBody &&
+            wings::quadHiddenByBody(quads[i], bodyMin, bodyMax, scene.feet, scene.right,
+                                    scene.forward, scene.cam.pos)) {
+            continue;
+        }
+        drawQuad(fb, scene, quads[i], 1.0f, false, wingAlpha);
+    }
 }
 
 Scene makeScene(float orbitDeg, float height, float distance, float focusY, int panelW, int panelH) {
@@ -398,6 +456,61 @@ void renderSides(const std::string& outDir, int styleIndex) {
     writePng(outDir + "/" + wings::kWingDesigns[styleIndex].id + "_sides.png", fb);
 }
 
+// Orbit sweep of the front-view gate: the camera walks from directly behind the
+// player round to directly in front. The wings must be fully opaque through the
+// normal third-person range, fade out as the camera passes side-on, and be gone
+// entirely in front.
+//
+//   0 deg   45 deg   70 deg   90 deg   135 deg   180 deg
+//   behind  behind   fading   side-on  front     dead front
+void renderFrontGate(const std::string& outDir) {
+    constexpr int kPanelW = 300;
+    constexpr int kPanelH = 340;
+    constexpr int kPanels = 6;
+    const float orbits[kPanels] = {0.0f, 45.0f, 70.0f, 90.0f, 135.0f, 180.0f};
+
+    FrameBuffer fb;
+    fb.resize(kPanelW * kPanels, kPanelH);
+    fb.clear(30, 34, 44);
+
+    for (int i = 0; i < kPanels; ++i) {
+        FrameBuffer panel;
+        panel.resize(kPanelW, kPanelH);
+        panel.clear(30, 34, 44);
+
+        Scene scene = makeScene(orbits[i], 0.30f, 4.4f, 1.30f, kPanelW, kPanelH);
+        drawPlayer(panel, scene);
+        drawWings(panel, scene, 1 /* Angel */, makePose(kPoses[0]));
+        pastePanel(fb, panel, i * kPanelW, 0);
+    }
+    writePng(outDir + "/front_gate.png", fb);
+}
+
+// The defect vs. the fix, same front camera both times: without the gate the
+// sails are painted straight over the player (the old behaviour), with the gate
+// the overlay is simply not drawn.
+void renderFrontBeforeAfter(const std::string& outDir) {
+    constexpr int kPanelW = 520;
+    constexpr int kPanelH = 520;
+
+    FrameBuffer fb;
+    fb.resize(kPanelW * 2, kPanelH);
+    fb.clear(30, 34, 44);
+
+    for (int i = 0; i < 2; ++i) {
+        FrameBuffer panel;
+        panel.resize(kPanelW, kPanelH);
+        panel.clear(30, 34, 44);
+
+        Scene scene = makeScene(180.0f, 0.30f, 4.4f, 1.30f, kPanelW, kPanelH);
+        scene.frontGate = (i == 1);  // 0 = old behaviour, 1 = fixed
+        drawPlayer(panel, scene);
+        drawWings(panel, scene, 1 /* Angel */, makePose(kPoses[0]));
+        pastePanel(fb, panel, i * kPanelW, 0);
+    }
+    writePng(outDir + "/front_before_after.png", fb);
+}
+
 void renderShowcase(const std::string& outDir) {
     constexpr int kPanelW = 300;
     constexpr int kPanelH = 300;
@@ -430,5 +543,7 @@ int main(int argc, char** argv) {
         renderSides(outDir, s);
     }
     renderShowcase(outDir);
+    renderFrontGate(outDir);
+    renderFrontBeforeAfter(outDir);
     return 0;
 }

@@ -581,6 +581,20 @@ inline void addFeathers(Sink& sink, const Vec3 joint[4], const WingDesign& d, co
 
 }  // namespace detail
 
+// True when every corner of `q` is hidden behind the player's body box (the
+// collision box in world space), i.e. the quad is on the far side of the torso
+// and the camera cannot see it. Shared by the overlay and the preview so the
+// front view behaves identically in both.
+inline bool quadHiddenByBody(const WingQuad& q, const Vec3& boxMin, const Vec3& boxMax,
+                             const Vec3& origin, const Vec3& right, const Vec3& forward,
+                             const Vec3& cam) {
+    for (int k = 0; k < 4; ++k) {
+        const Vec3 p = modelPointToWorld(q.p[k].x, q.p[k].y, q.p[k].z, origin, right, forward);
+        if (!hiddenBehindBody(cam, p, boxMin, boxMax)) return false;
+    }
+    return true;
+}
+
 // Builds one wing (side < 0 = right, side > 0 = left) into `out`.
 // Returns the number of quads written (never more than the cap).
 inline int buildWing(const WingDesign& d, const WingPose& pose, int side,

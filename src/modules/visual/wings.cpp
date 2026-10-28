@@ -253,14 +253,42 @@ static wings::WingPose poseFromAngles(const WingBoneAngles& a) {
                                a.intensity, a.glide);
 }
 
+// Player collision box in world space, used to hide the wings behind the body.
+struct BodyBox {
+    wings::Vec3 min;
+    wings::Vec3 max;
+    bool valid = false;
+};
+
+// True when every corner of the quad is hidden behind the body, so the quad can
+// be skipped entirely. The geometry test itself lives in wings_surface.hpp so
+// the preview culls exactly what the game culls.
+static bool quadHiddenByBody(const wings::WingQuad& q, const BodyBox& body,
+                             const wings::Vec3& feet, const wings::Vec3& right,
+                             const wings::Vec3& forward, const wings::Vec3& cam) {
+    if (!body.valid) return false;
+    return wings::quadHiddenByBody(q, body.min, body.max, feet, right, forward, cam);
+}
+
+static int countVisibleQuads(const wings::WingQuad* quads, int count, const BodyBox& body,
+                             const wings::Vec3& feet, const wings::Vec3& right,
+                             const wings::Vec3& forward, const wings::Vec3& cam) {
+    int visible = 0;
+    for (int i = 0; i < count; ++i) {
+        if (!quadHiddenByBody(quads[i], body, feet, right, forward, cam)) ++visible;
+    }
+    return visible;
+}
+
 // Emits one wing's quads. Both windings are submitted for every quad, so
 // back-face culling can never eat the membrane when the wing folds over itself.
 static void emitWingQuads(void* tess, const wings::WingQuad* quads, int count,
-                          const wings::Vec3& feet, const wings::Vec3& right,
-                          const wings::Vec3& forward, const wings::Vec3& cam,
-                          bool seeBack) {
+                          const BodyBox& body, const wings::Vec3& feet,
+                          const wings::Vec3& right, const wings::Vec3& forward,
+                          const wings::Vec3& cam, bool seeBack, float alpha) {
     for (int i = 0; i < count; ++i) {
         const wings::WingQuad& q = quads[i];
+        if (quadHiddenByBody(q, body, feet, right, forward, cam)) continue;
 
         float corners[4][3];
         wings::Vec3 center{0.0f, 0.0f, 0.0f};
@@ -295,11 +323,11 @@ static void emitWingQuads(void* tess, const wings::WingQuad* quads, int count,
         for (int k = 0; k < 4; ++k) shaded[k] = wings::shadeFace(cornerColors[k], brightness);
 
         for (int k = 0; k < 4; ++k) {
-            s_tessColor(tess, shaded[k].r / 255.0f, shaded[k].g / 255.0f, shaded[k].b / 255.0f, 1.0f);
+            s_tessColor(tess, shaded[k].r / 255.0f, shaded[k].g / 255.0f, shaded[k].b / 255.0f, alpha);
             s_tessVertex(tess, corners[k][0], corners[k][1], corners[k][2]);
         }
         for (int k = 3; k >= 0; --k) {
-            s_tessColor(tess, shaded[k].r / 255.0f, shaded[k].g / 255.0f, shaded[k].b / 255.0f, 1.0f);
+            s_tessColor(tess, shaded[k].r / 255.0f, shaded[k].g / 255.0f, shaded[k].b / 255.0f, alpha);
             s_tessVertex(tess, corners[k][0], corners[k][1], corners[k][2]);
         }
     }
@@ -440,6 +468,25 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
                                           aabb.min.x, aabb.min.y, aabb.min.z,
                                           aabb.max.x, aabb.max.y, aabb.max.z)) return;
 
+    // --- Front-view gate ----------------------------------------------------
+    // The wings are mounted on the back, so once the camera crosses the plane
+    // through the player's shoulders they must not be drawn at all. Hiding them
+    // behind the body alone is not enough: the collision box is only 0.6 blocks
+    // wide while the wingspan is around 4 blocks, so the sails would still stick
+    // out entirely visible either side of the torso - which is exactly the
+    // "wings painted over the player" look this exists to remove.
+    //
+    // Everything here runs before the GPU colour holder is touched, so this
+    // early return cannot leave the screen white.
+    constexpr float kPiF = 3.14159265358979323846f;
+    const float gateYawRad = rot.y * kPiF / 180.0f;
+    const wings::Vec3 gateForward{-std::sin(gateYawRad), 0.0f, std::cos(gateYawRad)};
+    const wings::Vec3 gateCenter{feetX, feetY + 1.25f, feetZ};
+    const float backness =
+        wings::cameraBackness({camX, camY, camZ}, gateCenter, gateForward);
+    if (!(backness > 0.0f)) return;  // side-on or in front: nothing to draw
+    const float wingAlpha = wings::wingFadeAlpha(backness);
+
     ensureMaterials();
     void* overlayMat = (void*)(lrpPtr + LevelRendererPlayer::mSelectionOverlayMaterial);
     void* matInner = s_matSelection ? (void*)&s_matSelection : overlayMat;
@@ -495,13 +542,42 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     const wings::Vec3 cam{camX, camY, camZ};
     const wings::Vec3 bodyCenter{feetX, feetY + 1.25f, feetZ};
 
-    // Both windings per quad, so the membrane is visible from either side.
-    const int vertexCount = (rightCount + leftCount) * 4 * 2;
+    // Body occlusion: the wings sit on the back, so from the front the player's
+    // own collision box has to hide them. This is done here instead of trusting
+    // the material to depth test (ui_fill_color does not on current builds),
+    // which is what used to paint the wings straight over the torso.
+    // The occluder is the *rendered* body, not the full collision box: a
+    // player's AABB is 0.6 blocks deep in every direction, while the model
+    // torso is only 0.25 blocks deep, so the collision box would swallow the
+    // wing mounts and leave the roots painted over the chest.
+    BodyBox body;
+    wings::bodyOccluderFromAabb({aabb.min.x, aabb.min.y, aabb.min.z},
+                                {aabb.max.x, aabb.max.y, aabb.max.z},
+                                body.min, body.max);
+    body.valid = aabb.max.x > aabb.min.x && aabb.max.y > aabb.min.y && aabb.max.z > aabb.min.z;
+
+    const int visibleRight = countVisibleQuads(s_rightQuads, rightCount, body, feet, rightVec,
+                                               forwardVec, cam);
+    const int visibleLeft = countVisibleQuads(s_leftQuads, leftCount, body, feet, rightVec,
+                                              forwardVec, cam);
+    const int visibleTotal = visibleRight + visibleLeft;
+    if (visibleTotal <= 0) {
+        // Fully behind the body (dead-on front view): nothing to draw, and the
+        // colour holder was not modified yet.
+        return;
+    }
+
+    // Both windings per quad, so the membrane is visible from either side. The
+    // count must be exact: the tessellator is told up front how many vertices
+    // it will receive.
+    const int vertexCount = visibleTotal * 4 * 2;
     s_tessBegin(tess, nullptr, 1, vertexCount, 0);  // 1 = quad
 
     const bool seeBack = wings::cameraSeesBackSide(cam, bodyCenter, rightVec, forwardVec);
-    emitWingQuads(tess, s_rightQuads, rightCount, feet, rightVec, forwardVec, cam, seeBack);
-    emitWingQuads(tess, s_leftQuads, leftCount, feet, rightVec, forwardVec, cam, seeBack);
+    emitWingQuads(tess, s_rightQuads, rightCount, body, feet, rightVec, forwardVec, cam, seeBack,
+                  wingAlpha);
+    emitWingQuads(tess, s_leftQuads, leftCount, body, feet, rightVec, forwardVec, cam, seeBack,
+                  wingAlpha);
 
     s_renderMesh(screenContext, tess, matFill, pad);
 
