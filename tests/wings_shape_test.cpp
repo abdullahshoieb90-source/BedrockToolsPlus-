@@ -360,53 +360,157 @@ int main() {
     }
 
     // ------------------------------------------------------------------
-    // Front-view gate: the wings are only drawn while the camera is behind the
-    // player. Everything at or in front of side-on must produce alpha 0 (the
-    // renderer skips the frame entirely), so the sails can never be seen
-    // sticking out either side of the torso.
+    // Body shadow cone: the exact hidden volume of the body as seen from the
+    // camera. It must agree with the exact segment test everywhere, otherwise
+    // the wing gets eaten outside the player's silhouette (or left painted over
+    // the torso).
     // ------------------------------------------------------------------
     {
-        const wings::Vec3 center{0.0f, 1.25f, 0.0f};
-        const wings::Vec3 forward{0.0f, 0.0f, 1.0f};  // player faces +z
-        const wings::Vec3 backDir{0.0f, 0.0f, -1.0f};
+        const wings::Vec3 boxMin{-0.3f, 0.0f, -0.125f};
+        const wings::Vec3 boxMax{0.3f, 1.8f, 0.125f};
 
-        check(wings::cameraBackness(center + backDir * 4.0f, center, forward) > 0.99f,
-              "a camera directly behind the player has backness ~ +1");
-        check(wings::cameraBackness(center + forward * 4.0f, center, forward) < -0.99f,
-              "a camera directly in front has backness ~ -1");
-        check(std::fabs(wings::cameraBackness(center + wings::Vec3{4.0f, 0.0f, 0.0f}, center,
-                                              forward)) < 0.01f,
-              "a side-on camera has backness ~ 0");
+        struct CameraCase {
+            wings::Vec3 pos;
+            const char* label;
+        };
+        const CameraCase cameras[] = {
+            {{0.0f, 1.5f, 4.0f}, "face-on"},
+            {{2.6f, 2.4f, 3.2f}, "corner"},
+            {{0.0f, 0.4f, 3.5f}, "low"},
+            {{0.0f, 3.4f, 3.0f}, "high"},
+        };
 
-        // The renderer's gate: nothing at all from the front or side-on.
-        for (float z : {4.0f, 0.0f, -0.0f}) {
-            const wings::Vec3 cam{0.0f, 1.5f, z};
-            check(!(wings::cameraBackness(cam, center, forward) > 0.0f),
-                  "the overlay is skipped when the camera is not behind the player");
+        for (const CameraCase& cc : cameras) {
+            const wings::ShadowCone cone = wings::buildShadowCone(cc.pos, boxMin, boxMax);
+            check(cone.count >= 4, "the body's shadow cone has supporting planes");
+
+            int mismatches = 0;
+            int hiddenCount = 0;
+            // Points on the wing side of the player only (behind the back face).
+            for (int ix = -6; ix <= 6; ++ix) {
+                for (int iy = 0; iy <= 8; ++iy) {
+                    for (int iz = 0; iz <= 5; ++iz) {
+                        const wings::Vec3 p{0.5f * static_cast<float>(ix),
+                                            1.0f + 0.18f * static_cast<float>(iy),
+                                            -0.20f - 0.16f * static_cast<float>(iz)};
+                        bool inCone = true;
+                        for (int k = 0; k < cone.count; ++k) {
+                            if (wings::dot(cone.plane[k], p - cc.pos) > 0.0f) {
+                                inCone = false;
+                                break;
+                            }
+                        }
+                        const bool exact =
+                            wings::hiddenBehindBody(cc.pos, p, boxMin, boxMax);
+                        if (inCone != exact) ++mismatches;
+                        if (exact) ++hiddenCount;
+                    }
+                }
+            }
+            check(mismatches == 0, "the shadow cone agrees with the exact test at every sample");
+            check(hiddenCount > 0, "the sample grid actually crosses the hidden region");
         }
+    }
 
-        // Normal third-person angles must be fully solid, not half faded.
-        for (float ang : {0.0f, 15.0f, 30.0f, 45.0f, 60.0f}) {
-            const float r = ang * 3.14159265f / 180.0f;
-            const wings::Vec3 cam = center + wings::Vec3{std::sin(r) * 4.0f, 0.0f,
-                                                         -std::cos(r) * 4.0f};
-            const float a = wings::wingFadeAlpha(wings::cameraBackness(cam, center, forward));
-            check(a > 0.999f, "a third-person angle behind the player keeps the wings opaque");
-        }
+    // ------------------------------------------------------------------
+    // Clipping: the part of a wing quad behind the body is cut away, the rest
+    // survives with its positions and colours intact.
+    // ------------------------------------------------------------------
+    {
+        const wings::Vec3 boxMin{-0.3f, 0.0f, -0.125f};
+        const wings::Vec3 boxMax{0.3f, 1.8f, 0.125f};
+        const wings::Vec3 cam{0.0f, 1.5f, 4.0f};
+        const wings::ShadowCone cone = wings::buildShadowCone(cam, boxMin, boxMax);
 
-        // The fade is monotonic and reaches zero exactly at the gate.
-        float prev = 0.0f;
-        bool monotonic = true;
-        for (int i = 0; i <= 40; ++i) {
-            const float b = -0.1f + 0.03f * static_cast<float>(i);
-            const float a = wings::wingFadeAlpha(b);
-            if (a < prev - 1e-6f) monotonic = false;
-            if (b <= 0.0f && a != 0.0f) monotonic = false;
-            prev = a;
+        // Area of a piece when projected onto the plane z = const.
+        auto area = [](const wings::ClipPolygon& p) {
+            float a = 0.0f;
+            for (int k = 0; k < p.count; ++k) {
+                const wings::Vec3 u = p.v[k].p;
+                const wings::Vec3 v = p.v[(k + 1) % p.count].p;
+                a += u.x * v.y - v.x * u.y;
+            }
+            return std::fabs(a) * 0.5f;
+        };
+
+        auto makePoly = [](wings::ClipVertex* v, float x0, float x1, float y0, float y1,
+                           float z) {
+            v[0].p = {x0, y0, z};
+            v[1].p = {x1, y0, z};
+            v[2].p = {x1, y1, z};
+            v[3].p = {x0, y1, z};
+            for (int k = 0; k < 4; ++k) {
+                v[k].c = wings::FaceColor{static_cast<unsigned char>(40 + 20 * k),
+                                          static_cast<unsigned char>(80 + 10 * k),
+                                          static_cast<unsigned char>(120 + 5 * k)};
+            }
+        };
+
+        wings::ClipVertex in[4];
+        wings::ClipPolygon pieces[wings::kMaxShadowPlanes];
+
+        // Entirely behind the torso -> nothing survives.
+        makePoly(in, -0.05f, 0.05f, 1.20f, 1.30f, -0.30f);
+        check(wings::clipPolygonOutsideCone(in, 4, cone, cam, pieces,
+                                            wings::kMaxShadowPlanes) == 0,
+              "a quad fully hidden behind the body is clipped away entirely");
+
+        // Entirely outside the silhouette -> comes back whole and untouched.
+        makePoly(in, -2.0f, -1.9f, 1.20f, 1.30f, -0.30f);
+        int n = wings::clipPolygonOutsideCone(in, 4, cone, cam, pieces,
+                                              wings::kMaxShadowPlanes);
+        check(n == 1 && pieces[0].count == 4, "a quad clear of the body is left intact");
+        bool sameCorners = (n == 1 && pieces[0].count == 4);
+        bool sameColours = sameCorners;
+        for (int k = 0; k < 4 && sameCorners; ++k) {
+            if (wings::length(pieces[0].v[k].p - in[k].p) > 1e-4f) sameCorners = false;
+            if (pieces[0].v[k].c.r != in[k].c.r || pieces[0].v[k].c.g != in[k].c.g ||
+                pieces[0].v[k].c.b != in[k].c.b) {
+                sameColours = false;
+            }
         }
-        check(monotonic, "the front-view fade never increases towards the front");
-        check(wings::wingFadeAlpha(0.0f) == 0.0f, "the fade is zero at the side-on plane");
-        check(wings::wingFadeAlpha(-1.0f) == 0.0f, "the fade is zero in front of the player");
+        check(sameCorners, "an untouched quad keeps its exact corners");
+        check(sameColours, "an untouched quad keeps its exact colours");
+
+        // Straddling the silhouette -> cut down to the visible part.
+        makePoly(in, -0.90f, 0.05f, 1.20f, 1.30f, -0.30f);
+        n = wings::clipPolygonOutsideCone(in, 4, cone, cam, pieces, wings::kMaxShadowPlanes);
+        check(n >= 1, "a quad straddling the body silhouette is cut, not dropped");
+
+        float keptArea = 0.0f;
+        int keptVerts = 0;
+        for (int i = 0; i < n; ++i) {
+            keptArea += area(pieces[i]);
+            keptVerts += pieces[i].count;
+        }
+        const float fullArea = 0.95f * 0.10f;
+        check(keptArea > 0.0f && keptArea < fullArea * 0.999f,
+              "the cut removes part of the quad instead of keeping all of it");
+
+        // The surviving geometry must be genuinely visible: tested against a
+        // body shrunk slightly, so vertices sitting exactly on the silhouette
+        // (which is where a correct cut puts them) are not counted as hidden.
+        const wings::Vec3 shrink{0.02f, 0.0f, 0.02f};
+        bool allVisible = keptVerts > 0;
+        for (int i = 0; i < n; ++i) {
+            for (int k = 0; k < pieces[i].count; ++k) {
+                if (wings::hiddenBehindBody(cam, pieces[i].v[k].p,
+                                            boxMin + shrink, boxMax - shrink)) {
+                    allVisible = false;
+                }
+            }
+        }
+        check(allVisible, "no surviving vertex of a cut quad is still behind the body");
+
+        // Cut vertices carry interpolated shading, not a fresh flat tone.
+        bool coloursInRange = keptVerts > 0;
+        for (int i = 0; i < n; ++i) {
+            for (int k = 0; k < pieces[i].count; ++k) {
+                const unsigned char r = pieces[i].v[k].c.r;
+                if (r < 40 || r > 100) coloursInRange = false;
+            }
+        }
+        check(coloursInRange, "clipped vertices interpolate the shading they cut through");
     }
 
     // ------------------------------------------------------------------
@@ -454,32 +558,42 @@ int main() {
         check(!wings::hiddenBehindBody(backCam, mount, occMin, occMax),
               "the same mount is visible from behind (wings stay attached)");
 
-        // A whole quad behind the torso is skipped; a quad off to the side is
-        // kept. This is the predicate the overlay uses to size its vertex batch.
+        // The cone the overlay actually clips against is exact for the wing
+        // mounts: hidden from the front, untouched from behind.
         const wings::Vec3 origin{0.0f, 0.0f, 0.0f};
         const wings::Vec3 right{-1.0f, 0.0f, 0.0f};
         const wings::Vec3 forward{0.0f, 0.0f, 1.0f};
+        const wings::ShadowCone frontCone = wings::buildShadowCone(frontCam, occMin, occMax);
 
-        // model pz = 10 px -> 0.625 blocks behind the back, clear of the box.
+        // A quad directly behind the back: hidden from the front camera.
         wings::WingQuad behind{};
         for (int k = 0; k < 4; ++k) {
             behind.p[k] = wings::Vec3{-1.0f + 2.0f * static_cast<float>(k & 1),
                                       19.0f + static_cast<float>((k >> 1) & 1),
                                       10.0f};
         }
-        check(wings::quadHiddenByBody(behind, occMin, occMax, origin, right, forward, frontCam),
-              "a quad directly behind the torso is culled from the front");
-        check(!wings::quadHiddenByBody(behind, occMin, occMax, origin, right, forward, backCam),
-              "nothing is culled when looking at the player's back");
-
-        // Same depth, but far out along the wing: still drawn from the front.
-        wings::WingQuad wide = behind;
+        wings::ClipVertex corners[4];
         for (int k = 0; k < 4; ++k) {
-            wide.p[k].x = -26.0f + 2.0f * static_cast<float>(k & 1);
-            wide.p[k].y = 20.0f + static_cast<float>((k >> 1) & 1);
+            corners[k].p = wings::modelPointToWorld(behind.p[k].x, behind.p[k].y, behind.p[k].z,
+                                                    origin, right, forward);
+            corners[k].c = wings::FaceColor{90, 90, 90};
         }
-        check(!wings::quadHiddenByBody(wide, occMin, occMax, origin, right, forward, frontCam),
-              "the outer part of the wing is still drawn from the front");
+        wings::ClipPolygon pieces[wings::kMaxShadowPlanes];
+        check(wings::clipPolygonOutsideCone(corners, 4, frontCone, frontCam, pieces,
+                                            wings::kMaxShadowPlanes) == 0,
+              "a wing quad behind the torso is clipped away from the front");
+
+        // From behind, the wing sits *between* the camera and the body, so the
+        // shadow cone no longer describes occlusion. The overlay therefore only
+        // clips when the camera is on the front side; that gate is what keeps
+        // the wings intact from behind.
+        const wings::Vec3 bodyCenter{(occMin.x + occMax.x) * 0.5f,
+                                     (occMin.y + occMax.y) * 0.5f,
+                                     (occMin.z + occMax.z) * 0.5f};
+        check(wings::cameraBackness(backCam, bodyCenter, forward) > 0.0f,
+              "the overlay only clips in front, where the shadow cone is exact");
+        check(wings::cameraBackness(frontCam, bodyCenter, forward) < 0.0f,
+              "a front camera is on the clipping side");
     }
 
     // ------------------------------------------------------------------

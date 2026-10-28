@@ -253,60 +253,97 @@ static wings::WingPose poseFromAngles(const WingBoneAngles& a) {
                                a.intensity, a.glide);
 }
 
-// Player collision box in world space, used to hide the wings behind the body.
+// Player body box in world space, used to hide the wings behind the body.
 struct BodyBox {
     wings::Vec3 min;
     wings::Vec3 max;
+    wings::ShadowCone cone;
+    wings::Vec3 apex;
     bool valid = false;
+    // The shadow cone is only used when the camera is in front of the player.
+    // From behind, the wings sit between the camera and the body, so nothing is
+    // ever hidden there and clipping would be wrong.
+    bool clip = false;
 };
 
-// True when every corner of the quad is hidden behind the body, so the quad can
-// be skipped entirely. The geometry test itself lives in wings_surface.hpp so
-// the preview culls exactly what the game culls.
-static bool quadHiddenByBody(const wings::WingQuad& q, const BodyBox& body,
-                             const wings::Vec3& feet, const wings::Vec3& right,
-                             const wings::Vec3& forward, const wings::Vec3& cam) {
-    if (!body.valid) return false;
-    return wings::quadHiddenByBody(q, body.min, body.max, feet, right, forward, cam);
+// Receives the visible wing geometry. With `tess` null it only accumulates the
+// exact vertex count, so the same pass can size the tessellator batch up front.
+struct WingSink {
+    void* tess = nullptr;
+    wings::Vec3 cam;
+    int vertices = 0;
+};
+
+// Vertices a convex polygon costs. A cut-free quad stays a quad; anything the
+// body has cut is fan-triangulated, with each triangle submitted as a
+// four-vertex quad whose last corner repeats the previous one. That keeps the
+// tessellator in quad mode however many cut edges there are.
+static int polygonVertexCost(int count) {
+    if (count < 3) return 0;
+    if (count == 4) return 4 * 2;
+    return (count - 2) * 4 * 2;
 }
 
-static int countVisibleQuads(const wings::WingQuad* quads, int count, const BodyBox& body,
-                             const wings::Vec3& feet, const wings::Vec3& right,
-                             const wings::Vec3& forward, const wings::Vec3& cam) {
-    int visible = 0;
-    for (int i = 0; i < count; ++i) {
-        if (!quadHiddenByBody(quads[i], body, feet, right, forward, cam)) ++visible;
+// Both windings are submitted for every primitive, so back-face culling can
+// never eat the membrane when the wing folds over itself.
+static void submitTriangle(void* tess, const wings::ClipVertex* a, const wings::ClipVertex* b,
+                           const wings::ClipVertex* c, const wings::ClipVertex* cAgain,
+                           const wings::Vec3& cam) {
+    const wings::ClipVertex* quad[4] = {a, b, c, cAgain};
+    for (int k = 0; k < 4; ++k) {
+        const wings::ClipVertex& v = *quad[k];
+        s_tessColor(tess, v.c.r / 255.0f, v.c.g / 255.0f, v.c.b / 255.0f, 1.0f);
+        s_tessVertex(tess, v.p.x - cam.x, v.p.y - cam.y, v.p.z - cam.z);
     }
-    return visible;
+    for (int k = 3; k >= 0; --k) {
+        const wings::ClipVertex& v = *quad[k];
+        s_tessColor(tess, v.c.r / 255.0f, v.c.g / 255.0f, v.c.b / 255.0f, 1.0f);
+        s_tessVertex(tess, v.p.x - cam.x, v.p.y - cam.y, v.p.z - cam.z);
+    }
 }
 
-// Emits one wing's quads. Both windings are submitted for every quad, so
-// back-face culling can never eat the membrane when the wing folds over itself.
-static void emitWingQuads(void* tess, const wings::WingQuad* quads, int count,
-                          const BodyBox& body, const wings::Vec3& feet,
-                          const wings::Vec3& right, const wings::Vec3& forward,
-                          const wings::Vec3& cam, bool seeBack, float alpha) {
+static void writePolygon(WingSink& sink, const wings::ClipVertex* v, int count) {
+    if (count < 3) return;
+    if (!sink.tess) {
+        sink.vertices += polygonVertexCost(count);
+        return;
+    }
+    if (count == 4) {
+        // Untouched quad: one quad, no fan needed.
+        submitTriangle(sink.tess, &v[0], &v[1], &v[2], &v[3], sink.cam);
+        return;
+    }
+    // Convex fan from v[0]; a cut polygon is still convex, so this is always valid.
+    for (int t = 1; t + 1 < count; ++t) {
+        submitTriangle(sink.tess, &v[0], &v[t], &v[t + 1], &v[t + 1], sink.cam);
+    }
+}
+
+// Shades the wing and cuts out whatever the player's body hides from the camera.
+// The quad is clipped rather than culled whole: a membrane cell is ~2 model
+// pixels across but tens of screen pixels at third-person distance, so dropping
+// whole quads would leave a staircase instead of the body's silhouette.
+static void resolveWing(const wings::WingQuad* quads, int count, const BodyBox& body,
+                        const wings::Vec3& feet, const wings::Vec3& right,
+                        const wings::Vec3& forward, const wings::Vec3& cam, bool seeBack,
+                        WingSink& sink) {
     for (int i = 0; i < count; ++i) {
         const wings::WingQuad& q = quads[i];
-        if (quadHiddenByBody(q, body, feet, right, forward, cam)) continue;
 
-        float corners[4][3];
+        wings::ClipVertex corner[4];
         wings::Vec3 center{0.0f, 0.0f, 0.0f};
         for (int k = 0; k < 4; ++k) {
-            const wings::Vec3 p = wings::modelPointToWorld(q.p[k].x, q.p[k].y, q.p[k].z,
-                                                           feet, right, forward);
-            corners[k][0] = p.x - cam.x;
-            corners[k][1] = p.y - cam.y;
-            corners[k][2] = p.z - cam.z;
+            const wings::Vec3 p =
+                wings::modelPointToWorld(q.p[k].x, q.p[k].y, q.p[k].z, feet, right, forward);
+            corner[k].p = p;
             center = center + p;
         }
         center = center * 0.25f;
 
         // The headlight vector runs from the surface towards the camera.
-        // `center` is a WORLD point (the corners above are camera-relative),
-        // so it must be subtracted from the camera position - negating it would
-        // treat a world point as camera-relative and point the light at the
-        // world origin, making the wings change brightness as the player moves.
+        // `center` is a WORLD point, so it must be subtracted from the camera
+        // position - negating it would treat a world point as camera-relative
+        // and point the light at the world origin.
         const wings::Vec3 toCamera = wings::toCameraVector(cam, center);
         const wings::Vec3 normal = wings::modelDirToWorld(q.n, right, forward);
         const wings::Vec3 litNormal = seeBack ? normal : normal * -1.0f;
@@ -315,21 +352,21 @@ static void emitWingQuads(void* tess, const wings::WingQuad* quads, int count,
                            wings::spanTint(q.spanT);
         if (q.emissive > 0.0f && brightness < q.emissive) brightness = q.emissive;
 
-        // Per-corner colours: the tessellator interpolates them across the quad
-        // (Gouraud), so the sail shows its leading-edge highlight, trailing
-        // shadow and shoulder-to-tip gradient instead of one flat tone.
+        // Per-corner colours: the tessellator interpolates them across the
+        // polygon (Gouraud), so the sail shows its leading-edge highlight,
+        // trailing shadow and shoulder-to-tip gradient instead of one flat tone.
         const wings::FaceColor* cornerColors = seeBack ? q.backC : q.frontC;
-        wings::FaceColor shaded[4];
-        for (int k = 0; k < 4; ++k) shaded[k] = wings::shadeFace(cornerColors[k], brightness);
+        for (int k = 0; k < 4; ++k) corner[k].c = wings::shadeFace(cornerColors[k], brightness);
 
-        for (int k = 0; k < 4; ++k) {
-            s_tessColor(tess, shaded[k].r / 255.0f, shaded[k].g / 255.0f, shaded[k].b / 255.0f, alpha);
-            s_tessVertex(tess, corners[k][0], corners[k][1], corners[k][2]);
+        if (!body.clip) {
+            writePolygon(sink, corner, 4);
+            continue;
         }
-        for (int k = 3; k >= 0; --k) {
-            s_tessColor(tess, shaded[k].r / 255.0f, shaded[k].g / 255.0f, shaded[k].b / 255.0f, alpha);
-            s_tessVertex(tess, corners[k][0], corners[k][1], corners[k][2]);
-        }
+
+        wings::ClipPolygon pieces[wings::kMaxShadowPlanes];
+        const int pieceCount = wings::clipPolygonOutsideCone(corner, 4, body.cone, body.apex,
+                                                             pieces, wings::kMaxShadowPlanes);
+        for (int p = 0; p < pieceCount; ++p) writePolygon(sink, pieces[p].v, pieces[p].count);
     }
 }
 
@@ -468,25 +505,6 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
                                           aabb.min.x, aabb.min.y, aabb.min.z,
                                           aabb.max.x, aabb.max.y, aabb.max.z)) return;
 
-    // --- Front-view gate ----------------------------------------------------
-    // The wings are mounted on the back, so once the camera crosses the plane
-    // through the player's shoulders they must not be drawn at all. Hiding them
-    // behind the body alone is not enough: the collision box is only 0.6 blocks
-    // wide while the wingspan is around 4 blocks, so the sails would still stick
-    // out entirely visible either side of the torso - which is exactly the
-    // "wings painted over the player" look this exists to remove.
-    //
-    // Everything here runs before the GPU colour holder is touched, so this
-    // early return cannot leave the screen white.
-    constexpr float kPiF = 3.14159265358979323846f;
-    const float gateYawRad = rot.y * kPiF / 180.0f;
-    const wings::Vec3 gateForward{-std::sin(gateYawRad), 0.0f, std::cos(gateYawRad)};
-    const wings::Vec3 gateCenter{feetX, feetY + 1.25f, feetZ};
-    const float backness =
-        wings::cameraBackness({camX, camY, camZ}, gateCenter, gateForward);
-    if (!(backness > 0.0f)) return;  // side-on or in front: nothing to draw
-    const float wingAlpha = wings::wingFadeAlpha(backness);
-
     ensureMaterials();
     void* overlayMat = (void*)(lrpPtr + LevelRendererPlayer::mSelectionOverlayMaterial);
     void* matInner = s_matSelection ? (void*)&s_matSelection : overlayMat;
@@ -556,28 +574,39 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
                                 body.min, body.max);
     body.valid = aabb.max.x > aabb.min.x && aabb.max.y > aabb.min.y && aabb.max.z > aabb.min.z;
 
-    const int visibleRight = countVisibleQuads(s_rightQuads, rightCount, body, feet, rightVec,
-                                               forwardVec, cam);
-    const int visibleLeft = countVisibleQuads(s_leftQuads, leftCount, body, feet, rightVec,
-                                              forwardVec, cam);
-    const int visibleTotal = visibleRight + visibleLeft;
-    if (visibleTotal <= 0) {
-        // Fully behind the body (dead-on front view): nothing to draw, and the
-        // colour holder was not modified yet.
+    // Cut the body out of the wings when the camera is on the front side. From
+    // behind (and at side-on) the wings are between the camera and the body, so
+    // nothing is hidden and they are submitted untouched.
+    if (body.valid && wings::cameraBackness(cam, bodyCenter, forwardVec) < 0.0f) {
+        body.clip = true;
+        body.apex = cam;
+        body.cone = wings::buildShadowCone(cam, body.min, body.max);
+    }
+
+    const bool seeBack = wings::cameraSeesBackSide(cam, bodyCenter, rightVec, forwardVec);
+
+    // Pass 1: count the exact vertices the visible geometry needs. Bedrock's
+    // tessellator requires the count up front, and after clipping the number of
+    // vertices is no longer a function of the quad count.
+    WingSink counter;
+    counter.cam = cam;
+    resolveWing(s_rightQuads, rightCount, body, feet, rightVec, forwardVec, cam, seeBack, counter);
+    resolveWing(s_leftQuads, leftCount, body, feet, rightVec, forwardVec, cam, seeBack, counter);
+    if (counter.vertices <= 0) {
+        // Everything is behind the body: nothing to draw. The colour holder was
+        // not modified yet, so returning here cannot leave the screen white.
         return;
     }
 
-    // Both windings per quad, so the membrane is visible from either side. The
-    // count must be exact: the tessellator is told up front how many vertices
-    // it will receive.
-    const int vertexCount = visibleTotal * 4 * 2;
-    s_tessBegin(tess, nullptr, 1, vertexCount, 0);  // 1 = quad
+    s_tessBegin(tess, nullptr, 1, counter.vertices, 0);  // 1 = quad
 
-    const bool seeBack = wings::cameraSeesBackSide(cam, bodyCenter, rightVec, forwardVec);
-    emitWingQuads(tess, s_rightQuads, rightCount, body, feet, rightVec, forwardVec, cam, seeBack,
-                  wingAlpha);
-    emitWingQuads(tess, s_leftQuads, leftCount, body, feet, rightVec, forwardVec, cam, seeBack,
-                  wingAlpha);
+    // Pass 2: the same computation, this time submitting. Both passes are pure
+    // functions of the same inputs, so the counts always match.
+    WingSink emitter;
+    emitter.tess = tess;
+    emitter.cam = cam;
+    resolveWing(s_rightQuads, rightCount, body, feet, rightVec, forwardVec, cam, seeBack, emitter);
+    resolveWing(s_leftQuads, leftCount, body, feet, rightVec, forwardVec, cam, seeBack, emitter);
 
     s_renderMesh(screenContext, tess, matFill, pad);
 

@@ -249,22 +249,164 @@ inline float cameraBackness(const Vec3& cam, const Vec3& bodyCenter, const Vec3&
     return dot(back, toCam * (1.0f / len));
 }
 
-// Fade window for the front-view gate, in backness units. 0.30 is about 72
-// degrees off the player's back, so the overlay is fully solid for every normal
-// third-person angle and only thins out in the last stretch towards side-on.
-constexpr float kWingFadeStart = 0.30f;
-
-// Vertex alpha for the overlay. 1.0 for every camera behind ~72 degrees, easing
-// to 0.0 at the side-on plane.
+// ---------------------------------------------------------------------------
+// Exact occlusion: the body's shadow cone
+// ---------------------------------------------------------------------------
 //
-// If a fill material ignores vertex alpha this collapses to the hard gate in the
-// renderer (nothing drawn at or in front of side-on), which is the intended
-// fallback - the fade is a nicety, never a requirement.
-inline float wingFadeAlpha(float backness) {
-    if (!(backness > 0.0f)) return 0.0f;
-    if (backness >= kWingFadeStart) return 1.0f;
-    const float t = backness / kWingFadeStart;
-    return t * t * (3.0f - 2.0f * t);  // smoothstep
+// Culling whole quads leaves a staircase along the body's silhouette, because a
+// membrane cell is a couple of model pixels across but a few dozen screen
+// pixels at third-person distance. Instead the wing polygons are clipped
+// against the volume the body actually hides from the camera.
+//
+// The hidden volume of a convex box seen from a point is the cone of rays that
+// pass through it. That cone is the intersection of every plane through the
+// camera that the box lies entirely on one side of (its supporting planes), so
+// clipping is a plain Sutherland-Hodgman pass - no projection, no screen-space
+// hull, and it stays exact at any angle.
+
+// A wing vertex while it is being clipped: world position plus the Gouraud
+// colour that travels with it, so cutting an edge also interpolates the shading
+// instead of leaving a hard colour seam at the cut.
+struct ClipVertex {
+    Vec3 p;
+    FaceColor c;
+};
+
+constexpr int kMaxShadowPlanes = 12;
+constexpr int kMaxClipVerts = 16;
+
+struct ShadowCone {
+    Vec3 plane[kMaxShadowPlanes];  // outward normals; the apex is the camera
+    int count = 0;
+};
+
+// Camera -> the eight corners of the body box, kept in one place so the cone and
+// the point tests agree.
+inline void bodyCorners(const Vec3& boxMin, const Vec3& boxMax, Vec3 out[8]) {
+    for (int i = 0; i < 8; ++i) {
+        out[i] = {(i & 1) ? boxMax.x : boxMin.x, (i & 2) ? boxMax.y : boxMin.y,
+                  (i & 4) ? boxMax.z : boxMin.z};
+    }
+}
+
+// Builds the half-spaces of the body's shadow cone. A point is inside the cone
+// (i.e. hidden behind the body) when it satisfies every plane.
+inline ShadowCone buildShadowCone(const Vec3& apex, const Vec3& boxMin, const Vec3& boxMax) {
+    static constexpr int kEdges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3},
+                                          {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    Vec3 corner[8];
+    bodyCorners(boxMin, boxMax, corner);
+
+    ShadowCone cone;
+    for (const auto& e : kEdges) {
+        const Vec3 a = corner[e[0]] - apex;
+        const Vec3 b = corner[e[1]] - apex;
+        Vec3 n = cross(a, b);
+        const float len = length(n);
+        if (!(len > 1e-6f)) continue;  // edge runs straight at the camera
+        n = n * (1.0f / len);
+
+        // Keep only the planes the box lies entirely behind; the rest cut
+        // through it and are not part of the silhouette.
+        float dmax = -3.0e38f;
+        float dmin = 3.0e38f;
+        for (const Vec3& c : corner) {
+            const float d = dot(n, c - apex);
+            if (d > dmax) dmax = d;
+            if (d < dmin) dmin = d;
+        }
+        // Orient so the whole box sits on the negative side; the cone is then
+        // simply "behind every plane".
+        if (dmax <= 1e-4f) {
+            // box already on the negative side
+        } else if (dmin >= -1e-4f) {
+            n = n * -1.0f;
+        } else {
+            continue;  // plane cuts through the box: not part of the silhouette
+        }
+
+        bool duplicate = false;
+        for (int i = 0; i < cone.count; ++i) {
+            if (dot(cone.plane[i], n) > 0.9999f) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate && cone.count < kMaxShadowPlanes) cone.plane[cone.count++] = n;
+    }
+    return cone;
+}
+
+// A convex polygon on its way through the clipper.
+struct ClipPolygon {
+    ClipVertex v[kMaxClipVerts];
+    int count = 0;
+};
+
+// Sutherland-Hodgman against one plane through `apex`. `keepOutside` keeps the
+// half-space the plane normal points into.
+inline int clipToHalfSpace(const ClipVertex* in, int count, const Vec3& n, const Vec3& apex,
+                           bool keepOutside, ClipVertex* out) {
+    if (count < 3) return 0;
+    if (count > kMaxClipVerts) count = kMaxClipVerts;
+
+    int m = 0;
+    for (int i = 0; i < count; ++i) {
+        const ClipVertex& cur = in[i];
+        const ClipVertex& nxt = in[(i + 1) % count];
+        const float dc = dot(n, cur.p - apex);
+        const float dn = dot(n, nxt.p - apex);
+        const bool curIn = keepOutside ? (dc > 0.0f) : (dc <= 0.0f);
+        const bool nxtIn = keepOutside ? (dn > 0.0f) : (dn <= 0.0f);
+
+        if (curIn) out[m++] = cur;
+        if (curIn != nxtIn) {
+            const float denom = dc - dn;
+            const float t = (denom != 0.0f) ? dc / denom : 0.0f;
+            out[m].p = cur.p + (nxt.p - cur.p) * t;
+            out[m].c = lerpColor(cur.c, nxt.c, t);
+            ++m;
+        }
+    }
+    return m;
+}
+
+// Splits a polygon into the part the body hides and the part it does not,
+// keeping every visible piece.
+//
+// The visible region is the *complement* of a convex cone, which is not convex,
+// so a single clip pass cannot express it. It is written instead as a disjoint
+// union of convex pieces:
+//
+//   visible = (P minus H1) + (P n H1 minus H2) + (P n H1 n H2 minus H3) + ...
+//
+// where the Hk are the cone's half-spaces. The pieces tile the visible part
+// exactly - no gaps and no double-drawn overlap.
+inline int clipPolygonOutsideCone(const ClipVertex* in, int count, const ShadowCone& cone,
+                                  const Vec3& apex, ClipPolygon* pieces, int maxPieces) {
+    if (count < 3 || maxPieces <= 0) return 0;
+
+    ClipPolygon cur;
+    cur.count = (count > kMaxClipVerts) ? kMaxClipVerts : count;
+    for (int i = 0; i < cur.count; ++i) cur.v[i] = in[i];
+
+    int written = 0;
+    for (int k = 0; k < cone.count; ++k) {
+        // The piece poking out of this plane, on the visible side.
+        ClipPolygon visible;
+        visible.count = clipToHalfSpace(cur.v, cur.count, cone.plane[k], apex, true, visible.v);
+        if (visible.count >= 3) {
+            if (written < maxPieces) pieces[written++] = visible;
+        }
+
+        // Everything still inside every plane so far is hidden; stop once it is
+        // empty, because the remaining pieces would be empty too.
+        ClipPolygon remaining;
+        remaining.count = clipToHalfSpace(cur.v, cur.count, cone.plane[k], apex, false, remaining.v);
+        cur = remaining;
+        if (cur.count < 3) break;
+    }
+    return written;
 }
 
 // Box the body actually occupies, built from the collision AABB.

@@ -18,7 +18,7 @@
 //     <outdir>/<style>_hero.png 3/4 close-up at the idle pose
 //     <outdir>/<style>_sides.png behind vs. in front (both palette sides)
 //     <outdir>/showcase.png     every style at the idle pose
-//     <outdir>/front_gate.png   orbit sweep of the front-view gate
+//     <outdir>/orbit_clip.png   orbit sweep: the body cutting the wings out
 //     <outdir>/front_before_after.png  front view: wings over the body vs. hidden
 
 #include "modules/visual/wings_design.hpp"
@@ -207,8 +207,8 @@ struct Scene {
     wings::Vec3 feet{0.0f, 0.0f, 0.0f};
     int centerX = 0;
     int centerY = 0;
-    bool cullBehindBody = true;  // the geometry cull the module applies
-    bool frontGate = true;       // skip the wings entirely unless the camera is behind
+    // Cut the body out of the wings (what the overlay does from the front).
+    bool clipBody = true;
 };
 
 // Shades and rasterizes one double-sided quad exactly like the overlay does:
@@ -216,22 +216,24 @@ struct Scene {
 // from an interpolated normal, which flips across a curved sheet and turns it
 // into a front/back patchwork), light it, and fill it with per-corner colours so
 // the tessellator/preview interpolates a gradient across the cell.
-void drawQuad(FrameBuffer& fb, const Scene& scene, const wings::WingQuad& q, float extraTint = 1.0f,
-              bool ignoreDepth = false, float alpha = 1.0f) {
-    wings::Vec3 world[4];
+// Shades one quad and stores its four world-space corners with the Gouraud
+// colour that goes with each of them. Returns false when the quad is behind the
+// camera and cannot be projected.
+bool shadeQuad(const Scene& scene, const wings::WingQuad& q, float extraTint,
+               wings::ClipVertex out[4]) {
     for (int i = 0; i < 4; ++i) {
-        world[i] = wings::modelPointToWorld(q.p[i].x, q.p[i].y, q.p[i].z, scene.feet, scene.right,
+        out[i].p = wings::modelPointToWorld(q.p[i].x, q.p[i].y, q.p[i].z, scene.feet, scene.right,
                                             scene.forward);
     }
 
-    const wings::Vec3 center = (world[0] + world[1] + world[2] + world[3]) * 0.25f;
-    const wings::Vec3 toCamera = scene.cam.pos - center;
+    const wings::Vec3 center = (out[0].p + out[1].p + out[2].p + out[3].p) * 0.25f;
+    const wings::Vec3 toCamera = wings::toCameraVector(scene.cam.pos, center);
 
     // model +z is the player's back; a camera behind the player sees `back`.
-    const wings::Vec3 backDir = wings::modelDirToWorld({0.0f, 0.0f, 1.0f}, scene.right, scene.forward);
     const wings::Vec3 bodyCenter = wings::modelPointToWorld(0.0f, 20.0f, 0.0f, scene.feet,
                                                             scene.right, scene.forward);
-    const bool facingBack = wings::dot(backDir, scene.cam.pos - bodyCenter) > 0.0f;
+    const bool facingBack = wings::cameraSeesBackSide(scene.cam.pos, bodyCenter, scene.right,
+                                                      scene.forward);
     const wings::Vec3 normal = wings::modelDirToWorld(q.n, scene.right, scene.forward);
     const wings::Vec3 litNormal = facingBack ? normal : normal * -1.0f;
     const wings::FaceColor* cornerColors = facingBack ? q.backC : q.frontC;
@@ -240,16 +242,46 @@ void drawQuad(FrameBuffer& fb, const Scene& scene, const wings::WingQuad& q, flo
                        wings::spanTint(q.spanT) * extraTint;
     if (q.emissive > 0.0f && brightness < q.emissive) brightness = q.emissive;
 
-    ScreenPoint sp[4];
-    for (int i = 0; i < 4; ++i) sp[i] = project(scene.cam, world[i], scene.centerX, scene.centerY);
-    for (const ScreenPoint& p : sp) {
-        if (!p.visible) return;
-    }
+    for (int k = 0; k < 4; ++k) out[k].c = wings::shadeFace(cornerColors[k], brightness);
+    return true;
+}
 
-    wings::FaceColor shaded[4];
-    for (int k = 0; k < 4; ++k) shaded[k] = wings::shadeFace(cornerColors[k], brightness);
-    fillTriangle(fb, sp[0], sp[1], sp[2], shaded[0], shaded[1], shaded[2], ignoreDepth, alpha);
-    fillTriangle(fb, sp[0], sp[2], sp[3], shaded[0], shaded[2], shaded[3], ignoreDepth, alpha);
+// Rasterizes a convex world-space polygon (already clipped) as a fan.
+void drawPolygon(FrameBuffer& fb, const Scene& scene, const wings::ClipVertex* v, int count,
+                 bool ignoreDepth = false, float alpha = 1.0f) {
+    if (count < 3) return;
+    ScreenPoint sp[wings::kMaxClipVerts];
+    for (int i = 0; i < count; ++i) {
+        sp[i] = project(scene.cam, v[i].p, scene.centerX, scene.centerY);
+        if (!sp[i].visible) return;
+    }
+    for (int t = 1; t + 1 < count; ++t) {
+        fillTriangle(fb, sp[0], sp[t], sp[t + 1], v[0].c, v[t].c, v[t + 1].c, ignoreDepth, alpha);
+    }
+}
+
+void drawQuad(FrameBuffer& fb, const Scene& scene, const wings::WingQuad& q, float extraTint = 1.0f,
+              bool ignoreDepth = false, float alpha = 1.0f) {
+    wings::ClipVertex v[4];
+    if (!shadeQuad(scene, q, extraTint, v)) return;
+    drawPolygon(fb, scene, v, 4, ignoreDepth, alpha);
+}
+
+// Same pipeline as the overlay: shade the quad, cut the body out of it, draw
+// whatever survives.
+void drawWingQuad(FrameBuffer& fb, const Scene& scene, const wings::WingQuad& q,
+                  const wings::ShadowCone& cone, bool clipBody, const wings::Vec3& apex) {
+    wings::ClipVertex v[4];
+    if (!shadeQuad(scene, q, 1.0f, v)) return;
+
+    if (!clipBody) {
+        drawPolygon(fb, scene, v, 4);
+        return;
+    }
+    wings::ClipPolygon pieces[wings::kMaxShadowPlanes];
+    const int n = wings::clipPolygonOutsideCone(v, 4, cone, apex, pieces,
+                                                wings::kMaxShadowPlanes);
+    for (int i = 0; i < n; ++i) drawPolygon(fb, scene, pieces[i].v, pieces[i].count);
 }
 
 // Axis-aligned box -> quads, so the player mannequin goes through the same
@@ -327,36 +359,26 @@ void drawWings(FrameBuffer& fb, const Scene& scene, int styleIndex, const wings:
     if (styleIndex < 0 || styleIndex >= wings::kWingStyleCount) styleIndex = 0;
     const wings::WingDesign& design = wings::kWingDesigns[styleIndex];
 
-    // The module's front-view gate, applied before anything is drawn.
-    const wings::Vec3 gateCenter = scene.feet + wings::Vec3{0.0f, 1.25f, 0.0f};
-    const float backness = wings::cameraBackness(scene.cam.pos, gateCenter, scene.forward);
-    if (scene.frontGate && !(backness > 0.0f)) return;
-    const float wingAlpha = scene.frontGate ? wings::wingFadeAlpha(backness) : 1.0f;
-
     // Occluder the module uses: collision width, model depth.
     wings::Vec3 bodyMin, bodyMax;
     wings::bodyOccluderFromAabb({scene.feet.x - 0.3f, scene.feet.y, scene.feet.z - 0.3f},
                                 {scene.feet.x + 0.3f, scene.feet.y + 1.8f, scene.feet.z + 0.3f},
                                 bodyMin, bodyMax);
 
+    // Same gate as the module: the body only hides the wings when the camera is
+    // on the front side, where the shadow cone is exact.
+    const wings::Vec3 bodyCenter = scene.feet + wings::Vec3{0.0f, 1.25f, 0.0f};
+    const bool clipBody = scene.clipBody &&
+                          wings::cameraBackness(scene.cam.pos, bodyCenter, scene.forward) < 0.0f;
+    const wings::ShadowCone cone =
+        clipBody ? wings::buildShadowCone(scene.cam.pos, bodyMin, bodyMax) : wings::ShadowCone{};
+
     static wings::WingQuad quads[wings::kMaxWingQuads];
-    const int count = wings::buildWing(design, pose, -1, quads, wings::kMaxWingQuads);
-    for (int i = 0; i < count; ++i) {
-        if (scene.cullBehindBody &&
-            wings::quadHiddenByBody(quads[i], bodyMin, bodyMax, scene.feet, scene.right,
-                                    scene.forward, scene.cam.pos)) {
-            continue;
+    for (int side = -1; side <= 1; side += 2) {
+        const int count = wings::buildWing(design, pose, side, quads, wings::kMaxWingQuads);
+        for (int i = 0; i < count; ++i) {
+            drawWingQuad(fb, scene, quads[i], cone, clipBody, scene.cam.pos);
         }
-        drawQuad(fb, scene, quads[i], 1.0f, false, wingAlpha);
-    }
-    const int countLeft = wings::buildWing(design, pose, 1, quads, wings::kMaxWingQuads);
-    for (int i = 0; i < countLeft; ++i) {
-        if (scene.cullBehindBody &&
-            wings::quadHiddenByBody(quads[i], bodyMin, bodyMax, scene.feet, scene.right,
-                                    scene.forward, scene.cam.pos)) {
-            continue;
-        }
-        drawQuad(fb, scene, quads[i], 1.0f, false, wingAlpha);
     }
 }
 
@@ -456,14 +478,14 @@ void renderSides(const std::string& outDir, int styleIndex) {
     writePng(outDir + "/" + wings::kWingDesigns[styleIndex].id + "_sides.png", fb);
 }
 
-// Orbit sweep of the front-view gate: the camera walks from directly behind the
-// player round to directly in front. The wings must be fully opaque through the
-// normal third-person range, fade out as the camera passes side-on, and be gone
-// entirely in front.
+// Orbit sweep: the camera walks from directly behind the player round to
+// directly in front. The wings stay fully visible at every angle; the body only
+// cuts out the geometry it actually hides, so the cut grows from the centre
+// outwards as the camera swings around.
 //
 //   0 deg   45 deg   70 deg   90 deg   135 deg   180 deg
-//   behind  behind   fading   side-on  front     dead front
-void renderFrontGate(const std::string& outDir) {
+//   behind  behind   behind   side-on  front     dead front
+void renderOrbitClip(const std::string& outDir) {
     constexpr int kPanelW = 300;
     constexpr int kPanelH = 340;
     constexpr int kPanels = 6;
@@ -483,12 +505,12 @@ void renderFrontGate(const std::string& outDir) {
         drawWings(panel, scene, 1 /* Angel */, makePose(kPoses[0]));
         pastePanel(fb, panel, i * kPanelW, 0);
     }
-    writePng(outDir + "/front_gate.png", fb);
+    writePng(outDir + "/orbit_clip.png", fb);
 }
 
-// The defect vs. the fix, same front camera both times: without the gate the
-// sails are painted straight over the player (the old behaviour), with the gate
-// the overlay is simply not drawn.
+// The defect vs. the fix, same front camera both times: without clipping the
+// sails are painted straight over the player (the old behaviour), with it only
+// the part behind the body is removed and the rest of the wings stays visible.
 void renderFrontBeforeAfter(const std::string& outDir) {
     constexpr int kPanelW = 520;
     constexpr int kPanelH = 520;
@@ -503,7 +525,7 @@ void renderFrontBeforeAfter(const std::string& outDir) {
         panel.clear(30, 34, 44);
 
         Scene scene = makeScene(180.0f, 0.30f, 4.4f, 1.30f, kPanelW, kPanelH);
-        scene.frontGate = (i == 1);  // 0 = old behaviour, 1 = fixed
+        scene.clipBody = (i == 1);  // 0 = wings painted over the body, 1 = cut out
         drawPlayer(panel, scene);
         drawWings(panel, scene, 1 /* Angel */, makePose(kPoses[0]));
         pastePanel(fb, panel, i * kPanelW, 0);
@@ -543,7 +565,7 @@ int main(int argc, char** argv) {
         renderSides(outDir, s);
     }
     renderShowcase(outDir);
-    renderFrontGate(outDir);
+    renderOrbitClip(outDir);
     renderFrontBeforeAfter(outDir);
     return 0;
 }
