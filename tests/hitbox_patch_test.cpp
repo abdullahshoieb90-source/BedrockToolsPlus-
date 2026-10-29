@@ -376,48 +376,33 @@ int main() {
         nearMob.setCategories(ActorCategories::IsMob);
         midMob.setBoxX(60.0f);
         midMob.setCategories(ActorCategories::IsMob);
-        farMob.setBoxX(150.0f);
+        farMob.setBoxX(120.0f);
         farMob.setCategories(ActorCategories::IsMob);
 
-        check(near(ranged.range, 100.0f), "players and mobs default to a 100 block range");
-        check(near(ranged.itemsRange, 32.0f), "items keep a shorter 32 block range");
-
-        const std::vector<FetchEntry> mobs{{&nearMob, 10.0f}, {&midMob, 60.0f}, {&farMob, 150.0f}};
+        // The Range sliders are gone: one fixed scan radius fetches actors,
+        // and everything fetched is drawn regardless of its distance.
+        const std::vector<FetchEntry> mobs{{&nearMob, 10.0f}, {&midMob, 60.0f}, {&farMob, 120.0f}};
         FrameResult within = drawFrame(mobs, localPlayer);
-        check(within.boxes == 2, "a mob outside the 100 block range is not drawn");
-        check(near(within.bounds.maxX, 60.6f), "the farthest drawn mob is the one inside the range");
-        check(near(g_lastFetchExtent, 100.0f), "the actor fetch covers the configured range");
+        check(within.boxes == 3, "mobs near and far are all drawn (no distance filter)");
+        check(near(within.bounds.maxX, 120.6f), "the 120-block mob is drawn");
+        check(near(g_lastFetchExtent, kHitboxScanRadius),
+              "the actor fetch uses the fixed scan radius");
 
-        ranged.range = 200.0f;
-        check(drawFrame(mobs, localPlayer).boxes == 3, "raising the range brings the far mob back");
+        // Group toggles keep working (they replaced the range as the filter).
+        ranged.showEntities = false;
+        check(drawFrame(mobs, localPlayer).boxes == 0, "Show Entities off hides the mobs");
+        ranged.showEntities = true;
 
-        ranged.range = 40.0f;
-        check(drawFrame(mobs, localPlayer).boxes == 1, "lowering the range drops the mid mob");
-
-        ranged.range = 0.0f;
-        check(drawFrame(mobs, localPlayer).boxes == 0, "range 0 disables the group");
-        ranged.range = 100.0f;
-
-        // Items are their own group: same fetch, shorter range.
+        // Items share the same scan radius; only the toggle gates them.
         FakeActor itemActor;
         itemActor.setBoxX(40.0f);
         itemActor.setCategories(ActorCategories::IsItem);
         const std::vector<FetchEntry> items{{&itemActor, 40.0f}};
+        check(drawFrame(items, localPlayer).boxes == 1, "an item within the scan radius is drawn");
 
-        ranged.itemsRange = 32.0f;
-        check(drawFrame(items, localPlayer).boxes == 0, "an item outside its own range is not drawn");
-        ranged.itemsRange = 64.0f;
-        check(drawFrame(items, localPlayer).boxes == 1, "an item inside its own range is drawn");
-
-        // Ranges are clamped so a hand-edited config cannot scan the world.
-        ranged.range = 5000.0f;
-        ranged.itemsRange = -12.0f;
-        drawFrame(items, localPlayer);
-        check(near(g_lastFetchExtent, kHitboxMaxRange),
-              "the fetch extent is clamped to the module ceiling");
-
-        ranged.range = 100.0f;
-        ranged.itemsRange = 32.0f;
+        ranged.showItems = false;
+        check(drawFrame(items, localPlayer).boxes == 0, "Show Items off hides the item");
+        ranged.showItems = true;
     }
 
     // The ranged module is scoped to its own block; put the module the other
@@ -443,29 +428,22 @@ int main() {
         oldConfig["showPlayers"] = false;
         legacy.loadConfig(oldConfig);
         check(legacy.smoothBoxes, "config saved before the option existed keeps smoothing on");
-        check(near(legacy.range, 100.0f) && near(legacy.itemsRange, 32.0f),
-              "config saved before the ranges existed keeps the 100/32 defaults");
 
+        // The Range sliders are gone from the menu: saveConfig must not emit
+        // the keys (the menu is built from saveConfig output), and configs
+        // saved by older builds load harmlessly with the keys ignored.
         HitboxModule ranged;
         nlohmann::json savedRanges;
         ranged.saveConfig(savedRanges);
-        check(savedRanges.contains("range") && savedRanges.contains("itemsRange"),
-              "saveConfig persists both draw ranges");
+        check(!savedRanges.contains("range") && !savedRanges.contains("itemsRange"),
+              "saveConfig no longer emits the removed Range sliders");
 
-        nlohmann::json incomingRanges;
-        incomingRanges["range"] = 150.0f;
-        incomingRanges["itemsRange"] = 8.0f;
-        ranged.loadConfig(incomingRanges);
-        check(near(ranged.range, 150.0f) && near(ranged.itemsRange, 8.0f),
-              "loadConfig reads both draw ranges");
-
-        nlohmann::json crazyRanges;
-        crazyRanges["range"] = 99999.0f;
-        crazyRanges["itemsRange"] = -40.0f;
-        HitboxModule clamped;
-        clamped.loadConfig(crazyRanges);
-        check(near(clamped.range, kHitboxMaxRange), "an oversized range is clamped to the ceiling");
-        check(near(clamped.itemsRange, 0.0f), "a negative range clamps to 0 (disabled)");
+        nlohmann::json oldRanges;
+        oldRanges["range"] = 12.0f;
+        oldRanges["itemsRange"] = 4.0f;
+        ranged.loadConfig(oldRanges);
+        check(near(g_lastFetchExtent, kHitboxScanRadius),
+              "a stale config cannot shrink the fixed scan radius");
     }
 
     std::printf("hitbox indicator reach\n");

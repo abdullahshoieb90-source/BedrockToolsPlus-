@@ -4,9 +4,12 @@
 #include <bedrocktools/sdk/Types.hpp>
 #include <string>
 
-// Hard ceiling for the Hitbox draw ranges (blocks). Keeps the per-frame actor
-// fetch and the per-entity occlusion rays bounded on mobile.
-inline constexpr float kHitboxMaxRange = 200.0f;
+// Fixed scan radius (blocks) for the per-frame actor fetch. There is no
+// user-facing Range slider any more: hitboxes are drawn for everything the
+// game fetches within this radius, which stays well beyond the ~50-block
+// sight the overlay is used at while keeping the fetch, the per-entity
+// occlusion rays and the line mesh bounded on mobile CPUs.
+inline constexpr float kHitboxScanRadius = 128.0f;
 
 class HitboxModule : public Module {
 public:
@@ -25,12 +28,6 @@ public:
     bool showPlayers = true;
     bool showItems = true;
 
-    // Draw distance in blocks, measured from the local player. Players and mobs
-    // share `range` (100 blocks by default); items keep their own, shorter
-    // range so dropped stacks and farms do not flood the screen at distance.
-    // 0 disables the group. Clamped to [0, kHitboxMaxRange] when loading.
-    float range = 100.0f;
-    float itemsRange = 32.0f;
     uint32_t showItemsColor = 0xFFFFFFFFu;
     // Draw the local player's own box when the camera is in third person.
     // First-person (including jumping, where the camera interpolates above
