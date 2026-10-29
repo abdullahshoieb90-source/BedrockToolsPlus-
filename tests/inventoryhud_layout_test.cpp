@@ -153,10 +153,15 @@ int main() {
     expectHex("durability color empty", durabilityColor(0.0f), 0xFFFF0000u);
     expectHex("durability color half", durabilityColor(0.5f), 0xFF808000u);
 
-    // Stack count sits in the bottom-right corner, one vanilla pixel in.
-    const TextAnchor anchor = countTextAnchor(slot);
+    // Stack counts stay right-aligned within the icon, including the font's
+    // descent. Large requested text shrinks for small slots / wide counts.
+    expectNear("normal count keeps requested size", countTextSize(slot, 12.0f, 64), 12.0f);
+    expectNear("two-digit count fits tiny slot", countTextSize(tiny, 40.0f, 64), 5.0f);
+    expectNear("three-digit count fits tiny slot", countTextSize(tiny, 40.0f, 255), 7.0f / 2.1f);
+    expectNear("negative text size is safe", countTextSize(slot, -1.0f, 64), 0.0f);
+    const TextAnchor anchor = countTextAnchor(slot, 12.0f);
     expectNear("count anchor x", anchor.x, 10.0f + 32.0f - 2.0f);
-    expectNear("count anchor y", anchor.y, 20.0f + 32.0f - 2.0f);
+    expectNear("count baseline leaves room for descent", anchor.y, 20.0f + 32.0f - 2.0f - 3.0f);
 
     if (failures == 0) {
         std::printf("inventoryhud_layout_test: all checks passed\n");

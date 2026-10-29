@@ -248,14 +248,15 @@ void InventoryHudModule::onFrame() {
 
             const std::uint8_t count = runtime.count.load(std::memory_order_acquire);
             if (config.stackCount && count > 1) {
-                const decor::TextAnchor anchor = decor::countTextAnchor(rect);
+                const float size = decor::countTextSize(rect, config.countTextSize, count);
+                const decor::TextAnchor anchor = decor::countTextAnchor(rect, size);
                 pl::modmenu::DrawCommand text;
                 text.type = pl::modmenu::DrawCommandType::Text;
                 text.x = anchor.x;
                 text.y = anchor.y;
                 text.w = -1.0f; // right-aligned at x
                 text.color = config.countColor;
-                text.size = config.countTextSize;
+                text.size = size;
                 text.text = std::to_string(static_cast<unsigned>(count));
                 commands.push_back(std::move(text));
             }

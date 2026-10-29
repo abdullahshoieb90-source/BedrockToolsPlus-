@@ -84,7 +84,15 @@ private:
 using ActorGetOffhandSlotFn = const void* (*)(const void*);
 using HudCameraRendererFn = void (*)(void*, void*, void*, void*, int);
 using BaseActorRenderContextCtorFn = void (*)(void*, void*, void*, void*);
-using ItemStackBaseGetDamageValueFn = int (*)(void*);
+
+// The upstream ArmorHUD reads player equipment wear from the "Damage" int
+// tag in ItemStackBase's user data, rather than its auxiliary damage value.
+struct NbtTreeKey {
+    const char* data;
+    std::size_t len;
+};
+using NbtTreeFindFn = void* (*)(void*, const NbtTreeKey*);
+using ItemStackBaseGetDamageValueFn = short (*)(void*);
 using ItemStackBaseGetRawNameIdFn = std::string (*)(void*);
 using ItemRendererRenderGuiItemNewFn = std::uint64_t (*)(
     void*, void*, void*, unsigned int, unsigned char, std::uint64_t,
@@ -94,6 +102,7 @@ using MinecraftUIRenderContextFillRectangleFn = void (*)(
 
 ActorGetOffhandSlotFn actorGetOffhandSlot = nullptr;
 BaseActorRenderContextCtorFn baseActorRenderContextCtor = nullptr;
+NbtTreeFindFn nbtTreeFind = nullptr;
 ItemStackBaseGetDamageValueFn itemStackBaseGetDamageValue = nullptr;
 ItemStackBaseGetRawNameIdFn itemStackBaseGetRawNameId = nullptr;
 ItemRendererRenderGuiItemNewFn itemRendererRenderGuiItemNew = nullptr;
@@ -223,11 +232,19 @@ void initialize() {
         actorGetOffhandSlot = reinterpret_cast<ActorGetOffhandSlotFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorGetOffhandSlot));
     }
+    // Optional inspection signatures can become available after the renderer;
+    // retry them independently instead of latching their absence forever.
+    if (!nbtTreeFind) {
+        nbtTreeFind = reinterpret_cast<NbtTreeFindFn>(
+            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::NbtTreeFind));
+    }
+    if (!itemStackBaseGetDamageValue) {
+        itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
+            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
+    }
     if (!functionsResolved) {
         baseActorRenderContextCtor = reinterpret_cast<BaseActorRenderContextCtorFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::BaseActorRenderContextCtor));
-        itemStackBaseGetDamageValue = reinterpret_cast<ItemStackBaseGetDamageValueFn>(
-            bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetDamageValue));
         itemStackBaseGetRawNameId = reinterpret_cast<ItemStackBaseGetRawNameIdFn>(
             bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ItemStackBaseGetRawNameId));
         itemRendererRenderGuiItemNew = reinterpret_cast<ItemRendererRenderGuiItemNewFn>(
@@ -330,8 +347,23 @@ std::uint8_t stackCount(void* stack) {
 }
 
 int stackDamage(void* stack) {
-    if (!stack || !itemStackBaseGetDamageValue) return 0;
-    return std::max(0, itemStackBaseGetDamageValue(stack));
+    if (!stack) return 0;
+
+    // Match upstream ArmorHUD's player-stack path. An absent compound or tag
+    // means zero wear; do not confuse the item's auxiliary value with damage.
+    if (nbtTreeFind) {
+        auto* compound = read<std::byte*>(stack, offsets::ShulkerPreview::ItemStackBaseUserData);
+        if (!compound) return 0;
+        const NbtTreeKey key{"Damage", 6};
+        void* node = nbtTreeFind(compound + offsets::ShulkerPreview::CompoundTagTreeRoot, &key);
+        if (!node || node == compound + offsets::ShulkerPreview::CompoundTagTreeEnd) return 0;
+        if (read<std::uint32_t>(node, offsets::ShulkerPreview::NbtNodeType) != 3) return 0;
+        return std::max(0, static_cast<int>(read<std::int32_t>(node, offsets::ShulkerPreview::NbtNodeNumericValue)));
+    }
+
+    // The accessor is used by upstream's shulker preview and can still work
+    // on other stacks if the NBT lookup signature could not be resolved.
+    return itemStackBaseGetDamageValue ? std::max(0, static_cast<int>(itemStackBaseGetDamageValue(stack))) : 0;
 }
 
 int itemMaxDamage(void* item) {

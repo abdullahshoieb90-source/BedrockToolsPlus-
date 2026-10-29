@@ -63,7 +63,7 @@ The module owns a single HUD Editor element, **Inventory Grid**. Armor and the o
 
 **Armor** is its own module: it draws your helmet, chestplate, leggings, boots and the offhand item on the HUD, with or without Inventory HUD enabled. It has its own toggle, keybind, settings and HUD Editor element (**Armor & Offhand**), so it can be placed anywhere on screen independently of the inventory grid.
 
-- **Offhand Slot**, **Stack Count** and **Durability Bar** under **Details** control what is drawn on each slot.
+- **Offhand Slot**, **Right Hand**, **Stack Count** and **Durability Bar** under **Details** control what is drawn. Like the vanilla inventory, counts are shown only for visible stacks larger than one, and bars only for damaged, damageable items. Enable **Right Hand** to see the count of the stack you are carrying. Count text shrinks when needed to fit small slots.
 - **Armor Durability Numbers** is on by default and displays each piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of the durability bars, and its labels are part of the armor element.
 - **Slot Background** (on by default) draws a cell behind every armor and offhand slot — empty ones included — so the column reads like the inventory screen. **Background Color** and **Background Opacity** style those cells.
 - **Horizontal Layout** lays the five slots out in a row instead of a column.

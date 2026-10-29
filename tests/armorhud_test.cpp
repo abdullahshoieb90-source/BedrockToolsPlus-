@@ -12,6 +12,8 @@
 #include <new>
 #include <vector>
 
+#include "fake_damage_nbt.hpp"
+
 // Include the implementations to let the fake engine use the exact render
 // signatures, and to simulate an unavailable / later-resolved offhand accessor.
 #include "modules/hud/huditems.cpp"
@@ -66,7 +68,10 @@ void setStack(void* stack, void* counter, std::uint8_t count, int damage = 0) {
     put(stack, offsets::Inventory::ItemStackItemCounter, counter);
     put(stack, offsets::Inventory::ItemStackCount, count);
     put(stack, offsets::Inventory::ItemStackValid, static_cast<std::uint8_t>(counter != nullptr));
-    put(stack, FakeDamageOffset, damage);
+    // The game's auxiliary damage accessor may report 0 even when the
+    // player's ItemStack has a Damage tag. Model those as distinct fields.
+    put(stack, FakeDamageOffset, std::int16_t{0});
+    fake_damage_nbt::setDamage(stack, damage);
 }
 
 struct PaintedIcon {
@@ -90,6 +95,7 @@ const void* offhand = nullptr;
 const void* offhandPlayer = nullptr;
 int offhandCalls = 0;
 bool offhandAvailable = false;
+bool nbtAvailable = false;
 int renderTag = 0;
 
 void* fakePlayer(void*) { return player; }
@@ -101,10 +107,13 @@ const void* fakeOffhand(const void* actor) {
     return offhand;
 }
 short fakeMaxDamage(void* item) { return static_cast<FakeItem*>(item)->maxDamage; }
-int fakeDamage(void* stack) {
-    int result;
+short fakeDamage(void* stack) {
+    short result;
     std::memcpy(&result, static_cast<std::byte*>(stack) + FakeDamageOffset, sizeof(result));
     return result;
+}
+void* fakeNbtTreeFind(void* root, const hud::NbtTreeKey* key) {
+    return fake_damage_nbt::find(root, key->data, key->len);
 }
 
 hud::RectangleArea fakeClip(void*) { return {0.0f, 1000.0f, 0.0f, 1000.0f}; }
@@ -163,6 +172,8 @@ std::uintptr_t resolve(SignatureId id) {
     switch (id) {
         case SignatureId::ActorGetOffhandSlot:
             return offhandAvailable ? reinterpret_cast<std::uintptr_t>(fakeOffhand) : 0;
+        case SignatureId::NbtTreeFind:
+            return nbtAvailable ? reinterpret_cast<std::uintptr_t>(fakeNbtTreeFind) : 0;
         case SignatureId::ItemStackBaseGetDamageValue:
             return reinterpret_cast<std::uintptr_t>(fakeDamage);
         case SignatureId::BaseActorRenderContextCtor:
@@ -214,12 +225,41 @@ int main() {
     put(actor.bytes, offsets::Inventory::PlayerInventory, proxy.bytes);
     player = actor.bytes;
 
+    // The engine's short-valued accessor is only a fallback: player equipment
+    // can carry actual wear in its NBT Damage tag instead of this aux field.
+    put(armor.stack(0), FakeDamageOffset, std::int16_t{12});
     hud::initialize();
+    check(hud::stackDamage(armor.stack(0)) == 12,
+          "the short damage accessor is used if NBT lookup is unavailable");
+    put(armor.stack(0), FakeDamageOffset, std::int16_t{-1});
+    check(hud::stackDamage(armor.stack(0)) == 0, "negative fallback damage is clamped to zero");
+    put(armor.stack(0), FakeDamageOffset, std::int16_t{12});
     auto equipment = hud::getEquipmentStacks(player);
     check(!equipment.offhand, "unresolved offhand signature safely returns no stack");
     check(equipment.armor[0] == armor.stack(0), "missing offhand accessor does not hide armor");
     offhandAvailable = true;
-    hud::initialize(); // render functions were already resolved; retry offhand
+    nbtAvailable = true;
+    hud::initialize(); // render functions were already resolved; retry optional signatures
+    check(hud::stackDamage(armor.stack(0)) == 143,
+          "the upstream NBT Damage value takes precedence over the aux field");
+    auto& helmetTag = fake_damage_nbt::tags.at(armor.stack(0));
+    helmetTag.present = false;
+    check(hud::stackDamage(armor.stack(0)) == 0, "missing Damage node is treated as undamaged");
+    helmetTag.present = true;
+    helmetTag.returnNull = true;
+    check(hud::stackDamage(armor.stack(0)) == 0, "null NBT search result is safe");
+    helmetTag.returnNull = false;
+    fake_damage_nbt::put(helmetTag.node.data(), offsets::ShulkerPreview::NbtNodeType, std::uint32_t{2});
+    check(hud::stackDamage(armor.stack(0)) == 0, "a non-int Damage tag is ignored");
+    fake_damage_nbt::put(helmetTag.node.data(), offsets::ShulkerPreview::NbtNodeType, std::uint32_t{3});
+    fake_damage_nbt::put(helmetTag.node.data(), offsets::ShulkerPreview::NbtNodeNumericValue, std::int32_t{-7});
+    check(hud::stackDamage(armor.stack(0)) == 0, "negative Damage is clamped to zero");
+    put(armor.stack(1), FakeDamageOffset, std::int16_t{44});
+    const int findsBeforeEmpty = fake_damage_nbt::findCalls;
+    check(hud::stackDamage(armor.stack(1)) == 0 && fake_damage_nbt::findCalls == findsBeforeEmpty,
+          "missing user data is undamaged without searching the NBT tree");
+    check(hud::stackDamage(nullptr) == 0, "a null stack is safe");
+    setStack(armor.stack(0), &counters[0], 1, 143);
     equipment = hud::getEquipmentStacks(player);
     check(equipment.offhand == offhand && offhandPlayer == player, "offhand comes from Actor::getOffhandSlot");
     check(equipment.mainhand == mainhand, "mainhand remains the carried item");
@@ -293,6 +333,24 @@ int main() {
     check(!findText("1"), "single items do not get redundant stack counts");
     check(findText("220/363") && findText("528/528") && findText("0/495") && findText("428/429"),
           "all four armor slots show clamped remaining/maximum durability by default");
+    const float helmetRatio = 220.0f / 363.0f;
+    const auto isHelmetBar = [&](const auto& command) {
+        return command.type == pl::modmenu::DrawCommandType::RectFilled &&
+               near(command.x, 28.0f) && near(command.y, 226.0f);
+    };
+    check(std::any_of(commands.begin(), commands.end(), [&](const auto& command) {
+              return isHelmetBar(command) && near(command.w, 26.0f) && command.color == 0xFF000000u;
+          }) && std::any_of(commands.begin(), commands.end(), [&](const auto& command) {
+              return isHelmetBar(command) && near(command.w, 26.0f * helmetRatio) &&
+                     command.color == decor::durabilityColor(helmetRatio);
+          }), "damaged armor has a correctly sized and colored durability bar");
+    check(std::none_of(commands.begin(), commands.end(), [](const auto& command) {
+              return command.type == pl::modmenu::DrawCommandType::RectFilled && near(command.y, 262.0f);
+          }), "undamaged armor has no vanilla-style durability bar");
+    const auto* offhandCount = findText("16");
+    check(offhandCount && near(offhandCount->x, 54.0f) && offhandCount->w == -1.0f &&
+              offhandCount->y >= 344.0f && offhandCount->y < 376.0f,
+          "the offhand count is right-aligned inside its own slot");
 
     // Slot backgrounds are on by default: every visible slot — empty or not —
     // gets a cell behind its icon, painted in the same native pass.
@@ -320,6 +378,104 @@ int main() {
               label->x + label->w <= element->x + element->width + 0.001f,
           "armor labels stay inside the element");
     const float labeledWidth = element ? element->width : 0.0f;
+
+    setStack(armor.stack(0), &counters[0], 1);
+    frame();
+    check(findText("363/363") && std::none_of(commands.begin(), commands.end(), isHelmetBar),
+          "repairing armor removes its bar and refreshes the durability label");
+    setStack(armor.stack(0), &counters[0], 1, 363);
+    frame();
+    check(findText("0/363") && std::count_if(commands.begin(), commands.end(), isHelmetBar) == 1,
+          "fully worn armor has a black bar without a negative-width fill");
+    setStack(armor.stack(0), &counters[0], 2, 143);
+    frame();
+    const auto* stackedArmorCount = findText("2");
+    check(stackedArmorCount && near(stackedArmorCount->x, 54.0f) &&
+              stackedArmorCount->y >= 200.0f && stackedArmorCount->y < 232.0f &&
+              findText("220/363"),
+          "stackable equipment shows its count as well as its durability");
+    setStack(armor.stack(0), &counters[0], 1, 143);
+
+    // Counts belong to visible equipment, not the inventory total. In
+    // particular the optional right-hand slot must track its carried stack.
+    setStack(inventory.stack(0), &counters[4], 64);
+    frame();
+    check(!findIcon(mainhand) && !findText("64"), "disabled right hand has no icon or count");
+    config["m_showMainhand"] = true;
+    module.loadConfig(config);
+    frame();
+    const auto* mainCount = findText("64");
+    check(findIcon(mainhand) && mainCount && near(mainCount->x, 54.0f) &&
+              mainCount->y >= 380.0f && mainCount->y < 412.0f,
+          "enabling right hand displays the carried stack's count in its slot");
+    config["m_horizontal"] = true;
+    module.loadConfig(config);
+    frame();
+    mainCount = findText("64");
+    const auto* mainIcon = findIcon(mainhand);
+    check(mainIcon && mainCount && mainCount->x > mainIcon->x && mainCount->x < mainIcon->x + 32.0f &&
+              mainCount->y >= mainIcon->y && mainCount->y < mainIcon->y + 32.0f,
+          "right-hand count follows its icon in horizontal layout");
+    config["m_horizontal"] = false;
+    module.loadConfig(config);
+    setStack(inventory.stack(0), &counters[4], 3);
+    frame();
+    check(findText("3") && !findText("64"), "changing the carried stack refreshes the count");
+    config["m_showStackCount"] = false;
+    module.loadConfig(config);
+    frame();
+    check(!findText("3") && !findText("16") && findIcon(mainhand),
+          "disabling stack counts leaves both hand icons visible");
+    config["m_showStackCount"] = true;
+    module.loadConfig(config);
+    setStack(inventory.stack(0), &counters[5], 1, 50);
+    frame();
+    const auto isMainhandBar = [](const auto& command) {
+        return command.type == pl::modmenu::DrawCommandType::RectFilled && near(command.y, 406.0f);
+    };
+    check(findIcon(mainhand) && !findText("3") &&
+              std::count_if(commands.begin(), commands.end(), isMainhandBar) == 2,
+          "a damaged right-hand tool displays its bar without a stale count");
+    config["m_showDurability"] = false;
+    module.loadConfig(config);
+    frame();
+    check(std::none_of(commands.begin(), commands.end(), isMainhandBar) && findText("220/363"),
+          "disabling bars leaves independent armor durability numbers intact");
+    config["m_showDurability"] = true;
+    module.loadConfig(config);
+    setStack(inventory.stack(0), &counters[5], 9, 50);
+    frame();
+    check(findText("9") && std::count_if(commands.begin(), commands.end(), isMainhandBar) == 2,
+          "count and durability bar can appear together over the same item");
+    config["m_showMainhand"] = false;
+    module.loadConfig(config);
+    module.onFrame(); // no intervening native render: the cached slot is still populated
+    check(!findText("9") && std::none_of(commands.begin(), commands.end(), isMainhandBar) && findText("16"),
+          "hiding the right hand immediately suppresses its cached overlays");
+    config["m_showOffhand"] = false;
+    module.loadConfig(config);
+    module.onFrame();
+    check(!findText("16"), "hiding the offhand immediately suppresses its cached count");
+    config["m_showOffhand"] = true;
+    module.loadConfig(config);
+    frame();
+    check(findText("16"), "re-enabling the offhand restores its count");
+
+    // Exercise the upstream hand-container path through the whole render and
+    // overlay pipeline, not just through getEquipmentStacks().
+    put(hands.data.bytes, offsets::Inventory::FillingContainerItems + sizeof(void*),
+        reinterpret_cast<std::uintptr_t>(hands.stack(0)) + 2 * offsets::Inventory::ItemStackSize);
+    setStack(hands.stack(1), &counters[4], 32);
+    registry.remove<ActorEquipmentComponent>(entity);
+    registry.emplace<ActorEquipmentComponent>(entity, hands.data.bytes, armor.data.bytes);
+    frame();
+    check(findIcon(hands.stack(1)) && findText("32") && !findText("16"),
+          "the actual hand-container stack supplies the offhand count");
+    setStack(hands.stack(1), &counters[4], 7);
+    frame();
+    check(findText("7") && !findText("32"), "the hand-container count updates without stale text");
+    registry.remove<ActorEquipmentComponent>(entity);
+    registry.emplace<ActorEquipmentComponent>(entity, nullptr, armor.data.bytes);
 
     setStack(heldStack.bytes, &counters[5], 1, 25); // a single damageable offhand item
     frame();
@@ -433,6 +589,7 @@ int main() {
           "background color and opacity are applied to the cells");
 
     config["m_showArmorDurability"] = true;
+    config["m_showStackCount"] = true;
     config["m_slotSize"] = 8.0f;
     config["m_slotGap"] = 0.0f;
     config["m_countTextSize"] = 40.0f;
@@ -441,6 +598,10 @@ int main() {
     frame();
     label = findText("220/363");
     check(label && near(label->size, 8.0f) && label->color == 0xFF12ABEFu, "number style is applied and fits tiny slots");
+    offhandCount = findText("16");
+    check(offhandCount && offhandCount->size <= 8.0f && offhandCount->color == 0xFF12ABEFu &&
+              offhandCount->w == -1.0f && offhandCount->y > 44.0f && offhandCount->y < 52.0f,
+          "large count text is scaled and aligned to remain inside a tiny slot");
     const auto* tinyElement = findElement(ArmorElementId);
     check(label && tinyElement && label->x >= tinyElement->x &&
               label->x + label->w <= tinyElement->x + tinyElement->width + 0.001f,
