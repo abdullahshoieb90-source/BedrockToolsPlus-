@@ -1,0 +1,149 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "Greninja:mod_menu_main",
+
+  "modmenu_notification": {
+    "offset": "@Greninja:mod_menu_main.notification_enter",
+    "type": "image",
+    "size": ["100%c+10px", "100%c+10px"],
+    "texture": "textures/ui/Xerox/image/BlackToTransparent3",
+    "layer": 900,
+    "anchor_from": "top_right",
+    "anchor_to": "top_right",
+    "controls": [
+      {
+        "notification_text": {
+          "type": "label",
+          "text": "modmenu.notification.text",
+          "shadow": true,
+          "layer": 901,
+          "size": [200, "default"],
+          "font_type": "$global_font_type"
+        }
+      }
+    ]
+  },
+
+  "main_menu@startup.config": {
+    "type": "panel",
+    "size": ["100%", "100%"],
+    "layer": 100,
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "mod_menu_open",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ],
+    "controls": [
+      {
+        "section_toggle_stack": {
+          "type": "stack_panel",
+          "size": [70, "100%c"],
+          "anchor_from": "top_left",
+          "anchor_to": "top_left",
+          "offset": [5, 5],
+          "controls": [
+            {
+              "game_play_@Greninja:mod_menu_common.section_toggle": {
+                "$button_text": "modmenu.sec.gameplay",
+                "$toggle_view_binding_name": "game_play_section"
+              }
+            },
+            {
+              "render_@Greninja:mod_menu_common.section_toggle": {
+                "$button_text": "modmenu.sec.render",
+                "$toggle_view_binding_name": "render_section"
+              }
+            },
+            {
+              "crosshair_@Greninja:mod_menu_common.section_toggle": {
+                "$button_text": "modmenu.sec.crosshair",
+                "$toggle_view_binding_name": "crosshair_section"
+              }
+            },
+            {
+              "backgrounds_@Greninja:mod_menu_common.section_toggle": {
+                "$button_text": "modmenu.sec.backgrounds",
+                "$toggle_view_binding_name": "backgrounds_section"
+              }
+            },
+            { "padding@Greninja:mod_menu_page.padding": { "size": [0, 5] } },
+            {
+              "more_@Greninja:mod_menu_common.section_toggle": {
+                "$button_text": "modmenu.page.moreoption",
+                "$toggle_view_binding_name": "mod_option_page_section"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "page": {
+          "inline_modal": true,
+          "type": "input_panel",
+          "size": ["100%c", "100%"],
+          "anchor_from": "right_middle",
+          "anchor_to": "right_middle",
+          "layer": 200,
+          "bindings": [
+            {
+              "binding_type": "view",
+              "source_control_name": "mod_option_page_section",
+              "source_property_name": "#toggle_state",
+              "target_property_name": "#visible"
+            }
+          ],
+          "controls": [
+            { ".@Greninja:mod_menu_page.page_base": {} }
+          ]
+        }
+      },
+      {
+        "section_contents": {
+          "type": "stack_panel",
+          "size": ["100%-80px", "100%-5px"],
+          "anchor_from": "bottom_right",
+          "anchor_to": "bottom_right",
+          "orientation": "horizontal",
+          "controls": [
+            { "game_play@Greninja:mod_menu_section.game_play": {} },
+            { "render@Greninja:mod_menu_section.render": {} },
+            { "crosshair@Greninja:mod_menu_section.crosshair": {} },
+            { "backgrounds@Greninja:mod_menu_section.backgrounds": {} }
+          ]
+        }
+      }
+    ]
+  },
+
+  "notification_enter": {
+    "anim_type": "offset",
+    "easing": "in_sine",
+    "from": [210, 5],
+    "to": [-6, 5],
+    "next": "@Greninja:mod_menu_main.notification_wait",
+    "duration": 2
+  },
+
+  "notification_wait": {
+    "anim_type": "wait",
+    "duration": 10,
+    "next": "@Greninja:mod_menu_main.notification_out"
+  },
+
+  "notification_out": {
+    "anim_type": "offset",
+    "easing": "out_sine",
+    "to": [210, 5],
+    "from": [-6, 5],
+    "destroy_at_end": "modmenu_notification"
+    "duration": 0.25
+  }
+}

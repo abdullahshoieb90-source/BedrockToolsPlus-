@@ -1,0 +1,101 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "how_to_play_common",
+
+  "dynamic_dialog_screen": {},
+
+  "light_text_button": {
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "action_button": {},
+
+  "topic_category/category_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "toggle_button_control/tab_button_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "section_toggle_button": {
+    "type": "panel",
+    "anchor_from": "top_left",
+    "anchor_to": "top_left",
+    "size": [ "100%", "30px" ],
+    "controls": [
+      {
+        "section_toggle_button@common_toggles.dark_ui_toggle": {
+          "anchor_from": "top_left",
+          "anchor_to": "top_left",
+          "size": [ "100%", "30px" ],
+
+          "$button_type_panel": "how_to_play_common.toggle_button_control",
+          "$checked_control": "common_toggles.toggle_unchecked",
+          "$radio_toggle_group": true,
+          "$toggle_name": "navigation_tab",
+          "$toggle_group_default_selected": "$default_selector_toggle_index",
+
+          "$toggle_tab_focus_binding_type": "global",
+          "$toggle_tab_focus_binding_name": "#navigation_tab_focus_precedence",
+          "$toggle_on_hover_binding_type": "global",
+          "$toggle_on_hover_binding_name": "#toggle_on_hover",
+
+          "$toggle_view_binding_name": "($section_topic + '_button_toggle')",
+          "$toggle_property_bag": {
+            "#panel_title": "('howtoplay.' + $section_topic)"
+          }
+        }
+      }
+    ]
+  },
+
+  "edu_section_toggle_button": {},
+
+  "header_background": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.75
+  },
+
+  "header_background/header_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "paragraph": {
+    "font_type": "$global_font_type"
+  },
+
+  "how_to_play_header": {},
+
+  "how_to_play_content": {
+    "type": "panel",
+    "controls": [
+      {
+        "header@how_to_play_common.how_to_play_header": {
+          "size": [ "100%", "23px" ],
+          "anchor_from": "top_left",
+          "anchor_to": "top_left"
+        }
+      },
+      {
+        "container": {
+          "type": "panel",
+          "size": "$store_screen_size",
+          "controls": [
+            { "$dialog_content@$dialog_content": {} }
+          ]
+        }
+      }
+    ]
+  },
+
+  "section_divider": {
+    "alpha": 0.65,
+    "texture": "textures/ui/Xerox/White"
+  }
+}

@@ -1,0 +1,58 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "start",
+  "exit_icon": {
+    "type": "image",
+    "size": ["100% - 2px", "100% - 2px"],
+    "texture": "textures/ui/redX1"
+  },
+
+  "start_screen": {
+    "$screen_animations": [],
+    "$screen_content": "start_main_screen.start_screen_content"
+  },
+
+  "lower_online_buttons_panel/stacked_column/feedback_padding": {
+  },
+
+  "lower_online_buttons_panel/stacked_column": {
+    "size": ["100%c", 32]
+  },
+
+  "lower_online_buttons_panel/stacked_column/signingin": {
+    "ignored": true
+  },
+
+  "lower_online_buttons_panel/stacked_column/achievements_padding": {
+    "ignored": true
+  },
+
+  "lower_online_buttons_panel/stacked_column/achievements_btn": {
+    "ignored": true
+  },
+
+  "lower_online_buttons_panel/stacked_column/invite_padding": {
+    "bindings": []
+  },
+
+  "lower_online_buttons_panel/stacked_column/invite_btn_other": {
+    "bindings": []
+  },
+
+  "lower_online_buttons_panel/stacked_column/invite_btn_other/invite_button": {
+    "bindings": []
+  },
+
+  "lower_online_buttons_panel/stacked_column/notificationcenter_padding": {
+    "bindings": []
+  },
+
+  "lower_online_buttons_panel/stacked_column/notificationcenter_btn": {
+    "bindings": []
+  }
+}

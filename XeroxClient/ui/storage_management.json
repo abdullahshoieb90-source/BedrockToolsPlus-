@@ -1,0 +1,69 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "storage_management",
+  
+  "storage_header_panel/header_panel/panel/multiselect_button": {
+    "offset": [ 0, 0 ],
+    "size": [ "100%", 32 ],
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "storage_footer_panel/visibleContent/delete_button":{
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "storage_footer_panel/visibleContent/share_button":{
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "generic_button/text": {
+    "font_type": "$global_font_type"
+  },
+
+  "common_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "common_main_button/background":{
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.45
+  },
+
+  "common_main_button/border":{
+    "variables":[
+      {
+        "requires": "($button_state = default)",
+        "$border_texture": ""
+      },
+      {
+        "requires": "($button_state = hover)",
+        "$border_texture": "textures/ui/Xerox/white_border"
+      }
+    ]
+  },
+
+  "main_content_panel/panel/image_panel/image_border": {
+    "alpha": 0
+  },
+  "resource_toggle/item_button_panel/y_sizing_panel/border": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.65
+  },
+
+  "sub_item_tray_button":{
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "dropdown_button":{
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "storage_main_item_toggle/main_item_toggle": {
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  }
+}

@@ -1,0 +1,139 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "server_form",
+
+  "third_party_server_screen": {
+    "force_render_below": true,
+    "$screen_animations": [
+      "@common.screen_exit_animation_push_fade",
+      "@common.screen_exit_animation_pop_fade",
+      "@common.screen_entrance_animation_push_fade",
+      "@common.screen_entrance_animation_pop_fade"
+    ]
+  },
+
+  "main_screen_content": {
+    "size": ["100%", "100%"]
+  },
+
+  "long_form": {
+    "$close_button_offset": [ 21, 0 ],
+    "$custom_background": "dialog_image.form_background",
+    "size": [235, "80%"],
+    "animation_reset_name": "screen_animation_reset",
+    "anims": [
+      "@server_form_animation.form_out_animation",
+      "@server_form_animation.form_out_animation_pop",
+      "@server_form_animation.form_enter_animation",
+      "@server_form_animation.form_enter_animation_pop"
+    ]
+  },
+
+  "long_form_scrolling_content/label_offset_panel/main_label": {
+    "font_type":"$global_font_type"
+  },
+
+  "dynamic_button": {
+    "type": "stack_panel",
+    "size": ["100%", 28],
+    "orientation": "horizontal",
+    "controls":[
+      {
+        "panel_name": {
+          "type": "panel",
+          "size": [28, "100%c"],
+          "bindings": [
+            {
+              "binding_type": "view",
+              "source_control_name": "image",
+              "resolve_sibling_scope": true,
+              "source_property_name": "(not (#texture = ''))",
+              "target_property_name": "#visible"
+            }
+          ],
+
+          "controls": [
+            {
+              "image": {
+                "type": "image",
+                "layer": 2,
+                "size": [28, 28],
+                "bindings":[
+                  {
+                    "binding_name": "#form_button_texture",
+                    "binding_name_override": "#texture",
+                    "binding_type": "collection",
+                    "binding_collection_name": "form_buttons"
+                  },
+                  {
+                    "binding_name": "#form_button_texture_file_system",
+                    "binding_name_override": "#texture_file_system",
+                    "binding_type": "collection",
+                    "binding_collection_name": "form_buttons"
+                  },
+                  {
+                    "binding_type": "view",
+                    "source_property_name": "(not ((#texture = '') or (#texture = 'loading')))",
+                    "target_property_name": "#visible"
+                  }
+                ]
+              }
+            },
+            {
+              "progress@progress.progress_loading_bars": {
+                "size": [28, 3.7],
+                "offset": [0, 15],
+                "bindings":[
+                  {
+                    "binding_type": "view",
+                    "source_control_name": "image",
+                    "resolve_sibling_scope": true,
+                    "source_property_name": "(#texture = 'loading')",
+                    "target_property_name": "#visible"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "form_button@common_buttons.light_text_button": {
+          "$pressed_button_name": "button.form_button_click",
+          "anchor_from": "top_left",
+          "anchor_to": "top_left",
+          "size": [ "fill", 28 ],
+          "$button_text": "#form_button_text",
+          "$button_text_binding_type": "collection",
+          "$button_text_grid_collection_name": "form_buttons",
+          "$button_text_max_size": [ "100%", 20 ],
+          "bindings": [
+            {
+              "binding_type": "collection_details",
+              "binding_collection_name": "form_buttons"
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+
+  "custom_form": {
+    "$close_button_offset": [ 21, 0 ],
+    "$custom_background": "dialog_image.form_background",
+    "size": [235, "80%"],
+    "animation_reset_name": "screen_animation_reset",
+    "anims": [
+      "@server_form_animation.form_out_animation",
+      "@server_form_animation.form_out_animation_pop",
+      "@server_form_animation.form_enter_animation",
+      "@server_form_animation.form_enter_animation_pop"
+    ]
+  }
+}

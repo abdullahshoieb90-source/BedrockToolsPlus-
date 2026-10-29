@@ -1,0 +1,66 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "Greninja:mod_backgrounds",
+
+  "gradient_base": {
+    "type": "custom",
+    "renderer": "gradient_renderer",
+    "color1": "$gradient_color",
+    "color2": "$gradient_color",
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "$source_control_name",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ]
+  },
+
+  "background_content": {
+    "type": "panel",
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "mod_background",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ],
+    "controls": [
+      { "lighter@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [1.0, 1.0, 1.0, 0.06], "$source_control_name": "mod_backgrounds_lighter" } },
+      { "darker@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [0.0, 0.0, 0.0, 0.06], "$source_control_name": "mod_backgrounds_darker" } },
+      {
+        "color_backgrounds": {
+          "type": "panel",
+          "propagate_alpha": true,
+          "bindings": [
+            {
+              "binding_type": "view",
+              "source_control_name": "mod_backgrounds_alpha_slider",
+              "source_property_name": "(#slider_value/10)",
+              "target_property_name": "#alpha",
+              "resolve_sibling_scope": false
+            }
+          ],
+          "controls": [
+            { "red@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [0.9294117647, 0.1098039216, 0.1411764706], "$source_control_name": "mod_backgrounds_red" } },
+            { "orange@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [1.0, 0.4980392157, 0.1529411765], "$source_control_name": "mod_backgrounds_orange" } },
+            { "yellow@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [1.0, 0.7882352941, 0.05490196078], "$source_control_name": "mod_backgrounds_yellow" } },
+            { "chartreuse@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [0.7098039216, 0.9019607843, 0.1137254902], "$source_control_name": "mod_backgrounds_chartreuse" } },
+            { "green@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [0.1333333333, 0.6941176471, 0.2980392157], "$source_control_name": "mod_backgrounds_green" } },
+            { "blue@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [0.0, 0.6352941176, 0.9098039216], "$source_control_name": "mod_backgrounds_blue" } },
+            { "indigo@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [0.2470588235, 0.2823529412, 0.8], "$source_control_name": "mod_backgrounds_indigo" } },
+            { "purple@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [0.6392156863, 0.2862745098, 0.6431372549], "$source_control_name": "mod_backgrounds_purple" } },
+            { "pink@Greninja:mod_backgrounds.gradient_base": { "$gradient_color": [1.0, 0.6823529412, 0.7882352941], "$source_control_name": "mod_backgrounds_pink" } }
+          ]
+        }
+      }
+    ]
+  }
+}

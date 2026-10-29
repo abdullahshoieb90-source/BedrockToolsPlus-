@@ -1,0 +1,66 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "xeroxclient_hand-hold_item_display",
+  "hand-hold_item_display@hud.hotbar_grid": {
+    "grid_item_template": "xeroxclient_hand-hold_item_display.hand-hold_item_renderer"
+  },
+
+  "hand-hold_item_renderer": {
+    "type": "panel",
+    "$stack_count_required": true,
+    "$durability_bar_required": true,
+    "size": [ "0%y", "0%y" ],
+    "controls": [
+      {
+        "item_icon@hud.hotbar_hud_item_icon": {
+          "layer": 1,
+          "size": [ 16, 16 ]
+        }
+      },
+      {
+        "item_dura@common.durability_bar": {
+          "$item_collection_name": "$hotbar_collection_name",
+          "layer": 2
+        }
+      },
+      {
+        "panel_for_item_stack_count": {
+          "type": "panel",
+          "size": [16, 16],
+          "controls": [
+            {
+              "item_count@common.stack_count_label": {
+                "$item_collection_name": "$hotbar_collection_name",
+                "$stack_count_collection_name": "$hotbar_collection_name",
+                "anchor_from": "bottom_right",
+                "font_scale_factor": 1.0,
+                "anchor_to": "bottom_right",
+                "bindings": [
+                  {
+                    "binding_name": "#inventory_stack_count",
+                    "binding_type": "collection",
+                    "binding_collection_name": "$stack_count_collection_name"
+                  }
+                ],
+                "layer": 3
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "bindings": [
+      {
+        "binding_name": "#slot_selected",
+        "binding_name_override": "#visible",
+        "binding_type": "collection",
+        "binding_collection_name": "$hotbar_collection_name"
+      }
+    ]
+  }
+}

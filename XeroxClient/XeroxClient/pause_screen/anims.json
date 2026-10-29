@@ -1,0 +1,173 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "pause_animation",
+
+  "section_toggle_out_animation": {
+    "anim_type": "size",
+    "easing": "out_quart",
+    "duration": 0.3,
+    "to": [ "100%", 0 ],
+    "from": [ "100%", 15 ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "section_toggle_out_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_quart",
+    "duration": 0.3,
+    "to": [ "100%", 0 ],
+    "from": [ "100%", 15 ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "section_toggle_enter_animation": {
+    "anim_type": "size",
+    "easing": "out_quart",
+    "duration": 0.2,
+    "from": [ "100%", 0 ],
+    "to": [ "100%", 15 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "section_toggle_enter_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_quart",
+    "duration": 0.2,
+    "from": [ "100%", 0 ],
+    "to": [ "100%", 15 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "title_out_animation": {
+    "anim_type": "size",
+    "easing": "out_quint",
+    "duration": 0.2,
+    "to": [ "100%", 0 ],
+    "from": [ "100%", 25 ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "title_out_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_qunit",
+    "duration": 0.2,
+    "to": [ "100%", 0 ],
+    "from": [ "100%", 25 ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "title_enter_animation": {
+    "anim_type": "size",
+    "easing": "out_qunit",
+    "duration": 0.15,
+    "from": [ "100%", 0 ],
+    "to": [ "100%", 25 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "title_enter_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_qunit",
+    "duration": 0.15,
+    "from": [ "100%", 0 ],
+    "to": [ "100%", 25 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "quit_button_hide@pause_animation.quit_confirm_hide": {
+    "play_event": "pause.quit_confirm_show"
+  },
+
+  "quit_button_show@pause_animation.quit_confirm_show": {
+    "play_event": "pause.quit_cancel"
+  },
+
+  "quit_confirm_show": {
+    "anim_type": "size",
+    "duration": 0,
+    "from": [0, 0],
+    "to": ["100%", "100%"],
+    "play_event": "pause.quit_confirm_show",
+    "resettable": true
+  },
+
+  "quit_confirm_hide": {
+    "anim_type": "size",
+    "duration": 0,
+    "to": [0, 0],
+    "from": ["100%", "100%"],
+    "play_event": "pause.quit_cancel",
+    "resettable": true
+  },
+
+  "quit_button_reset": {
+    "anim_type": "size",
+    "duration": 0,
+    "to": ["100%", "100%"],
+    "from": ["100%", "100%"],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "quit_confirm_reset": {
+    "anim_type": "size",
+    "duration": 0,
+    "to": [0, 0],
+    "from": [0, 0],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "menu_out_animation": {
+    "anim_type": "size",
+    "easing": "out_quart",
+    "duration": 0.6,
+    "to": [ 200, "15%c" ],
+    "from": [ 200, "100%c" ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "menu_out_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_quart",
+    "duration": 0.6,
+    "to": [ 200, "15%c" ],
+    "from": [ 200, "100%c" ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "menu_enter_animation": {
+    "anim_type": "size",
+    "easing": "out_quint",
+    "duration": 0.5,
+    "from": [ 200, "25%c" ],
+    "to": [ 200, "100%c" ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "menu_enter_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_quint",
+    "duration": 0.5,
+    "from": [ 200, "25%c" ],
+    "to": [ 200, "100%c" ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  }
+}

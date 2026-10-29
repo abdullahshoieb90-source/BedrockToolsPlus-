@@ -1,0 +1,7 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.10.0","animation_controllers":{"controller.animation.killaura_esp":{"initial_state":"default","states":{"default":{"animations":["killaura_esp_move","killaura_esp_size",{"killaura_esp_size0":"v.killaura_esp_alpha_blend == 0.0"},{"killaura_esp_rotation":"v.killaura_esp_static_rgb && v.killaura_esp_static_rolling_rgb"}],"transitions":[{"sneaking":"q.is_sneaking"}]},"sneaking":{"animations":["killaura_esp_sneaking_move","killaura_esp_sneaking_size",{"killaura_esp_size0":"v.killaura_esp_alpha_blend == 0.0"},{"killaura_esp_rotation":"v.killaura_esp_static_rgb && v.killaura_esp_static_rolling_rgb"}],"transitions":[{"default":"!q.is_sneaking"}]}}}}}

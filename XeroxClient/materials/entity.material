@@ -1,0 +1,29 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "materials": {
+    "version": "1.0.0",
+    "armor_:armor": {
+      "+defines": ["USE_OVERLAY","USE_COLOR_MASK"]
+    },
+    "armor_enchanted_:armor_enchanted": {
+      "+defines": ["USE_OVERLAY","USE_COLOR_MASK"]
+    },
+    "killaura_esp:entity_alphablend": {
+      "depthFunc": "Always",
+      "+defines": [ "USE_COLOR_MASK" ],
+      "+states": ["DisableCulling", "Blending"],
+      "blendSrc": "SourceAlpha",
+      "blendDst": "OneMinusSrcAlpha"
+    },
+    "anti_invisibility:entity_alphatest": {
+      "+defines": [ "USE_COLOR_MASK", "ITEM_IN_HAND" ],
+      "blendSrc": "SourceAlpha",
+      "blendDst": "OneMinusSrcAlpha"
+    }
+  }
+}

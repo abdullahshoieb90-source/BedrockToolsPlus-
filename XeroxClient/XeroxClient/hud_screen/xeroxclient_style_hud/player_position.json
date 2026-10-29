@@ -1,0 +1,56 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "xeroxclient_style_player_position",
+  "player_position": {
+    "type": "image",
+    "texture": "textures/ui/Xerox/image/BlackToTransparent1",
+    "alpha": 0.65,
+    "anchor_from": "top_right",
+    "anchor_to": "top_right",
+    "size": [ "100%c", "100%c" ],
+    "offset": [0, 1],
+    "controls": [
+      {
+        "text": {
+          "type": "label",
+          "size": ["default", "default"],
+          "text": "#text",
+          "font_type": "$global_font_type",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "text_alignment": "center",
+          "inherit_max_sibling_width": true,
+          "font_scale_factor": 0.9,
+          "locked_alpha": 1,
+          "layer": 1,
+          "bindings": [
+            {
+              "binding_name": "#player_position_text",
+              "binding_name_override": "#text",
+              "binding_condition": "always",
+              "binding_type": "global"
+            }
+          ],
+          "color": "$chat_text_color",
+          "controls": [
+            {
+              "line": {
+                "type": "image",
+                "size": ["100%", 1],
+                "texture": "textures/ui/Xerox/White",
+                "anchor_from": "top_middle",
+                "anchor_to": "bottom_middle",
+                "layer": 1
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

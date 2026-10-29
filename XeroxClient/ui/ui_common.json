@@ -1,0 +1,747 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "common",
+
+  "root_panel": {
+    "type": "input_panel",
+    "inline_modal": true,
+    "button_mappings": [
+      {
+        "from_button_id": "button.menu_select",
+        "to_button_id": "button.menu_select",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_ok",
+        "to_button_id": "button.menu_ok",
+        "mapping_type": "focused"
+      }
+    ]
+  },
+
+  "stack_splitting_overlay": {
+  },
+
+  "button": {
+  },
+
+  "back_button_content/chevron_panel/left_chevron": {
+    "color": []
+  },
+  "toggle_state_template": {
+    "size": [ 2, 10 ]
+  },
+
+  "new_button_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "checkbox_checked_state": {
+    "alpha": "$xeroxclient_ui_theme_radio_checked_alpha",
+    "color": "$xeroxclient_ui_theme_radio_checked_color",
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "checkbox_unchecked_state": {
+    "alpha": "$xeroxclient_ui_theme_radio_unchecked_alpha",
+    "color": "$xeroxclient_ui_theme_radio_unchecked_color",
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "checkbox_checked_hover_state": {
+    "alpha": "$xeroxclient_ui_theme_radio_checked_hover_alpha",
+    "color": "$xeroxclient_ui_theme_radio_checked_hover_color",
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "checkbox_unchecked_hover_state": {
+    "alpha": "$xeroxclient_ui_theme_radio_unchecked_hover_alpha",
+    "color": "$xeroxclient_ui_theme_radio_unchecked_hover_color",
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "checkbox_checked_locked_state": {
+    "alpha": "$xeroxclient_ui_theme_radio_checked_locked_alpha",
+    "color": "$xeroxclient_ui_theme_radio_checked_locked_color",
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "checkbox_unchecked_locked_state": {
+    "alpha": "$xeroxclient_ui_theme_radio_unchecked_locked_alpha",
+    "color": "$xeroxclient_ui_theme_radio_unchecked_locked_color",
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "radio_toggle_checked_state": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "radio_toggle_unchecked_state": {},
+
+  "radio_toggle_checked_hover_state": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "radio_toggle_unchecked_hover_state": {},
+
+  "radio_toggle_checked_locked_state": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "radio_toggle_unchecked_locked_state": {},
+
+  "dropdown_background": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.7
+  },
+
+  "scroll_box/box/mouse_box": {
+    "ignored": false
+  },
+
+  "scroll_box/box/touch_box": {
+    "ignored": true
+  },
+
+  "scrollbar_box_image": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_scrollbar_box_color",
+    "alpha": "$xeroxclient_ui_theme_scrollbar_box_alpha",
+    "size": [ 3, "100%" ]
+  },
+
+  "scroll_indent_image": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_scroll_background_color",
+    "alpha": "$xeroxclient_ui_theme_scroll_background_alpha"
+  },
+
+  "scrolling_panel/scroll_touch": {
+    "ignored": true
+  },
+
+  "scrolling_panel/scroll_mouse": {
+    "ignored": false
+  },
+
+  "container_scroll_box_image": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_scrollbar_box_color",
+    "alpha": "$xeroxclient_ui_theme_scrollbar_box_alpha",
+    "size": [3, "100%"],
+    "offset": [-0.5, 0]//解决滑动盒子错位问题
+  },
+
+  "container_scroll_bar_side_rails": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_scroll_background_color",
+    "alpha": "$xeroxclient_ui_theme_scroll_background_alpha",
+    "size": [3, "default"]
+  },
+
+  "container_scroll_background_image": {
+    "alpha": 0.0
+  },
+
+  "slider_box": {
+    "size": [2, 14]
+  },
+
+  "slider_button_layout": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_box_default_color",
+    "alpha": "$xeroxclient_ui_theme_slider_box_default_alpha"
+  },
+
+  "slider_button_hover_layout": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_box_hover_color",
+    "alpha": "$xeroxclient_ui_theme_slider_box_hover_alpha"
+  },
+
+  "slider_button_locked_layout": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_box_locked_color",
+    "alpha": "$xeroxclient_ui_theme_slider_box_locked_alpha"
+  },
+
+  "slider_button_indent_layout": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_box_indent_color",
+    "alpha": "$xeroxclient_ui_theme_slider_box_indent_alpha"
+  },
+
+  "slider_background": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_background_default_color",
+    "alpha": "$xeroxclient_ui_theme_slider_background_default_alpha"
+  },
+
+  "slider_background_hover": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_background_hover_color",
+    "alpha": "$xeroxclient_ui_theme_slider_background_hover_alpha"
+  },
+
+  "slider_progress": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_progress_default_color",
+    "alpha": "$xeroxclient_ui_theme_slider_progress_default_alpha"
+  },
+
+  "slider_progress_hover": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_progress_hover_color",
+    "alpha": "$xeroxclient_ui_theme_slider_progress_hover_alpha"
+  },
+
+  "slider_border": {
+    "alpha": 0
+  },
+
+  "slider_bar_default/transparent_grey": {
+    "ignored": true
+  },
+
+  "slider_step": {
+    "size": [0.5, "70%"],
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_step_default_color",
+    "alpha": "$xeroxclient_ui_theme_slider_step_default_alpha"
+  },
+
+  "slider_step_hover": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_step_hover_color",
+    "alpha": "$xeroxclient_ui_theme_slider_step_hover_alpha"
+  },
+
+  "slider_step_progress": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_step_progress_default_color",
+    "alpha": "$xeroxclient_ui_theme_slider_step_progress_default_alpha"
+  },
+
+  "slider_step_progress_hover": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_slider_step_progress_hover_color",
+    "alpha": "$xeroxclient_ui_theme_slider_step_progress_hover_alpha"
+  },
+
+  "slider": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "slider_bar_locked@common.slider_bar_default": {
+              "$background_control": "common.slider_background_locked",
+              "$progress_control": "common.slider_progress_locked",
+              "$background_control_name": "nmsl",
+              "$progress_control_name": "cnmb",
+              "layer": 10,
+              "bindings": [
+                {
+                  "binding_type": "$slider_enabled_binding_type",
+                  "binding_condition": "$slider_enabled_binding_condition",
+                  "binding_collection_name": "$slider_collection_name",
+                  "binding_name": "(not $slider_enabled_binding_name)",
+                  "binding_name_override": "#visible"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "slider_background_locked@common.slider_background": {
+    "color": "$xeroxclient_ui_theme_button_locked_color",
+    "alpha": "$xeroxclient_ui_theme_button_hover_alpha"
+  },
+
+  "slider_progress_locked@common.slider_progress": {
+    "color": "$xeroxclient_ui_theme_button_locked_color",
+    "alpha": "$xeroxclient_ui_theme_button_locked_alpha"
+  },
+
+  "edit_box_indent": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.45,
+    "color": "$xeroxclient_ui_theme_edit_box_background_default_color",
+    "$edit_box_border_alpha|default": 0.40,
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "border": {
+              "type": "image",
+              "size": ["100%", "100%"],
+              "alpha": "$edit_box_border_alpha",
+              "texture": "textures/ui/Xerox/white_border"
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "edit_box_indent_hover": {
+    "texture": "textures/ui/Xerox/White",
+    "$edit_box_border_alpha": 1.0,
+    "color": "$xeroxclient_ui_theme_edit_box_background_hover_color"
+  },
+
+  "text_edit_box_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "text_edit_box_place_holder_label": {
+    "font_type": "$global_font_type",
+    "$place_holder_text|default": "..."
+  },
+
+  "text_edit_box/locked/edit_box_indent": {
+    "color": "$xeroxclient_ui_theme_edit_box_background_locked_color",
+    "alpha": "$disabled_alpha"
+  },
+
+  "scrollable_text_edit_box/locked/edit_box_indent": {
+    "color": "$xeroxclient_ui_theme_edit_box_background_locked_color",
+    "alpha": "$disabled_alpha"
+  },
+
+  "inventory_panel_bottom_half_with_label/inventory_label": {
+    "ignored": true
+  },
+
+  "horizontal_divider/divider_image": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.65
+  },
+
+  "vertical_divider/divider_image": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.65
+  },
+
+  "section_heading_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "single_line_label/label_panel": {
+    "font_type": "$global_font_type"
+  },
+
+  "gamepad_helper_icon_description": {
+    "font_type": "$global_font_type"
+  },
+
+  "keyboard_helper_description": {
+    "font_type": "$global_font_type"
+  },
+
+  "keyboard_helper/image_centerer/image/keyboard_character": {
+    "font_type": "$global_font_type"
+  },
+
+  "section_heading_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "cell_image": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.1
+  },
+
+  "highlight_slot": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.3,
+    "color": "$xeroxclient_slot_selected_image_color"
+  },
+
+  "white_border_slot": {
+    "texture": "textures/ui/Xerox/white_border",
+    "color": "$xeroxclient_slot_selected_image_color"
+  },
+
+  "highlight_slot_panel/highlight": {
+    "bindings": []
+  },
+
+  "highlight_slot_panel/white_border": {
+    "bindings": []
+  },
+
+  "screen_background": {
+    "texture": "textures/ui/Xerox/Black",
+    "layer": -10,
+    "ignored": "$is_pregame",
+    "alpha": "$screen_background_alpha",
+    "$screen_background_alpha": 0.3
+  },
+
+  "container_item/item_button_ref": {
+    "ignored": true
+  },
+
+  "container_item/item_cell/durability_bar": {
+  },
+
+  "container_item/item_selected_image": {
+    "layer": 5
+  },
+
+  "container_item/item_cell": {
+  },
+
+  "container_item": {
+    "$item_renderer_size|default": [14, 14],
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "item_button_ref_new": {
+              "type": "panel",
+              "layer": 5,
+              "controls": [
+                {
+                  "default@$button_ref": { 
+                    "ignored": "$touch",
+                    "focus_enabled": false,
+                    "tts_ignore_count": true,
+                    "tts_skip_message": true,
+                    "tts_inherit_siblings": true
+                  }
+                },
+                {
+                  "normal_mode": {
+                    "type": "panel",
+                    "ignored": "(not $touch)",
+                    "bindings": [
+                      {
+                        "binding_type": "view",
+                        "source_control_name": "xeroxclient_inv_normal",
+                        "source_property_name": "#toggle_state",
+                        "target_property_name": "#visible"
+                      }
+                    ],
+                    "controls": [
+                      { 
+                        "button@$button_ref": {
+                          "tts_ignore_count": true,
+                          "tts_skip_message": true,
+                          "tts_inherit_siblings": true
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "auto_place_mode": {
+                    "type": "panel",
+                    "ignored": "(not $touch)",
+                    "bindings": [
+                      {
+                        "binding_type": "view",
+                        "source_control_name": "xeroxclient_inv_auto_place",
+                        "source_property_name": "#toggle_state",
+                        "target_property_name": "#visible"
+                      }
+                    ],
+                    "controls": [
+                      { 
+                        "button@$button_ref": {
+                          "tts_ignore_count": true,
+                          "tts_skip_message": true,
+                          "tts_inherit_siblings": true,
+                          "button_mappings": [
+                            {
+                              "from_button_id": "button.menu_select",
+                              "to_button_id": "button.container_auto_place",
+                              "mapping_type": "pressed"
+                            },
+                            {
+                              "from_button_id": "button.menu_ok",
+                              "to_button_id": "button.container_auto_place",
+                              "mapping_type": "focused"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "drop_one_mode": {
+                    "type": "panel",
+                    "ignored": "(not $touch)",
+                    "bindings": [
+                      {
+                        "binding_type": "view",
+                        "source_control_name": "xeroxclient_inv_drop_one",
+                        "source_property_name": "#toggle_state",
+                        "target_property_name": "#visible"
+                      }
+                    ],
+                    "controls": [
+                      { 
+                        "button@$button_ref": {
+                          "tts_ignore_count": true,
+                          "tts_skip_message": true,
+                          "tts_inherit_siblings": true,
+                          "button_mappings": [
+                            {
+                              "from_button_id": "button.menu_select",
+                              "to_button_id": "button.drop_one",
+                              "mapping_type": "pressed"
+                            },
+                            {
+                              "from_button_id": "button.menu_ok",
+                              "to_button_id": "button.drop_one",
+                              "mapping_type": "focused"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "inventory_selected_icon_button/durability_bar_grabbed": {
+  },
+
+  "inventory_selected_icon": {
+    "size": [18, 18]
+  },
+
+  "inventory_selected_icon_button": {
+    "layer": 10
+  },
+
+  "stack_count_label": {
+    "font_type": "$global_font_type",
+    "font_scale_factor": 0.85
+  },
+
+  "flying_item_renderer": {
+    "ignored": true
+  },
+
+  "hover_text": {},
+
+  "selected_item_details/item_panel_image/item_text_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "selected_item_details_factory": {
+    "ignored": true
+  },
+
+  "item_lock_notification/notification_background_image/notification_text_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "slot_selected": {
+    "alpha": 0
+  },
+
+  "inventory_selected_stack_size_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "common_panel": {
+    "$dialog_background|default": "dialog_image.dialog_background"
+  },
+
+  "base_screen": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "screen_content_text": {
+              "type": "image",
+              "size": ["100%cm", 10],
+              "texture": "textures/ui/Xerox/White",
+              "color": "$debug_green",
+              "alpha": 0.65,
+              "anchor_from": "top_left",
+              "anchor_to": "top_left",
+              "controls": [
+                {
+                  "text": {
+                    "type": "label",
+                    "size": ["default", 10],
+                    "text": "$screen_content",
+                    "font_type": "$global_font_type",
+                    "layer": 999
+                  }
+                }
+              ],
+              "ignored": "(not $debug_mode)",
+              "layer": 999,
+              "visible": "(not ($screen_content = 'toast_screen.toast_screen_content' or $screen_content = 'debug_screen.content_panel'))"
+            }
+          }
+        ]
+      },
+      {
+        "array_name": "controls",
+        "operation": "insert_back",
+        "value": [
+          {
+            "loading_panel": {
+              "type": "panel",
+              "ignored": "(not $use_loading_bars)",
+              "propagate_alpha": true,
+              "alpha": 0.0,
+              "animation_reset_name": "screen_animation_reset",
+              "disable_anim_fast_forward": true,
+              "controls": [
+                {
+                  "background_blur": {
+                     "type": "image",
+                     "texture": "$background_blur_texture",
+                     "fill": true,
+                     "layer": -2000,
+                     "ignored": "(not $is_pregame)"
+                  }
+                },
+                {
+                  "background": {
+                    "type": "image",
+                    "size": ["100%", "100%"],
+                    "texture": "textures/ui/Xerox/Black",
+                    "alpha": 0.3,
+                    "layer": -1999
+                  }
+                },
+                {
+                  "loading_bar": {
+                    "type": "image",
+                    "size": ["150px", 12],
+                    "layer": -1998,
+                    "texture": "textures/ui/Xerox/white_border",
+                    "controls": [
+                      {
+                        "bars": {
+                          "type": "image",
+                          "size": ["100% - 4px", "100% - 4px"],
+                          "alpha": "@common.loading_bars_alpha_in",
+                          "texture": "textures/ui/Xerox/White"
+                        }
+                      },
+                      {
+                        "loading_text": {
+                          "type": "label",
+                          "size": ["default", "10px"],
+                          "alpha": "@common.loading_bars_alpha_in",
+                          "text": "Loading...",
+                          "offset": [0, 13],
+                          "font_type": "$global_font_type"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "anims": [
+                "@common.loading_bar_init_animation_push",
+                "@common.loading_bar_init_animation_pop"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "base_screen/loading_bars_background": {
+    "ignored": true
+  },
+
+  "screen_panel": {
+    "clips_children": true,
+    "propagate_alpha": true,
+    "enabled": "\u0028\u0028\u0024\u0043\u006c\u0069\u0065\u006e\u0074\u004e\u0061\u006d\u0065\u0020\u003d\u0020\u0027\u00a7\u0062\u0058\u0065\u0072\u006f\u0078\u00a7\u0037\u0043\u006c\u0069\u0065\u006e\u0074\u00a7\u0072\u0027\u0029\u0020\u0061\u006e\u0064\u0020\u0028\u0024\u0043\u006c\u0069\u0065\u006e\u0074\u0041\u0075\u0074\u0068\u006f\u0072\u0020\u003d\u0020\u0027\u004d\u0061\u0064\u0065\u0020\u0042\u0079\u0020\u0047\u0072\u0065\u006e\u0069\u006e\u006a\u0061\u002e\u0027\u0029\u0020\u0061\u006e\u0064\u0020\u0028\u0024\u0062\u0061\u0063\u006b\u0067\u0072\u006f\u0075\u006e\u0064\u005f\u0074\u0065\u0078\u0074\u0075\u0072\u0065\u0020\u003d\u0020\u0027\u0074\u0065\u0078\u0074\u0075\u0072\u0065\u0073\u002f\u0075\u0069\u002f\u0058\u0065\u0072\u006f\u0078\u002f\u0069\u006d\u0061\u0067\u0065\u002f\u0062\u0061\u0063\u006b\u0067\u0072\u006f\u0075\u006e\u0064\u002f\u0062\u0061\u0063\u006b\u0067\u0072\u006f\u0075\u006e\u0064\u0027\u0029\u0020\u0061\u006e\u0064\u0020\u0028\u0024\u0062\u0061\u0063\u006b\u0067\u0072\u006f\u0075\u006e\u0064\u005f\u0062\u006c\u0075\u0072\u005f\u0074\u0065\u0078\u0074\u0075\u0072\u0065\u0020\u003d\u0020\u0027\u0074\u0065\u0078\u0074\u0075\u0072\u0065\u0073\u002f\u0075\u0069\u002f\u0058\u0065\u0072\u006f\u0078\u002f\u0069\u006d\u0061\u0067\u0065\u002f\u0062\u0061\u0063\u006b\u0067\u0072\u006f\u0075\u006e\u0064\u002f\u0062\u0061\u0063\u006b\u0067\u0072\u006f\u0075\u006e\u0064\u005f\u0062\u006c\u0075\u0072\u0027\u0029\u0029"
+  },
+
+  "base_screen_empty_panel": {},
+
+  "modal_screen": {},// 只要ScreenChooser::isModalScreen()被硬编码为这个名称，就有必要拥有这个屏幕
+
+  "inventory_screen_common": {
+    "force_render_below": true,
+    "render_game_behind": true
+    //"low_frequency_rendering": true
+  },
+
+  "static_tooltip_popup_with_image_and_text/image_and_text_stack_panel/tooltip_text": {
+    "font_type": "$global_font_type"
+  },
+
+  // 居中的工具提示chevron $tool_tip_text_max_size定义文本如何换行(x用'-'换行，y用'...'截断))
+
+  "dynamic_tooltip_popup_with_image_and_text/image_and_text_stack_panel/tooltip_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "loading_bars_alpha_in": {
+    "anim_type": "alpha",
+    "from": 0.2,
+    "to": 0.8,
+    "duration": 2,
+    "next": "@common.loading_bars_alpha_wait_1"
+  },
+
+  "loading_bars_alpha_wait_1": {
+    "anim_type": "wait",
+    "duration": 0.5,
+    "next": "@common.loading_bars_alpha_out"
+  },
+
+  "loading_bars_alpha_out": {
+    "anim_type": "alpha",
+    "from": 0.8,
+    "to": 0.2,
+    "duration": 2,
+    "next": "@common.loading_bars_alpha_wait_2"
+  },
+
+  "loading_bars_alpha_wait_2": {
+    "anim_type": "wait",
+    "duration": 0.5,
+    "next": "@common.loading_bars_alpha_in"
+  },
+
+  "progressive_select_progress_bar/stack_progress_bar_down/progressive_select_progress_bar": {
+    "texture": "textures/ui/Xerox/White",
+    "color": [0.5, 0.9, 0.5],
+    "alpha": 0.9
+  },
+
+  "progressive_select_progress_bar/stack_progress_bar_down/progressive_select_text": {
+    "font_type": "$global_font_type",
+    "shadow": true
+  }
+}

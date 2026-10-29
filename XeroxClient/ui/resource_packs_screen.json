@@ -1,0 +1,59 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+
+  "error_panel/black_background/gray/panel/error_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "gray_label": {
+    "font_type": "$global_font_type",
+    "layer": 5
+  },
+
+  "white_label": {
+    "font_type": "$global_font_type",
+    "layer": 5
+  },
+
+  "resource_packs_toggle_button_control/tab_button_text": {
+    "font_type": "NotoSans-Regular",
+    "offset": [7, 0]
+  },
+
+  "resource_packs_toggle_button_control/icon_border": {
+    "ignored": true
+  },
+
+  "resource_packs_toggle_button_control/cycling_icon": {
+    "ignored": true
+  },
+
+  "black_image": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.20
+  },
+
+  "gray_image": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.20
+  },
+
+  "input_button_panel/border_image": {
+    "texture": "textures/ui/Xerox/white_border",
+    "alpha": 0.45
+  },
+
+  "input_button_panel/background": {
+    "ignored": true
+  },
+
+  "resource_packs_section_toggle_base": {
+    "$button_image_size": ["100%", 25],
+    "size": ["100%", 25]
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "namespace": "xcs_faq",
+  "section_button@settings_common.section_toggle_base": {
+    "$toggle_view_binding_name": "faq_button_toggle",
+    "$button_text": "xcs.options.faq",
+    "$toggle_property_bag": {
+      "#panel_title": "xcs.options.faq"
+    }
+  },
+
+  "faq_content": {
+    "type": "stack_panel",
+    "size": ["100%", "100%c"],
+    "controls": [
+      {
+        "question_part": {
+          "type": "stack_panel",
+          "size": ["100%", "100%cm"],
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "q": {
+                "type": "label",
+                "size": ["default", "default"],
+                "font_type": "MinecraftSeven",
+                "font_scale_factor": 1.5,
+                "text": "§2Q: "
+              }
+            },
+            {
+              "main": {
+                "type": "panel",
+                "size": ["fill", "100%c"],
+                "min_size": ["fill", "100%sm"],
+                "controls": [
+                  {
+                    "main": {
+                      "type": "label",
+                      "size": ["100%", "default"],
+                      "font_type": "Robot-Regular",
+                      "font_scale_factor": 0.9,
+                      "text": "$question"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "padding": {
+          "type": "panel",
+          "size": [0, 2]
+        }
+      },
+      {
+        "answer_part": {
+          "type": "stack_panel",
+          "size": ["100%", "100%cm"],
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "a": {
+                "type": "label",
+                "size": ["default", "default"],
+                "font_type": "MinecraftSeven",
+                "font_scale_factor": 1.5,
+                "text": "- §cA: "
+              }
+            },
+            {
+              "main": {
+                "type": "panel",
+                "size": ["fill", "100%c"],
+                "min_size": ["fill", "100%sm"],
+                "controls": [
+                  {
+                    "main": {
+                      "type": "label",
+                      "size": ["100%", "default"],
+                      "font_type": "Robot-Regular",
+                      "font_scale_factor": 0.9,
+                      "text": "$answer"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "faq_base@common_buttons.light_content_form_fitting_button": {
+    "$xeroxclient_button_alpha_default": 0,
+    "$xeroxclient_button_alpha_hover": 0.7,
+    "$xeroxclient_button_alpha_pressed": 0.7,
+    "$xeroxclient_button_color_hover": [],
+    "$xeroxclient_button_color_pressed": [],
+    "size": ["100%", "100%c"],
+    "$button_content": "xcs_faq.faq_content"
+  }
+}

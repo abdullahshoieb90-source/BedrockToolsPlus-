@@ -1,0 +1,127 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "music_player_button_template",
+  "music_button": {
+    "type": "panel",
+    "clips_children": true,
+    "size": [ "100%", 28 ],
+    "layer": 1,
+    "$music_name|default": "null",
+    "$music_button_text|default": "???????????",
+    "$music_texture|default": "textures/ui/Xerox/image/icon/unknown",
+    "$music_duration|default": 0,
+    "controls": [
+      {
+        "background": {
+          "type": "image",
+          "texture": "textures/ui/Xerox/Black",
+          "size": [ "100%", 26 ],
+          "alpha": 0.45,
+          "layer": 2,
+          "controls": [
+            {
+              "music_duration_bar_panel": {
+                "type": "panel",
+                "size": [ 0, 3 ],
+                "animation_reset_name": "($music_name + '.' + 's' + 't' + 'o' + 'p')",
+                "anchor_from": "bottom_middle",
+                "anchor_to": "bottom_middle",
+                "layer": 3,
+                "anims": ["@music_player_screen_animation.duration_bar_panel_show"],
+                "controls": [
+                  {
+                    "duration_bar_panel": {
+                      "type": "image",
+                      "texture": "textures/ui/Xerox/Black",
+                      "alpha": 0.25,
+                      "layer": 5,
+                      "size": [ 0, 3 ],
+                      "animation_reset_name": "$music_name",
+                      "anims": ["@music_player_screen_animation.duration_bar_show"],
+                      "controls": [
+                        {
+                          "duration_bar": {
+                            "type": "image",
+                            "ignored": "($music_duration = 0)",
+                            "anchor_from": "left_middle",
+                            "anchor_to": "left_middle",
+                            "size": [ "100%", 3 ],
+                            "offset": [ "-100%", 0 ],
+                            "texture": "textures/ui/White",
+                            "color": "$xeroxclient_ui_theme_button_hover_color",
+                            "alpha": 0.9,
+                            "layer": 9,
+                            "animation_reset_name": "$music_name",
+                            "anims": ["@music_player_screen_animation.duration_bar_in"]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "music_icon": {
+                "layer": 10,
+                "type": "image",
+                "texture": "$music_texture",
+                "size": [ 22, 22 ],
+                "offset": [ 2, 0 ],
+                "anchor_from": "left_middle",
+                "anchor_to": "left_middle"
+              }
+            },
+            {
+              "play_button@common_buttons.dark_content_button": {
+                "layer": 10,
+                "size": [ 20, 20 ],
+                "offset": [ -24, 0 ],
+                "anchor_from": "right_middle",
+                "anchor_to": "right_middle",
+                "$pressed_button_name": "($music_name + '.play')",
+                "$button_content": "music_player_icons.play_icon",
+                "sound_name": "$music_name",
+                "sound_volume": 1.0,
+                "sound_pitch": 1.0
+              }
+            },
+            {
+              "stop_button@common_buttons.dark_content_button": {
+                "layer": 10,
+                "size": [ 20, 20 ],
+                "offset": [ -2, 0 ],
+                "anchor_from": "right_middle",
+                "anchor_to": "right_middle",
+                "$pressed_button_name": "($music_name + '.' + 's' + 't' + 'o' + 'p')",
+                "$button_content": "music_player_icons.stop_icon",
+                "sound_name": "$music_name",
+                "sound_volume": 0.0000000000001,
+                "sound_pitch": 0.0
+              }
+            },
+            {
+              "music_name": {
+                "type": "label",
+                "size": [ "100% - 58px", 15 ],
+                "offset": [ 24, 0 ],
+                "anchor_from": "left_middle",
+                "anchor_to": "left_middle",
+                "font_scale_factor": 1.5,
+                "text_alignment": "left",
+                "text": "$music_button_text",
+                "font_type": "$global_font_type",
+                "layer": 10
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

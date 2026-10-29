@@ -1,0 +1,59 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "manifest_validation",
+
+  "section_divider/divider_image": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.65
+  },
+
+  "text_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "progress_loading_bars": {
+    "color": [ 1.0, 1.0, 1.0 ]
+  },
+
+  "background": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.45
+  },
+
+  "black_background_fill": { "alpha": 0 },
+
+  "error_pack_secondary_layout/black/stack_panel/secondary_panel/title_panel/offset/title": {
+    "font_type": "$global_font_type"
+  },
+
+  "error_pack_secondary_layout/black/stack_panel/secondary_panel/version_panel/offset/version": {
+    "font_type": "$global_font_type"
+  },
+
+  "error_pack_secondary_layout/black/stack_panel/secondary_panel/path_panel/offset/description": {
+    "font_type": "$global_font_type"
+  },
+
+  "error_pack_content_layout/black/error_panel/error_header_panel/error_type_panel": {
+    "font_type": "$global_font_type"
+  },
+
+  "error_pack_content_layout/black/error_panel/error_text_panel/offset/error_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "manifest_validation_screen": {
+    "force_render_below": false,
+    "$screen_bg_content": "Xerox_common.background_blur"
+  },
+
+  "manifest_validation_screen_content": {
+    "size": ["100%", "100%"],
+    "max_size": ["100%", "100%"]
+  }
+}

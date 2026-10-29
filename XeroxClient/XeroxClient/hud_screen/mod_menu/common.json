@@ -1,0 +1,592 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "Greninja:mod_menu_common",
+
+  "sec_toggle_hover_1": {
+    "anim_type": "color",
+    "from": [0.2, 0.8, 0.8],
+    "to": [0.2, 0.8, 1.0],
+    "duration": 1.5,
+    "next": "@Greninja:mod_menu_common.sec_toggle_hover_color_2",
+    "easing": "in_circ"
+  },
+
+  "sec_toggle_hover_2": {
+    "anim_type": "color",
+    "to": [0.3764705882, 0.6509803922, 0.9333333333],
+    "from": [0.2, 0.8, 1.0],
+    "duration": 3.0,
+    "next": "@Greninja:mod_menu_common.sec_toggle_hover_color_3",
+    "easing": "in_sine"
+  },
+
+  "sec_toggle_hover_3": {
+    "anim_type": "color",
+    "from": [0.3764705882, 0.6509803922, 0.9333333333],
+    "to": [0.2, 0.8, 0.8],
+    "duration": 3,
+    "next": "@Greninja:mod_menu_common.sec_toggle_hover_color_1",
+    "easing": "out_quart"
+  },
+
+  "sec_toggle_pressed_1": {
+    "anim_type": "color",
+    "from": [0.1803921569, 0.7725490196, 0.8235294118],
+    "to": [0.0, 0.6, 1.0],
+    "duration": 1.5,
+    "next": "@Greninja:mod_menu_common.sec_toggle_pressed_color_2",
+    "easing": "in_expo"
+  },
+
+  "sec_toggle_pressed_2": {
+    "anim_type": "color",
+    "to": [0.09803921569, 0.4980392157, 0.9607843137],
+    "from": [0.0, 0.6, 1.0],
+    "duration": 3.0,
+    "next": "@Greninja:mod_menu_common.sec_toggle_pressed_color_3",
+    "easing": "out_cubic"
+  },
+
+  "sec_toggle_pressed_3": {
+    "anim_type": "color",
+    "from": [0.09803921569, 0.4980392157, 0.9607843137],
+    "to": [0.1803921569, 0.7725490196, 0.8235294118],
+    "duration": 3,
+    "next": "@Greninja:mod_menu_common.sec_toggle_pressed_color_1",
+    "easing": "in_cubic"
+  },
+
+  "removable_control": {
+    "$control_x_size|default": [],// [percentage-ctrl_x, %100]
+    "$control_y_size|default": [],// [%100, percentage-ctrl_y]
+    "$x_filling_source_control_name|default": "I'm not an expert in this field, but I still want to express my views. After I have carefully examined this speech and thought about it for a long time, I actually don't know how to comment. As I said at the beginning, I'm not an expert in this field. 我不是这方面的专家,但我还是想要发表一下我的观点,在我仔细查看过这发言并经过长时间的思考后,我其实也不知道要怎么评论,正如我一开始说的,我不是这方面的专家",
+    "$y_filling_source_control_name|default": "I'm not an expert in this field, but I still want to express my views. After I have carefully examined this speech and thought about it for a long time, I actually don't know how to comment. As I said at the beginning, I'm not an expert in this field. 我不是这方面的专家,但我还是想要发表一下我的观点,在我仔细查看过这发言并经过长时间的思考后,我其实也不知道要怎么评论,正如我一开始说的,我不是这方面的专家",
+    "$element_content|default": "I'm not an expert in this field, but I still want to express my views. After I have carefully examined this speech and thought about it for a long time, I actually don't know how to comment. As I said at the beginning, I'm not an expert in this field. 我不是这方面的专家,但我还是想要发表一下我的观点,在我仔细查看过这发言并经过长时间的思考后,我其实也不知道要怎么评论,正如我一开始说的,我不是这方面的专家",
+    "anchor_from": "top_left",
+    "anchor_to": "top_left",
+    "type": "stack_panel",
+    "size": "$control_y_size",
+    "$slider_value_max|default": 50,
+    "controls": [
+      {
+        "y_filling": {
+          "type": "panel",
+          "size": [0,0],
+          "bindings": [
+            {
+              "binding_type": "view",
+              "source_control_name": "$y_filling_source_control_name",
+              "source_property_name": "(#slider_value / $slider_value_max)",
+              "target_property_name": "#size_binding_y"
+            }
+          ]
+        }
+      },
+      {
+        "x_area": {
+          "type": "stack_panel",
+          "size": "$control_x_size",
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "x_filling": {
+                "type": "panel",
+                "size": [0,0],
+                "bindings": [
+                  {
+                    "binding_type": "view",
+                    "source_control_name": "$x_filling_source_control_name",
+                    "source_property_name": "(#slider_value / $slider_value_max)",
+                    "target_property_name": "#size_binding_x"
+                  }
+                ]
+              }
+            },
+            { "sin²a + cos²a = ?@$element_content": {} }
+          ]
+        }
+      }
+    ]
+  },
+
+  "text_base": {
+    "type": "label",
+    "size": ["default", 10],
+    "shadow": true,
+    "font_type": "$global_font_type",
+    "$source_control_name|default": "",
+    "$source_property_name|default": "",
+    "$target_property_name|default": "",
+    "layer": 10,
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "$source_control_name",
+        "source_property_name": "$source_property_name",
+        "target_property_name": "$target_property_name",
+        "resolve_sibling_scope": false
+      }
+    ]
+  },
+
+  "icon_base": {
+    "type": "image",
+    "size": ["16px", "16px"],
+    "texture": "($icon_path + $icon_texture)",
+    "$icon_texture|default": "",
+    "$icon_path|default": "",
+    "color": "$icon_color",
+    "$icon_color|default": []
+  },
+
+  "normal_toggle@common_toggles.light_text_toggle": {
+    "size": [108, 18],
+    "$text_alignment": "left",
+    "$toggle_name|default": "mod_toggle_greninja"
+  },
+
+  "radio_icon_toggle@common_toggles.light_ui_toggle": {
+    "size": [20, 20],
+    "$radio_toggle_group": true,
+    "$toggle_name": "$mod_toggle_group",
+    "$button_type_panel": "Greninja:mod_menu_common.icon_base"
+  },
+
+  "section_toggle@common_toggles.light_text_toggle": {
+    "$xeroxclient_button_color_hover": "@Greninja:mod_enu_common.sec_toggle_hover_1",
+    "$xeroxclient_button_color_pressed": "@Greninja:mod_enu_common.sec_toggle_pressed_2",
+    "size": [70, 22],
+    "$toggle_name|default": "mod_section_greninja"
+  },
+
+  "slider@common.slider": {
+    "size": [108, 16],
+    "$slider_box_size": [10, 13],
+    "$value_0_text|default": "",
+    "$value_1_text|default": "",
+    "$value_2_text|default": "",
+    "$value_3_text|default": "",
+    "$value_4_text|default": "",
+    "$value_5_text|default": "",
+    "$value_6_text|default": "",
+    "$value_7_text|default": "",
+    "$value_8_text|default": "",
+    "$value_9_text|default": "",
+    "$value_10_text|default": "",
+    "$value_11_text|default": "",
+    "$value_12_text|default": "",
+    "$value_13_text|default": "",
+    "$value_14_text|default": "",
+    "$value_15_text|default": "",
+    "$value_16_text|default": "",
+    "$value_17_text|default": "",
+    "$value_18_text|default": "",
+    "$value_19_text|default": "",
+    "$value_20_text|default": "",
+    "$value_21_text|default": "",
+    "$value_22_text|default": "",
+    "$value_23_text|default": "",
+    "$value_24_text|default": "",
+    "$value_25_text|default": "",
+    "$value_26_text|default": "",
+    "$value_27_text|default": "",
+    "$value_28_text|default": "",
+    "$value_29_text|default": "",
+    "$value_30_text|default": "",
+    "$value_31_text|default": "",
+    "$value_32_text|default": "",
+    "$value_33_text|default": "",
+    "$value_34_text|default": "",
+    "$value_35_text|default": "",
+    "$value_36_text|default": "",
+    "$value_37_text|default": "",
+    "$value_38_text|default": "",
+    "$value_39_text|default": "",
+    "$value_40_text|default": "",
+    "$value_41_text|default": "",
+    "$value_42_text|default": "",
+    "$value_43_text|default": "",
+    "$value_44_text|default": "",
+    "$value_45_text|default": "",
+    "$value_46_text|default": "",
+    "$value_47_text|default": "",
+    "$value_48_text|default": "",
+    "$value_49_text|default": "",
+    "$value_50_text|default": "",
+    "$slider_value_expression|default": "",
+    "$target_property_name": "#visible",
+    "bindings": [
+      {
+        "binding_name": "#slider_steps",
+        "binding_name_override": "#slider_steps"
+      },
+      {
+        "binding_type": "view",
+        "source_control_name": "slider_config",
+        "source_property_name": "$slider_value_expression",
+        "target_property_name": "#slider_value"
+      }
+    ],
+    "$slider_name": "Greninja:mod_menu_slider",
+    "button_mappings": [
+      {
+        "from_button_id": "button.menu_select",
+        "to_button_id": "$slider_name",
+        "mapping_type": "pressed",
+        "button_up_right_of_first_refusal": true
+      },
+      {
+        "from_button_id": "button.menu_ok",
+        "to_button_id": "slider.selected",
+        "mapping_type": "focused"
+      },
+      {
+        "from_button_id": "button.menu_cancel",
+        "to_button_id": "slider.deselected",
+        "mapping_type": "focused"
+      },
+      {
+        "from_button_id": "button.menu_left",
+        "to_button_id": "slider.small_decrease",
+        "mapping_type": "pressed",
+        "input_mode_condition": "not_gaze",
+        "ignore_input_scope": true
+      },
+      {
+        "from_button_id": "button.menu_right",
+        "to_button_id": "slider.small_increase",
+        "mapping_type": "pressed",
+        "input_mode_condition": "not_gaze",
+        "ignore_input_scope": true
+      }
+    ],
+    "controls": [
+      {
+        "slider_box@common.slider_box": {
+          "$slider_box_layout": "$slider_box_layout",
+          "$slider_box_size": "$slider_box_size",
+          "$slider_track_button": "$slider_name"
+        }
+      },
+      {
+        "slider_bar_default@common.slider_bar_default": {}
+      },
+      {
+        "slider_bar_hover@common.slider_bar_hover": {
+          "visible": false
+        }
+      },
+      {
+        "0@Greninja:mod_menu_common.text_base": {
+          "text": "$value_0_text",
+          "$source_property_name": "(#slider_value = 0)"
+        }
+      },
+      {
+        "1@Greninja:mod_menu_common.text_base": {
+          "text": "$value_1_text",
+          "$source_property_name": "(#slider_value = 1)"
+        }
+      },
+      {
+        "2@Greninja:mod_menu_common.text_base": {
+          "text": "$value_2_text",
+          "$source_property_name": "(#slider_value = 2)"
+        }
+      },
+      {
+        "3@Greninja:mod_menu_common.text_base": {
+          "text": "$value_3_text",
+          "$source_property_name": "(#slider_value = 3)"
+        }
+      },
+      {
+        "4@Greninja:mod_menu_common.text_base": {
+          "text": "$value_4_text",
+          "$source_property_name": "(#slider_value = 4)"
+        }
+      },
+      {
+        "5@Greninja:mod_menu_common.text_base": {
+          "text": "$value_5_text",
+          "$source_property_name": "(#slider_value = 5)"
+        }
+      },
+      {
+        "6@Greninja:mod_menu_common.text_base": {
+          "text": "$value_6_text",
+          "$source_property_name": "(#slider_value = 6)"
+        }
+      },
+      {
+        "7@Greninja:mod_menu_common.text_base": {
+          "text": "$value_7_text",
+          "$source_property_name": "(#slider_value = 7)"
+        }
+      },
+      {
+        "8@Greninja:mod_menu_common.text_base": {
+          "text": "$value_8_text",
+          "$source_property_name": "(#slider_value = 8)"
+        }
+      },
+      {
+        "9@Greninja:mod_menu_common.text_base": {
+          "text": "$value_9_text",
+          "$source_property_name": "(#slider_value = 9)"
+        }
+      },
+      {
+        "10@Greninja:mod_menu_common.text_base": {
+          "text": "$value_10_text",
+          "$source_property_name": "(#slider_value = 10)"
+        }
+      },
+      {
+        "11@Greninja:mod_menu_common.text_base": {
+          "text": "$value_11_text",
+          "$source_property_name": "(#slider_value = 11)"
+        }
+      },
+      {
+        "12@Greninja:mod_menu_common.text_base": {
+          "text": "$value_12_text",
+          "$source_property_name": "(#slider_value = 12)"
+        }
+      },
+      {
+        "13@Greninja:mod_menu_common.text_base": {
+          "text": "$value_13_text",
+          "$source_property_name": "(#slider_value = 13)"
+        }
+      },
+      {
+        "14@Greninja:mod_menu_common.text_base": {
+          "text": "$value_14_text",
+          "$source_property_name": "(#slider_value = 14)"
+        }
+      },
+      {
+        "15@Greninja:mod_menu_common.text_base": {
+          "text": "$value_15_text",
+          "$source_property_name": "(#slider_value = 15)"
+        }
+      },
+      {
+        "16@Greninja:mod_menu_common.text_base": {
+          "text": "$value_16_text",
+          "$source_property_name": "(#slider_value = 16)"
+        }
+      },
+      {
+        "17@Greninja:mod_menu_common.text_base": {
+          "text": "$value_17_text",
+          "$source_property_name": "(#slider_value = 17)"
+        }
+      },
+      {
+        "18@Greninja:mod_menu_common.text_base": {
+          "text": "$value_18_text",
+          "$source_property_name": "(#slider_value = 18)"
+        }
+      },
+      {
+        "19@Greninja:mod_menu_common.text_base": {
+          "text": "$value_19_text",
+          "$source_property_name": "(#slider_value = 19)"
+        }
+      },
+      {
+        "20@Greninja:mod_menu_common.text_base": {
+          "text": "$value_20_text",
+          "$source_property_name": "(#slider_value = 20)"
+        }
+      },
+      {
+        "21@Greninja:mod_menu_common.text_base": {
+          "text": "$value_21_text",
+          "$source_property_name": "(#slider_value = 21)"
+        }
+      },
+      {
+        "22@Greninja:mod_menu_common.text_base": {
+          "text": "$value_22_text",
+          "$source_property_name": "(#slider_value = 22)"
+        }
+      },
+      {
+        "23@Greninja:mod_menu_common.text_base": {
+          "text": "$value_23_text",
+          "$source_property_name": "(#slider_value = 23)"
+        }
+      },
+      {
+        "24@Greninja:mod_menu_common.text_base": {
+          "text": "$value_24_text",
+          "$source_property_name": "(#slider_value = 24)"
+        }
+      },
+      {
+        "25@Greninja:mod_menu_common.text_base": {
+          "text": "$value_25_text",
+          "$source_property_name": "(#slider_value = 25)"
+        }
+      },
+      {
+        "26@Greninja:mod_menu_common.text_base": {
+          "text": "$value_26_text",
+          "$source_property_name": "(#slider_value = 26)"
+        }
+      },
+      {
+        "27@Greninja:mod_menu_common.text_base": {
+          "text": "$value_27_text",
+          "$source_property_name": "(#slider_value = 27)"
+        }
+      },
+      {
+        "28@Greninja:mod_menu_common.text_base": {
+          "text": "$value_28_text",
+          "$source_property_name": "(#slider_value = 28)"
+        }
+      },
+      {
+        "29@Greninja:mod_menu_common.text_base": {
+          "text": "$value_29_text",
+          "$source_property_name": "(#slider_value = 29)"
+        }
+      },
+      {
+        "30@Greninja:mod_menu_common.text_base": {
+          "text": "$value_30_text",
+          "$source_property_name": "(#slider_value = 30)"
+        }
+      },
+      {
+        "31@Greninja:mod_menu_common.text_base": {
+          "text": "$value_31_text",
+          "$source_property_name": "(#slider_value = 31)"
+        }
+      },
+      {
+        "32@Greninja:mod_menu_common.text_base": {
+          "text": "$value_32_text",
+          "$source_property_name": "(#slider_value = 32)"
+        }
+      },
+      {
+        "33@Greninja:mod_menu_common.text_base": {
+          "text": "$value_33_text",
+          "$source_property_name": "(#slider_value = 33)"
+        }
+      },
+      {
+        "34@Greninja:mod_menu_common.text_base": {
+          "text": "$value_34_text",
+          "$source_property_name": "(#slider_value = 34)"
+        }
+      },
+      {
+        "35@Greninja:mod_menu_common.text_base": {
+          "text": "$value_35_text",
+          "$source_property_name": "(#slider_value = 35)"
+        }
+      },
+      {
+        "36@Greninja:mod_menu_common.text_base": {
+          "text": "$value_36_text",
+          "$source_property_name": "(#slider_value = 36)"
+        }
+      },
+      {
+        "37@Greninja:mod_menu_common.text_base": {
+          "text": "$value_37_text",
+          "$source_property_name": "(#slider_value = 37)"
+        }
+      },
+      {
+        "38@Greninja:mod_menu_common.text_base": {
+          "text": "$value_38_text",
+          "$source_property_name": "(#slider_value = 38)"
+        }
+      },
+      {
+        "39@Greninja:mod_menu_common.text_base": {
+          "text": "$value_39_text",
+          "$source_property_name": "(#slider_value = 39)"
+        }
+      },
+      {
+        "40@Greninja:mod_menu_common.text_base": {
+          "text": "$value_40_text",
+          "$source_property_name": "(#slider_value = 40)"
+        }
+      },
+      {
+        "41@Greninja:mod_menu_common.text_base": {
+          "text": "$value_41_text",
+          "$source_property_name": "(#slider_value = 41)"
+        }
+      },
+      {
+        "42@Greninja:mod_menu_common.text_base": {
+          "text": "$value_42_text",
+          "$source_property_name": "(#slider_value = 42)"
+        }
+      },
+      {
+        "43@Greninja:mod_menu_common.text_base": {
+          "text": "$value_43_text",
+          "$source_property_name": "(#slider_value = 43)"
+        }
+      },
+      {
+        "44@Greninja:mod_menu_common.text_base": {
+          "text": "$value_44_text",
+          "$source_property_name": "(#slider_value = 44)"
+        }
+      },
+      {
+        "45@Greninja:mod_menu_common.text_base": {
+          "text": "$value_45_text",
+          "$source_property_name": "(#slider_value = 45)"
+        }
+      },
+      {
+        "46@Greninja:mod_menu_common.text_base": {
+          "text": "$value_46_text",
+          "$source_property_name": "(#slider_value = 46)"
+        }
+      },
+      {
+        "47@Greninja:mod_menu_common.text_base": {
+          "text": "$value_47_text",
+          "$source_property_name": "(#slider_value = 47)"
+        }
+      },
+      {
+        "48@Greninja:mod_menu_common.text_base": {
+          "text": "$value_48_text",
+          "$source_property_name": "(#slider_value = 48)"
+        }
+      },
+      {
+        "49@Greninja:mod_menu_common.text_base": {
+          "text": "$value_49_text",
+          "$source_property_name": "(#slider_value = 49)"
+        }
+      },
+      {
+        "50@Greninja:mod_menu_common.text_base": {
+          "text": "$value_50_text",
+          "$source_property_name": "(#slider_value = 50)"
+        }
+      }
+    ]
+  }
+}

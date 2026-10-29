@@ -1,0 +1,72 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "xc_common",
+
+  "item_renderer": {
+    "type": "custom",
+    "renderer": "inventory_item_renderer",
+    "property_bag": {
+      "#item_id_aux": "($item_id * 65536)"
+    }
+  },
+
+  "luminous_text": {
+    "type": "image",
+    "texture": "textures/ui/Xerox/image/luminous_text_background",
+    "alpha": 0.5,
+    "$text_layer|default": 4,
+    "layer": "($text_layer - 1)",
+    "size": ["100%c", "100%c"],
+    "controls": [
+      {
+        "text": {
+          "type": "label",
+          "size": ["default", 10],
+          "font_type": "$global_font_type",
+          "layer": "$text_layer",
+          "$text|default": "",
+          "text": "$text"
+        }
+      }
+    ]
+  },
+
+  "background": {
+    "type": "image",
+    "texture": "$background_texture",
+    "layer": -9,
+    "fill": true,
+    "bilinear": true
+  },
+
+  "background_blur": {
+    "type": "image",
+    "layer": -10,
+    "texture": "$background_blur_texture",
+    "fill": true,
+    "bilinear": true
+  },
+
+  "background_for_pregame_only": {
+    "type": "image",
+    "texture": "$background_texture",
+    "layer": -9,
+    "fill": true,
+    "bilinear": true,
+    "ignored": "(not $is_pregame)"
+  },
+
+  "background_blur_for_pregame_only": {
+    "type": "image",
+    "layer": -10,
+    "texture": "$background_blur_texture",
+    "fill": true,
+    "bilinear": true,
+    "ignored": "(not $is_pregame)"
+  }
+}

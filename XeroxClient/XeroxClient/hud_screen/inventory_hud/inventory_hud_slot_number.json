@@ -1,0 +1,161 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "inventory_hud_slot_number",
+  "num_base": {
+    "type": "panel",
+    "size": [14, 14],
+    "controls": [
+      {
+        "text": {
+          "type": "label",
+          "size": ["default", "default"],
+          "text": "$text",
+          "color": [0.7, 0.7, 0.7],
+          "font_scale_factor": 0.6,
+          "alpha": 0.9,
+          "font_type": "$global_font_type",
+          "anchor_from": "top_left",
+          "anchor_to": "top_left",
+          "offset": [0.5, -0.25],
+          "layer": 24
+        }
+      }
+    ]
+  },
+
+  "binding": {
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "mod_invhudslotnum",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ]
+  },
+
+  "slot_number_horizontal@inventory_hud_slot_number.binding": {
+    "type": "stack_panel",
+    "size": ["100%cm", "100%c"],
+    "controls": [
+      {
+        "top": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": ["100%c", 14],
+          "controls": [
+            { "1@inventory_hud_slot_number.num_base": { "$text": "1" } },
+            { "2@inventory_hud_slot_number.num_base": { "$text": "2" } },
+            { "3@inventory_hud_slot_number.num_base": { "$text": "3" } },
+            { "4@inventory_hud_slot_number.num_base": { "$text": "4" } },
+            { "5@inventory_hud_slot_number.num_base": { "$text": "5" } },
+            { "6@inventory_hud_slot_number.num_base": { "$text": "6" } },
+            { "7@inventory_hud_slot_number.num_base": { "$text": "7" } },
+            { "8@inventory_hud_slot_number.num_base": { "$text": "8" } },
+            { "9@inventory_hud_slot_number.num_base": { "$text": "9" } }
+          ]
+        }
+      },
+      {
+        "middle ": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": ["100%c", 14],
+          "controls": [
+            { "10@inventory_hud_slot_number.num_base": { "$text": "10" } },
+            { "11@inventory_hud_slot_number.num_base": { "$text": "11" } },
+            { "12@inventory_hud_slot_number.num_base": { "$text": "12" } },
+            { "13@inventory_hud_slot_number.num_base": { "$text": "13" } },
+            { "14@inventory_hud_slot_number.num_base": { "$text": "14" } },
+            { "15@inventory_hud_slot_number.num_base": { "$text": "15" } },
+            { "16@inventory_hud_slot_number.num_base": { "$text": "16" } },
+            { "17@inventory_hud_slot_number.num_base": { "$text": "17" } },
+            { "18@inventory_hud_slot_number.num_base": { "$text": "18" } }
+          ]
+        }
+      },
+      {
+        "bottom ": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": ["100%c", 14],
+          "controls": [
+            { "19@inventory_hud_slot_number.num_base": { "$text": "19" } },
+            { "20@inventory_hud_slot_number.num_base": { "$text": "20" } },
+            { "21@inventory_hud_slot_number.num_base": { "$text": "21" } },
+            { "22@inventory_hud_slot_number.num_base": { "$text": "22" } },
+            { "23@inventory_hud_slot_number.num_base": { "$text": "23" } },
+            { "24@inventory_hud_slot_number.num_base": { "$text": "24" } },
+            { "25@inventory_hud_slot_number.num_base": { "$text": "25" } },
+            { "26@inventory_hud_slot_number.num_base": { "$text": "26" } },
+            { "27@inventory_hud_slot_number.num_base": { "$text": "27" } }
+          ]
+        }
+      }
+    ]
+  },
+
+  "slot_number_vertical@inventory_hud_slot_number.binding": {
+    "type": "stack_panel",
+    "orientation": "horizontal",
+    "size": ["100%c", "100%cm"],
+    "controls": [
+      {
+        "left": {
+          "type": "stack_panel",
+          "size": [14, "100%c"],
+          "controls": [
+            { "1@inventory_hud_slot_number.num_base": { "$text": "1" } },
+            { "4@inventory_hud_slot_number.num_base": { "$text": "4" } },
+            { "7@inventory_hud_slot_number.num_base": { "$text": "7" } },
+            { "10@inventory_hud_slot_number.num_base": { "$text": "10" } },
+            { "13@inventory_hud_slot_number.num_base": { "$text": "13" } },
+            { "16@inventory_hud_slot_number.num_base": { "$text": "16" } },
+            { "19@inventory_hud_slot_number.num_base": { "$text": "19" } },
+            { "22@inventory_hud_slot_number.num_base": { "$text": "22" } },
+            { "25@inventory_hud_slot_number.num_base": { "$text": "25" } }
+          ]
+        }
+      },
+      {
+        "middle ": {
+          "type": "stack_panel",
+          "size": [14, "100%c"],
+          "controls": [
+            { "2@inventory_hud_slot_number.num_base": { "$text": "2" } },
+            { "5@inventory_hud_slot_number.num_base": { "$text": "5" } },
+            { "8@inventory_hud_slot_number.num_base": { "$text": "8" } },
+            { "11@inventory_hud_slot_number.num_base": { "$text": "11" } },
+            { "14@inventory_hud_slot_number.num_base": { "$text": "14" } },
+            { "17@inventory_hud_slot_number.num_base": { "$text": "17" } },
+            { "20@inventory_hud_slot_number.num_base": { "$text": "20" } },
+            { "23@inventory_hud_slot_number.num_base": { "$text": "23" } },
+            { "26@inventory_hud_slot_number.num_base": { "$text": "26" } }
+          ]
+        }
+      },
+      {
+        "right ": {
+          "type": "stack_panel",
+          "size": [14, "100%c"],
+          "controls": [
+            { "3@inventory_hud_slot_number.num_base": { "$text": "3" } },
+            { "6@inventory_hud_slot_number.num_base": { "$text": "6" } },
+            { "9@inventory_hud_slot_number.num_base": { "$text": "9" } },
+            { "12@inventory_hud_slot_number.num_base": { "$text": "12" } },
+            { "15@inventory_hud_slot_number.num_base": { "$text": "15" } },
+            { "18@inventory_hud_slot_number.num_base": { "$text": "18" } },
+            { "21@inventory_hud_slot_number.num_base": { "$text": "21" } },
+            { "24@inventory_hud_slot_number.num_base": { "$text": "24" } },
+            { "27@inventory_hud_slot_number.num_base": { "$text": "27" } }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,49 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "mob_effect",
+
+  "screen_exit_animation_push_offset": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, 0 ],
+    "to": [ "-25%", 0 ],
+    "play_event": "screen.exit_push",
+    "end_event": "screen.exit_end"
+  },
+
+  "screen_exit_animation_pop_offset": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, 0 ],
+    "to": [ "-25%", 0 ],
+    "play_event": "screen.exit_pop",
+    "end_event": "screen.exit_end"
+  },
+
+  "screen_entrance_animation_push_offset": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ "-25%", 0 ],
+    "to": [ 0, 0 ],
+    "play_event": "screen.entrance_push",
+    "end_event": "screen.entrance_end"
+  },
+
+  "screen_entrance_animation_pop_offset": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ "-25%", 0 ],
+    "to": [ 0, 0 ],
+    "play_event": "screen.entrance_pop",
+    "end_event": "screen.entrance_end"
+  }
+}

@@ -1,0 +1,7 @@
+// 文件由@Greninja.修改.
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File modified by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.8.0","animations":{"animation.player.cape":{"loop":true,"bones":{"cape":{"rotation":["math.clamp(-31.0 * (q.cape_flap_amount * math.sin(60) * 4.4) - math.sin(q.modified_distance_moved * 55.0) * 3.1 - 5.0, -180.0, -7.0)",0,"q.modified_move_speed * math.sin(-(q.body_y_rotation - q.head_y_rotation(0))) * 36.5"],"position":[0,"q.get_root_locator_offset('armor_offset.default_neck', 1)",0]}}}}}

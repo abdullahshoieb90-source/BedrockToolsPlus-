@@ -1,0 +1,25 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "realmsPlus_landing",
+
+  "subscription_includes_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "free_trail_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "info_text_bullet/info_text_bullet_bullet": {
+    "font_type": "$global_font_type"
+  },
+  
+  "info_text_bullet/info_text_bullet_body": {
+    "font_type": "$global_font_type"
+  }
+}

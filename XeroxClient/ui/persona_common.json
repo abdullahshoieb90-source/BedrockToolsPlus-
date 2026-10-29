@@ -1,0 +1,29 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "persona_common",
+
+  "item_rarity_color_background": {
+    "$rarity_color_background_texture|default": "textures/ui/Xerox/Black"
+  },
+
+  "piece_item_display/item_renderer/background": {
+    "$rarity_color_background_texture": "textures/ui/Xerox/Black"
+  },
+
+  "emote_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "touch_name_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "emote_image/emote_preview/valid_no_image/valid_text": {
+    "font_type": "$global_font_type"
+  }
+}

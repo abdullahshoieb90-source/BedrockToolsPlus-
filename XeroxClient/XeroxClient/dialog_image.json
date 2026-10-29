@@ -1,0 +1,46 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "dialog_image",
+  "dialog_background": {
+    "type": "image",
+    "texture": "$dialog_background_texture",
+    "$dialog_background_texture|default": "textures/ui/Xerox/image/BlackToTransparent1",
+    "alpha": "$dialog_background_alpha",
+    "$dialog_background_alpha|default": "$xeroxclient_ui_theme_dialog_background_alpha",
+    "visible": "$visible",
+    "$visible|default": true
+  },
+  "dialog_background_2": {
+    "type": "image",
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_popup_dialog_background_alpha",
+    "color": "$xeroxclient_ui_theme_popup_dialog_background_color"
+  },
+  "form_background": {
+    "type": "image",
+    "texture": "textures/xc_ui/form_background",
+    "color": [0.0, 0.0, 0.0, 0.75]
+  },
+  "full_screen_background": {
+    "type": "image",
+    "texture": "textures/ui/Xerox/image/BlackToTransparent1",
+    "alpha": 0.75,
+    "controls": [
+      {
+        "bottom_image": {
+          "type": "image",
+          "size": ["100%", "25%"],
+          "texture": "textures/ui/Xerox/image/BlackToTransparent4",
+          "alpha": 0.65,
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle"
+        }
+      }
+    ]
+  }
+}

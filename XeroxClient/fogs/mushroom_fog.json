@@ -1,0 +1,34 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "format_version": "1.16.100",
+  "minecraft:fog_settings": {
+    "description": {
+      "identifier": "xeroxclient:fog_mushroom"
+    },
+    "distance": {
+      "air": {
+        "fog_start": 0.0,
+        "fog_end": 60.0,
+        "fog_color": "#A0A69C", 
+        "render_distance_type": "fixed"
+      },
+      "weather": {
+        "fog_start": 0.0,
+        "fog_end": 40.0,
+        "fog_color": "#52FF00",
+        "render_distance_type": "fixed"
+      },
+      "water": {
+        "fog_start": 0.0,
+        "fog_end": 30.0,
+        "fog_color": "#32A598",
+        "render_distance_type": "fixed"
+      }
+    }
+  }
+}

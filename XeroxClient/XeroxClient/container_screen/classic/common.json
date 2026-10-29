@@ -1,0 +1,27 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "container_screen_common",
+  "screen_background": {
+    "type": "image",
+    "texture": "textures/ui/Xerox/Black",
+    "layer": -10,
+    "size": ["100%", "100%"],
+    "alpha": 0.5,
+    "controls": [
+      {
+        "client_version@xc_common.luminous_text": {
+          "$text": "('Version ' + ($ClientVersion - 'v'))",
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left",
+          "offset": [15, -15],
+          "$text_layer": 2
+        }
+      }
+    ]
+  }
+}

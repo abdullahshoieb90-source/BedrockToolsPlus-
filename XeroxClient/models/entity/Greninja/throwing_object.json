@@ -1,0 +1,7 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.16.0","minecraft:geometry":[{"description":{"identifier":"geometry.throwing_object","texture_width":16,"texture_height":16,"visible_bounds_width":1,"visible_bounds_height":1,"visible_bounds_offset":[0,0,0]},"bones":[{"name":"body","pivot":[0,0,0],"rotation":[0,0,0],"texture_meshes":[{"texture":"default","position":[-8,-1,-8]}]}]}]}}}]]}}}}} 

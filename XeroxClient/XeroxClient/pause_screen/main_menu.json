@@ -1,0 +1,378 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "pause_main_menu",
+
+  "change_profile@common_buttons.dark_text_button": {
+    "size": ["50%", 20],
+    "$pressed_button_name": "button.to_profile_or_skins_screen",
+    "$button_text": "profileScreen.header"
+  },
+
+  "return_to_game@common_buttons.dark_text_button": {
+    "size": ["100%", 20],
+    "$pressed_button_name": "button.menu_continue",
+    "$button_text": "menu.returnToGame"
+  },
+
+  "store@common_buttons.dark_text_button": {
+    "size": ["50%", 20],
+    "$pressed_button_name": "button.menu_store",
+    "$button_text": "menu.store"
+  },
+
+  "settings@common_buttons.dark_text_button": {
+    "size": ["100%", 20],
+    "$pressed_button_name": "button.menu_settings",
+    "$button_text": "menu.settings"
+  },
+
+  "invite_players@common_buttons.dark_text_button": {
+    "size": ["100%", 20],
+    "$pressed_button_name": "button.menu_invite_players",
+    "$button_text": "pauseScreen.invite",
+    "bindings": [
+      {
+        "binding_name": "#invite_button_enabled",
+        "binding_name_override": "#enabled"
+      }
+    ]
+  },
+
+  "music_player@common_buttons.dark_text_button": {
+    "size": ["100%", 20],
+    "$pressed_button_name": "button.menu_buy_game",
+    "$button_text": "Music Player"
+  },
+
+  "quit@common_buttons.light_text_button": {
+    "size": ["100%", 20],
+    "$pressed_button_name": "pause.quit_confirm_show",
+    "$button_text": "pauseScreen.quit",
+    "$xeroxclient_button_color_default": [ 0.85098, 0.301961, 0.301961 ],
+    "$xeroxclient_button_color_hover": [ 0.85098, 0.301961, 0.301961 ],
+    "$xeroxclient_button_color_pressed": [ 0.85098, 0.301961, 0.301961 ]
+  },
+
+  "quit_cancel@common_buttons.dark_text_button": {
+    "size": ["50%", 20],
+    "$pressed_button_name": "pause.quit_cancel",
+    "$button_text": "gui.cancel"
+  },
+
+  "quit_confirm@common_buttons.light_text_button": {
+    "size": ["50%", 20],
+    "$pressed_button_name": "button.menu_quit",
+    "$button_text": "pauseScreen.quit",
+    "$xeroxclient_button_color_default": [ 0.85098, 0.301961, 0.301961 ],
+    "$xeroxclient_button_color_hover": [ 0.85098, 0.301961, 0.301961 ],
+    "$xeroxclient_button_color_pressed": [ 0.85098, 0.301961, 0.301961 ]
+  },
+
+  "feedback@common_buttons.dark_text_button": {
+    "size": ["50%", 20],
+    "$pressed_button_name": "button.menu_open_uri",
+    "property_bag": {
+      "#hyperlink": "https://aka.ms/minecraftfb"
+    },
+    "$button_text": "Feedback"
+  },
+
+  "achievements@common_buttons.dark_text_button": {
+    "size": ["50%", 20],
+    "$button_text": "menu.achievements",
+    "$pressed_button_name": "button.menu_achievements"
+  },
+
+  "take_screenshot@common_buttons.dark_text_button": {
+    "size": ["50%", 20],
+    "$pressed_button_name": "button.screenshot",
+    "$button_tts_header": "key.screenshot",
+    "$button_text": "Screenshot",
+    "sound_name": "random.screenshot",
+    "sound_volume": 1.0,
+    "sound_pitch": 1.0
+  },
+
+  "toggle_text": {
+   "type": "label",
+   "text": "$button_text",
+   "layer": 5,
+   "font_type": "$global_font_type"
+  },
+
+  "section_toggle_base@common_toggles.dark_ui_toggle": {
+    "size": [ "fill", "15px" ],
+    "$button_type_panel": "pause_main_menu.toggle_text",
+    "$radio_toggle_group": true,
+    "$toggle_name": "XSzC"
+  },
+
+  "main_menu_panel": {
+    "type": "stack_panel",
+    "size": [200, "100%c"],
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "mod_menu_open",
+        "source_property_name": "(not #toggle_state)",
+        "target_property_name": "#visible"
+      }
+    ],
+    "$toggle_default_selected": 0,
+    "controls": [
+      {
+        "main": {
+          "type": "panel",
+          "size": ["100%", "100%cm"],
+          "controls": [
+            { "menu@pause_main_menu.pause_button_panel_content": {} },
+            { "list@pause_player_list.player_list_panel_content": {} },
+            { "memo@pause_memo.memo_panel_content": {} }
+          ]
+        }
+      },
+      {
+        "line_padding": {
+          "type": "panel",
+          "size": ["100%", 1.999999999999999999999999999],
+          "controls": [
+            {
+              "line": {
+                "type": "image",
+                "size": ["100%", 1.000000000000000001],
+                "texture": "textures/ui/Xerox/White"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "section_toggle_panel": {
+          "type": "stack_panel",
+          "size": ["100%", 15],
+          "clips_children": true,
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "main@pause_main_menu.section_toggle_base": {
+                "$button_text": "Main Menu",
+                "$toggle_view_binding_name": "main_menu",
+                "$toggle_group_forced_index": 0,
+                "$toggle_default_state": true
+              }
+            },
+            {
+              "list@pause_main_menu.section_toggle_base": {
+                "$button_text": "Player List",
+                "$toggle_view_binding_name": "player_list",
+                "$toggle_group_forced_index": 1
+              }
+            },
+            {
+              "memo@pause_main_menu.section_toggle_base": {
+                "$button_text": "Memo",
+                "$toggle_view_binding_name": "memo_panel",
+                "$toggle_group_forced_index": 2
+              }
+            }
+          ],
+          "animation_reset_name": "screen_animation_reset",
+          "anims": [
+            "@pause_animation.section_toggle_out_animation",
+            "@pause_animation.section_toggle_out_animation_pop",
+            "@pause_animation.section_toggle_enter_animation",
+            "@pause_animation.section_toggle_enter_animation_pop"
+          ]
+        }
+      }
+    ],
+    "propagate_alpha": true,
+    "animation_reset_name": "screen_animation_reset",
+    "anims": [
+      "@pause_animation.menu_out_animation",
+      "@pause_animation.menu_out_animation_pop",
+      "@pause_animation.menu_enter_animation",
+      "@pause_animation.menu_enter_animation_pop"
+    ]
+  },
+
+  "pause_button_panel_content": {
+    "anchor_from": "center",
+    "anchor_to": "center",
+    "type": "stack_panel",
+    "size": [200, "100%c"],
+    "controls": [
+      {
+        "title_panel": {
+          "type": "image",
+          "size": ["100%", 25],
+          "texture": "textures/ui/Xerox/Black",
+          "alpha": 0.2,
+          "clips_children": true,
+          "controls": [
+            {
+              "title_text": {
+                "type": "label",
+                "size": ["100%", 20],
+                "text": "Game Menu",
+                "offset": [0, -2],
+                "font_scale_factor": 2,
+                "font_type": "KaushanScript-Regular",
+                "text_alignment": "center",
+                "layer": 10
+              }
+            },
+            {
+              "top_line": {
+                "type": "image",
+                "size": ["100%", 1],
+                "texture": "textures/ui/Xerox/White",
+                "anchor_from": "top_middle",
+                "anchor_to": "top_middle",
+                "layer": 10
+              }
+            },
+            {
+              "bottom_line": {
+                "type": "image",
+                "size": ["100%", 1],
+                "texture": "textures/ui/Xerox/White",
+                "anchor_from": "bottom_middle",
+                "anchor_to": "bottom_middle",
+                "layer": 10
+              }
+            },
+            {
+              "background": {
+                "type": "image",
+                "size": ["100%", "400%"],
+                "texture": "textures/ui/Xerox/image/BlackToTransparent1",
+                "anchor_from": "bottom_middle",
+                "anchor_to": "top_middle",
+                "layer": -10,
+                "alpha": 0.8,
+                "offset": [0, 2]
+              }
+            }
+          ],
+          "animation_reset_name": "screen_animation_reset",
+          "anims": [
+            "@pause_animation.title_out_animation",
+            "@pause_animation.title_out_animation_pop",
+            "@pause_animation.title_enter_animation",
+            "@pause_animation.title_enter_animation_pop"
+          ]
+        }
+      },
+      {
+        "padding": {
+          "type": "panel",
+          "size": [0, 2]
+        }
+      },
+      { "return_to_game@pause_main_menu.return_to_game": {} },
+      { "settings@pause_main_menu.settings": {} },
+      {
+        "screenshot&store": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": ["100%", 20],
+          "controls": [
+            { "take_screenshot@pause_main_menu.take_screenshot": {} },
+            { "store@pause_main_menu.store": {} }
+          ]
+        }
+      },
+      {
+        "achievements&feedback": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": ["100%", 20],
+          "controls": [
+            { "achievements@pause_main_menu.achievements": {} },
+            { "change_profile@pause_main_menu.change_profile": {} }
+          ]
+        }
+      },
+      { "music_player@pause_main_menu.music_player": {} },
+      {
+        "quit_panel": {
+          "type": "panel",
+          "size": ["100%", 20],
+          "controls": [
+            {
+              "quit@pause_main_menu.quit": {
+                "clips_children": true,
+                "animation_reset_name": "pause.quit_confirm_show",
+                "anims": [
+                  "@pause_animation.quit_button_hide",
+                  "@pause_animation.quit_button_show"
+                ]
+              }
+            },
+            {
+              "quit_confirm_panel": {
+                "type": "stack_panel",
+                "orientation": "horizontal",
+                "clips_children": true,
+                "size": [0, 0],
+                "animation_reset_name": "pause.quit_cancel",
+                "anims": [
+                  "@pause_animation.quit_confirm_hide",
+                  "@pause_animation.quit_confirm_show"
+                ],
+                "controls": [
+                  { "cancel@pause_main_menu.quit_cancel": {} },
+                  { "confirm@pause_main_menu.quit_confirm": {} }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "main_menu",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ]
+  },
+
+  "new_pause_screen_content": {
+    "type": "panel",
+    "controls": [
+      {
+        "open_mod_menu@common_toggles.light_text_toggle": {
+          "size": [50, 20],
+          "$button_mappings": [
+            {
+              "from_button_id": "button.menu_select",
+              "to_button_id": "button.menu_select",
+              "mapping_type": "double_pressed"
+            },
+            {
+              "from_button_id": "button.menu_ok",
+              "to_button_id": "button.menu_ok",
+              "mapping_type": "focused"
+            }
+          ],
+          "$button_text": "Mod Menu",
+          "$toggle_name": "open_mod_menu",
+          "$toggle_view_binding_name": "mod_menu_open",
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left"
+        }
+      },
+      { "content@pause_main_menu.main_menu_panel": {} }
+      //{ "mod_menu@h4ck3r_module_menu.h4ck3r_module_menu": {} }
+    ]
+  }
+}

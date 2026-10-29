@@ -1,0 +1,73 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "hud_animation",
+
+  "show_hud_panel_in": {
+    "anim_type": "offset",
+    "from": [0, 0],
+    "to": [0, -26],
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "reset_event": "button.hide_gui_all",
+    "next": "@hud_animation.show_hud_panel_stay"
+  },
+
+  "show_hud_panel_stay": {
+    "anim_type": "wait",
+    "duration": 2,
+    "next": "@hud_animation.show_hud_panel_out"
+  },
+
+  "show_hud_panel_out": {
+    "anim_type": "offset",
+    "to": [0, 0],
+    "from": [0, -26],
+    "easing": "out_cubic",
+    "duration": 0.6
+  },
+
+  "root_panel_out_animation": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "to": ["150%", "150%"],
+    "from": [ "100%", "100%" ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "root_panel_out_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "to": ["150%", "150%"],
+    "from": [ "100%", "100%" ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "root_panel_enter_animation": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "from": ["150%", "150%"],
+    "to": [ "100%", "100%" ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "root_panel_enter_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "from": ["150%", "150%"],
+    "to": [ "100%", "100%" ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  }
+}

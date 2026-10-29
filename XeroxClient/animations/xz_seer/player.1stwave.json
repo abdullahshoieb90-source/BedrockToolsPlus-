@@ -1,0 +1,22 @@
+{
+	"format_version": "1.8.0",
+	"animations": {
+		"animation.player.1stwave": {
+			"loop": true,
+			"bones": {
+				"rightitem": {
+					"rotation": [
+						"math.sin(variable.first_person_rotation_factor * (1.0 - variable.attack_time) * (1.0 - variable.attack_time) * 200.0) * 30",
+						"math.sin(variable.first_person_rotation_factor * (1.0 - variable.attack_time) * (1.0 - variable.attack_time) * 200.0) * 30",
+						"math.sin(variable.first_person_rotation_factor * (1.0 - variable.attack_time) * (1.0 - variable.attack_time) * 180.0) * -75"
+					],
+          "position": [
+            "math.sin(90*v.attack_time*(1-v.attack_time)*math.sqrt(v.attack_time))*-7",
+            "math.sin(90*v.attack_time*(1-v.attack_time)*math.sin(1-v.attack_time))*(2-v.attack_time)*-1.5",
+            "math.sin(120*v.attack_time*(1-v.attack_time)*math.sqrt(v.attack_time))*5"
+          ]
+				}
+			}
+		}
+	}
+}

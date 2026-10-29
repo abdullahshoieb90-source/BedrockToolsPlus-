@@ -1,0 +1,36 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+	"format_version": "1.16.0",
+	"minecraft:geometry": [
+		{
+			"description": {
+				"identifier": "geometry.grennja_sword",
+				"texture_width": 16,
+				"texture_height": 16,
+				"visible_bounds_width": 1,
+				"visible_bounds_height": 1,
+				"visible_bounds_offset": [0, 0, 0]
+			},
+			"bones": [
+				{
+					"name": "rightitem",
+					"pivot": [0, 4.5, 0],
+					"rotation": [0, 45, -90],
+					"binding": "q.item_slot_to_bone_name(c.item_slot)",
+					"texture_meshes": [
+						{
+							"texture": "default",
+							"position": [5.25, 0.5, -5.75],
+							"local_pivot": [8, 1, 8]
+						}
+					]
+				}
+			]
+		}
+	]
+}

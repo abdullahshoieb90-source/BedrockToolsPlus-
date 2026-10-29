@@ -1,0 +1,22 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "format_version": "1.8.0",
+  "render_controllers": {
+    "controller.render.crosshair": {
+      "geometry": "Geometry.crosshair",
+      "materials": [ { "*": "material.anti_invisibility" } ],
+      "textures": [ "Texture.crosshair" ],
+      "is_hurt_color": {},
+      "on_fire_color": {},
+      "overlay_color": {},
+      "ignore_lighting": true,
+      "filter_lighting": true,
+      "light_color_multiplier": 1.25
+    }
+  }
+}

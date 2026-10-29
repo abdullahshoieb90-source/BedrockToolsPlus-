@@ -1,0 +1,72 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "death_main_screen",
+  "death_screen_content": {
+    "type": "panel",
+    "controls": [
+      { "you_died_label@death_text.you_died_label": {} },
+      { "death_reason_label@death_text.death_reason_label": {} },
+      {
+        "button_panel": {
+          "type": "panel",
+          "anchor_from": "center",
+          "anchor_to": "top_middle",
+          "offset": [ 0, "35%" ],
+          "size": [ 200, 40 ],
+          "controls": [
+            {
+              "respawn@common_buttons.dark_text_button": {
+                "$button_text": "deathScreen.respawn",
+                "anchor_from": "top_left",
+                "anchor_to": "top_left",
+                "layer": 10,
+                "size": [200, 20],
+                "$pressed_button_name": "button.respawn_button",
+                "bindings": [
+                  {
+                    "binding_name": "#respawn_enabled",
+                    "binding_name_override": "#enabled"
+                  }
+                ]
+              }
+            },
+            {
+              "main_menu@common_buttons.dark_text_button": {
+                "$xeroxclient_button_color_default": [ 0.85098, 0.301961, 0.301961 ],
+                "$xeroxclient_button_color_hover": [ 0.85098, 0.301961, 0.301961 ],
+                "$xeroxclient_button_color_pressed": [ 0.85098, 0.301961, 0.301961 ],
+                "anchor_from": "bottom_left",
+                "anchor_to": "bottom_left",
+                "layer": 10,
+                "size": [200, 20],
+                "$pressed_button_name": "button.main_menu_button",
+                "variables": [
+                  {
+                    "requires": "$is_secondary_client",
+                    "$button_text": "deathScreen.quit.secondaryClient"
+                  },
+                  {
+                    "requires": "(not $is_secondary_client)",
+                    "$button_text": "deathScreen.quit"
+                  }
+                ],
+                "enabled": "(not $touch)"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "select_button@death.a_button_panel": {
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left"
+        }
+      }
+    ]
+  }
+}

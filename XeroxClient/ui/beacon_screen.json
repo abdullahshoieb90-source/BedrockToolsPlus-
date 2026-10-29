@@ -1,0 +1,143 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "beacon",
+  "payment_panel": {
+    "offset": [0, 15]
+  },
+
+  "beacon_panel/root_panel/common_panel": {
+    "ignored": true
+  },
+
+  "beacon_panel/root_panel": {
+    "$container_texture": "beacon",
+    "$container_name": "container.beacon",
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          { "logo@Xerox_common.client_logo": { "offset": [0, 35]} },
+          { "mode_select@inv_quick_mode.inv_mode_select_panel": { "offset": [22, 0] } },
+          { "new_common_panel@Xerox_common.inv_common_panel": {} },
+          { "paper_doll@chest.paper_doll": {} }
+        ]
+      }
+    ]
+  },
+
+  "beacon_panel/root_panel/beacon_inventory/beacon_inner_panel": {
+    "offset": [0, 15]
+  },
+
+  "beacon_panel/root_panel/beacon_inventory/payment_panel": {
+    "offset": [0, 15]
+  },
+
+  "item_seperator": {
+    "alpha": 0,
+    "texture": ""
+  },
+
+  "inactive_button/hover": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.2
+  },
+
+  "inactive_button/default": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.2
+  },
+
+  "base_button/pressed": {
+    "texture": "textures/ui/Xerox/image/button/hover",
+    "alpha": 0.3
+  },
+
+  "base_button/hover": {
+    "texture": "textures/ui/Xerox/image/button/hover",
+    "alpha": 0.4
+  },
+
+  "base_button/default": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.4
+  },
+
+  "button_checked": {
+    "texture": "textures/ui/Xerox/image/button/hover",
+    "alpha": 0.4
+  },
+
+  "button_locked_hover": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.2
+  },
+
+  "button_locked": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.2
+  },
+
+  "button_checked_hover": {
+    "texture": "textures/ui/Xerox/image/button/hover",
+    "alpha": 0.3
+  },
+
+  "button_unchecked_hover": {
+    "texture": "textures/ui/Xerox/image/button/hover",
+    "alpha": 0.4
+  },
+
+  "button_unchecked_default": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.4
+  },
+
+  "beacon_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "beacon_inner_panel/middle_strip": {
+    "ignored": true
+  },
+
+  "beacon_inner_panel": {
+    "texture": "textures/ui/Xerox/image/BlackToTransparent4",
+    "alpha": 0.2,
+    "offset": [0, 15]
+  },
+
+  "beacon_screen": {
+    "variables": [
+      {
+        "requires": "$desktop_screen",
+        "$screen_content": "beacon.beacon_panel",
+        "$screen_bg_content": "common.screen_background",
+        "$screen_animations": [
+          "@container_animation.container_screen_exit_offset_push",
+          "@container_animation.container_screen_exit_offset_pop",
+          "@container_animation.container_screen_entrance_offset_push",
+          "@container_animation.container_screen_entrance_offset_pop",
+          "@container_animation.container_screen_exit_size_push",
+          "@container_animation.container_screen_exit_size_pop",
+          "@container_animation.container_screen_entrance_size_push",
+          "@container_animation.container_screen_entrance_size_pop",
+          "@container_animation.container_screen_exit_alpha_push",
+          "@container_animation.container_screen_exit_alpha_pop",
+          "@container_animation.container_screen_entrance_alpha_push",
+          "@container_animation.container_screen_entrance_alpha_pop"
+        ]
+      },
+      {
+        "requires": "$pocket_screen",
+        "$screen_content": "beacon_pocket.beacon_panel"
+      }
+    ]
+  }
+}

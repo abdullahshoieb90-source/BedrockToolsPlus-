@@ -1,0 +1,489 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "music_player_main_screen",
+  "scrolling_panel@common.scrolling_panel": {
+    "size": ["70%", "100% - 53px"],
+    "anchor_from": "bottom_middle",
+    "anchor_to": "bottom_middle",
+    "$show_background": false,
+    "$scroll_size": [ 5, "100% - 4px" ],
+    "$scrolling_pane_size": [ "100% - 4px", "100%" ],
+    "$scrolling_pane_offset": [ 2, 0 ],
+    "$scroll_bar_right_padding_size": [ 0, 0 ]
+  },
+
+  "section_toggle@settings_common.section_toggle_base": {
+    "size": ["50%", "30px"],
+    "$glyph_size": [16, 16]
+  },
+
+  "section_toggle_stack": {
+    "type": "stack_panel",
+    "size": ["70%", "30px"],
+    "orientation": "horizontal",
+    "anchor_from": "top_middle",
+    "anchor_to": "top_middle",
+    "offset": [0, "23px"],
+    "$default_selector_toggle_index": 0,
+    "controls": [
+      {
+        "minecraft_music_section@music_player_main_screen.section_toggle": {
+          "$toggle_view_binding_name": "minecraft_music_toggle",
+          "$icon_name": "minecraft",
+          "$toggle_group_forced_index": 0,
+          "$button_text": "Minecraft Music"
+        }
+      },
+      {
+        "custom_music_section@music_player_main_screen.section_toggle": {
+          "$toggle_view_binding_name": "custom_music_toggle",
+          "$icon_name": "custom",
+          "$toggle_group_forced_index": 1,
+          "$button_text": "Custom Music"
+        }
+      }
+    ]
+  },
+
+  "main_screen_content": {
+    "type": "panel",
+    "controls": [
+      { "bg@Xerox_common.background": { "ignored": "(not $is_pregame)" } },
+      { "header@Xerox_common.common_header": { "$white_bg": false, "$header_text": "music player" } },
+      { "section_toggle_stack@music_player_main_screen.section_toggle_stack": {} },
+      {
+        "scrolling_panel_1@music_player_main_screen.scrolling_panel": {
+          "$scrolling_content": "music_player_main_screen.button_stack_1"
+        }
+      },
+      {
+        "scrolling_panel_2@music_player_main_screen.scrolling_panel": {
+          "$scrolling_content": "music_player_main_screen.button_stack_2"
+        }
+      }
+    ]
+  },
+
+  "button_stack_1": {
+    "type": "stack_panel",
+    "orientation": "vertical",
+    "size": ["100%", "100%c"],
+    "controls": [
+      {
+        "end@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - The End",
+          "$music_name": "music.game.end",
+          "$music_duration": 900.6
+        }
+      },
+      {
+        "endboss@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "End Dragon",
+          "$music_name": "music.game.endboss",
+          "$music_duration": 325.8
+        }
+      },
+      {
+        "credits@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Alpha",
+          "$music_name": "music.game.credits",
+          "$music_duration": 601.2
+        }
+      },
+      {
+        "game_water_1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_4')",
+          "$music_button_text": "C418 - Axolotl",
+          "$music_name": "minecraft.music.game.water.axolotl",
+          "$music_duration": 301.8
+        }
+      },
+      {
+        "game_water_2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_2')",
+          "$music_button_text": "C418 - Dragon Fish",
+          "$music_name": "minecraft.music.game.water.dragon_fish",
+          "$music_duration": 367.2
+        }
+      },
+      {
+        "game_water_3@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_3')",
+          "$music_button_text": "C418 - Shuniji",
+          "$music_name": "minecraft.music.game.water.shuniji",
+          "$music_duration": 242.4
+        }
+      },
+      {
+        "game_menu_1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Mutation",
+          "$music_name": "minecraft.music.menu.menu1",
+          "$music_duration": 188.4
+        }
+      },
+      {
+        "game_menu_2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Moog City 2",
+          "$music_name": "minecraft.music.menu.menu2",
+          "$music_duration": 181.8
+        }
+      },
+      {
+        "game_menu_3@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Beginning 2",
+          "$music_name": "minecraft.music.menu.menu3",
+          "$music_duration": 181.2
+        }
+      },
+      {
+        "game_menu_4@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Floating Trees",
+          "$music_name": "minecraft.music.menu.menu4",
+          "$music_duration": 242.4
+        }
+      },
+      {
+        "game_menu_5@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_1')",
+          "$music_button_text": "Kumi Tanioka - An Ordinary Day",
+          "$music_name": "minecraft.music.menu.an_ordinary_day",
+          "$music_duration": 318.6
+        }
+      },
+      {
+        "game_menu_6@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_1')",
+          "$music_button_text": "Kumi Tanioka - Comforting Memories",
+          "$music_name": "minecraft.music.menu.comforting_memories",
+          "$music_duration": 261.0
+        }
+      },
+      {
+        "game_menu_7@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_1')",
+          "$music_button_text": "Kumi Tanioka - Floating Dream",
+          "$music_name": "minecraft.music.menu.floating_dream",
+          "$music_duration": 195.0
+        }
+      },
+      {
+        "game_menu_8@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_1')",
+          "$music_button_text": "Lena Raine - Infinite Amethyst",
+          "$music_name": "minecraft.music.menu.infinite_amethyst",
+          "$music_duration": 258.6
+        }
+      },
+      {
+        "game_menu_9@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_1')",
+          "$music_button_text": "Lena Raine - Left to Bloom",
+          "$music_name": "minecraft.music.menu.left_to_bloom",
+          "$music_duration": 325.2
+        }
+      },
+      {
+        "game_menu_10@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_1')",
+          "$music_button_text": "Lena Raine - One More Day",
+          "$music_name": "minecraft.music.menu.one_more_day",
+          "$music_duration": 262.8
+        }
+      },
+      {
+        "game_menu_11@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_1')",
+          "$music_button_text": "Lena Raine - Stand Tall",
+          "$music_name": "minecraft.music.menu.stand_tall",
+          "$music_duration": 304.8
+        }
+      },
+      {
+        "game_menu_12@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_1')",
+          "$music_button_text": "Lena Raine - Wending",
+          "$music_name": "minecraft.music.menu.wending",
+          "$music_duration": 308.4
+        }
+      },
+      {
+        "game_nether_1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Concrete Halls",
+          "$music_name": "minecraft.music.game.nether.nether1",
+          "$music_duration": 251.4
+        }
+      },
+      {
+        "game_nether_2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Dead Voxel",
+          "$music_name": "minecraft.music.game.nether.nether2",
+          "$music_duration": 301.8
+        }
+      },
+      {
+        "game_nether_3@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Warmth",
+          "$music_name": "minecraft.music.game.nether.nether3",
+          "$music_duration": 215.4
+        }
+      },
+      {
+        "game_nether_4@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Ballad of the Cats",
+          "$music_name": "minecraft.music.game.nether.nether4",
+          "$music_duration": 264.0
+        }
+      },
+      {
+        "game_nether_5@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_2')",
+          "$music_button_text": "Lena Raine - Chrysopoeia",
+          "$music_name": "minecraft.music.game.nether.chrysopoeia",
+          "$music_duration": 301.8
+        }
+      },
+      {
+        "game_nether_6@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_2')",
+          "$music_button_text": "Lena Raine - Rubedo",
+          "$music_name": "minecraft.music.game.nether.rubedo",
+          "$music_duration": 307.2
+        }
+      },
+      {
+        "game_nether_7@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'mc_soundtrack_2')",
+          "$music_button_text": "Lena Raine - So Below",
+          "$music_name": "minecraft.music.game.nether.so_below",
+          "$music_duration": 310.8
+        }
+      },
+      {
+        "game_creative_1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Biome Fest",
+          "$music_name": "minecraft.music.game.creative.creative1",
+          "$music_duration": 373.2
+        }
+      },
+      {
+        "game_creative_2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Blind Spots",
+          "$music_name": "minecraft.music.game.creative.creative2",
+          "$music_duration": 319.2
+        }
+      },
+      {
+        "game_creative_3@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Haunt Muskie",
+          "$music_name": "minecraft.music.game.creative.creative3",
+          "$music_duration": 360.6
+        }
+      },
+      {
+        "game_creative_4@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Aria Math",
+          "$music_name": "minecraft.music.game.creative.creative4",
+          "$music_duration": 305.4
+        }
+      },
+      {
+        "game_creative_5@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Dreiton",
+          "$music_name": "minecraft.music.game.creative.creative5",
+          "$music_duration": 490.2
+        }
+      },
+      {
+        "game_creative_6@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_1')",
+          "$music_button_text": "C418 - Taswell",
+          "$music_name": "minecraft.music.game.creative.creative6",
+          "$music_duration": 501.0
+        }
+      },
+      {
+        "game_calm1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Minecraft",
+          "$music_name": "minecraft.music.game.calm1",
+          "$music_duration": 252.0
+        }
+      },
+      {
+        "game_calm2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Clark",
+          "$music_name": "minecraft.music.game.calm2",
+          "$music_duration": 192.6
+        }
+      },
+      {
+        "game_calm3@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Sweden",
+          "$music_name": "minecraft.music.game.calm3",
+          "$music_duration": 209.4
+        }
+      },
+      {
+        "game_hal1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Subwoofer Lullaby",
+          "$music_name": "minecraft.music.game.hal1",
+          "$music_duration": 197.4
+        }
+      },
+      {
+        "game_hal2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Living Mice",
+          "$music_name": "minecraft.music.game.hal2",
+          "$music_duration": 184.8
+        }
+      },
+      {
+        "game_hal3@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Haggstrom",
+          "$music_name": "minecraft.music.game.hal3",
+          "$music_duration": 186.6
+        }
+      },
+      {
+        "game_hal4@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Danny",
+          "$music_name": "minecraft.music.game.hal4",
+          "$music_duration": 249.0
+        }
+      },
+      {
+        "game_nuance1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Key",
+          "$music_name": "minecraft.music.game.nuance1",
+          "$music_duration": 60.6
+        }
+      },
+      {
+        "game_nuance2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Oxygène",
+          "$music_name": "minecraft.music.game.nuance2",
+          "$music_duration": 65.4
+        }
+      },
+      {
+        "game_piano1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Dry Hands",
+          "$music_name": "minecraft.music.game.piano1",
+          "$music_duration": 64.8
+        }
+      },
+      {
+        "game_piano2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Wet Hands",
+          "$music_name": "minecraft.music.game.piano2",
+          "$music_duration": 77.4
+        }
+      },
+      {
+        "game_piano3@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'c418_cover_0')",
+          "$music_button_text": "C418 - Mice On Venus",
+          "$music_name": "minecraft.music.game.piano3",
+          "$music_duration": 264.0
+        }
+      }
+    ],
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "minecraft_music_toggle",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ]
+  },
+
+  "button_stack_2": {
+    "type": "stack_panel",
+    "orientation": "vertical",
+    "size": ["100%", "100%c"],
+    "controls": [
+      {
+        "custom_song_1@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'custom')",
+          "$music_button_text": "xeroxclient.musicPlayer.custom1",
+          "$music_name": "xeroxclient.music.custom1"
+        }
+      },
+      {
+        "custom_song_2@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'custom')",
+          "$music_button_text": "xeroxclient.musicPlayer.custom2",
+          "$music_name": "xeroxclient.music.custom2"
+        }
+      },
+      {
+        "custom_song_3@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'custom')",
+          "$music_button_text": "xeroxclient.musicPlayer.custom3",
+          "$music_name": "xeroxclient.music.custom3"
+        }
+      },
+      {
+        "custom_song_4@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'custom')",
+          "$music_button_text": "xeroxclient.musicPlayer.custom4",
+          "$music_name": "xeroxclient.music.custom4"
+        }
+      },
+      {
+        "custom_song_5@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'custom')",
+          "$music_button_text": "xeroxclient.musicPlayer.custom5",
+          "$music_name": "xeroxclient.music.custom5"
+        }
+      },
+      {
+        "custom_song_6@music_player_button_template.music_button": {
+          "$music_texture": "($button_texture_path + 'custom')",
+          "$music_button_text": "xeroxclient.musicPlayer.custom6",
+          "$music_name": "xeroxclient.music.custom6"
+        }
+      }
+    ],
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "custom_music_toggle",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ]
+  }
+}

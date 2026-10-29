@@ -1,0 +1,777 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "crafting",
+
+  "cell_image_classic": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.1
+  },
+
+  "cell_image_normal": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.1
+  },
+
+  "cell_image_invert": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.25
+  },
+
+  "cell_image_red": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.2,
+    "color": [1.0, 0.333, 0.333]
+  },
+
+  "cell_image_selected": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.30,
+    "color": [0.667, 0.667, 1.0]
+  },
+
+  "cell_image_darkgrey": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.325
+  },
+
+  "inventory_container_item/item_button_ref": {
+    "ignored": true
+  },
+
+  "inventory_container_item/item_cell/durability_bar": {
+  },
+
+  "inventory_container_item": {
+    "$background_image": "common.inventory_slot_background",
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "item_button_ref_new": {
+              "type": "panel",
+              "layer": 5,
+              "controls": [
+                {
+                  "default@$button_ref": { 
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "pressed_control": "pressed",
+                    "ignored": "($touch)",
+                    "consume_hover_events": false,
+                    "tts_ignore_count": true,
+                    "tts_skip_message": true,
+                    "tts_inherit_siblings": true
+                  }
+                },
+                {
+                  "normal_mode": {
+                    "type": "panel",
+                    "ignored": "(not $touch)",
+                    "bindings": [
+                      {
+                        "binding_type": "view",
+                        "source_control_name": "xeroxclient_inv_normal",
+                        "source_property_name": "#toggle_state",
+                        "target_property_name": "#visible"
+                      }
+                    ],
+                    "controls": [
+                      { 
+                        "button@$button_ref": {
+                          "consume_hover_events": false,
+                          "tts_ignore_count": true,
+                          "tts_skip_message": true,
+                          "tts_inherit_siblings": true
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "auto_place_mode": {
+                    "type": "panel",
+                    "ignored": "(not $touch)",
+                    "bindings": [
+                      {
+                        "binding_type": "view",
+                        "source_control_name": "xeroxclient_inv_auto_place",
+                        "source_property_name": "#toggle_state",
+                        "target_property_name": "#visible"
+                      }
+                    ],
+                    "controls": [
+                      { 
+                        "button@$button_ref": {
+                          "consume_hover_events": false,
+                          "tts_ignore_count": true,
+                          "tts_skip_message": true,
+                          "tts_inherit_siblings": true,
+                          "button_mappings": [
+                            {
+                              "from_button_id": "button.menu_select",
+                              "to_button_id": "button.container_auto_place",
+                              "mapping_type": "pressed"
+                            },
+                            {
+                              "from_button_id": "button.menu_ok",
+                              "to_button_id": "button.container_auto_place",
+                              "mapping_type": "pressed"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "drop_one_mode": {
+                    "type": "panel",
+                    "ignored": "(not $touch)",
+                    "bindings": [
+                      {
+                        "binding_type": "view",
+                        "source_control_name": "xeroxclient_inv_drop_one",
+                        "source_property_name": "#toggle_state",
+                        "target_property_name": "#visible"
+                      }
+                    ],
+                    "controls": [
+                      { 
+                        "button@$button_ref": {
+                          "consume_hover_events": false,
+                          "tts_ignore_count": true,
+                          "tts_skip_message": true,
+                          "tts_inherit_siblings": true,
+                          "button_mappings": [
+                            {
+                              "from_button_id": "button.menu_select",
+                              "to_button_id": "button.drop_one",
+                              "mapping_type": "pressed"
+                            },
+                            {
+                              "from_button_id": "button.menu_ok",
+                              "to_button_id": "button.drop_one",
+                              "mapping_type": "pressed"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  /*"recipe_inventory_screen_content/content_stack_panel/survival_padding": {
+    "size": [75, "120%"],
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          { "effects_panel@hud.mob_effects_renderer": {} }
+        ]
+      }
+    ]
+  },*/
+
+  "left_tab@common_tabs.tab_left": {
+    "$toggle_focus_enabled": false,
+    "$toggle_name": "navigation_tab",
+    "$toggle_group_default_selected": "$construction_index",
+    "$tab_content": "crafting.empty_tab_panel"
+  },
+
+  "inv_search_tab@crafting.left_tab": {
+    "$is_right_most_tab": true,
+    "$tab_view_binding_name": "search_tab_toggle",
+    "$tab_icon": "crafting.search_icon",
+    "$toggle_group_forced_index": "$search_index",
+
+    "$toggle_binding_type": "global",
+    "$toggle_state_binding_name": "#is_left_tab_search",
+
+    "$focus_id": "search_tab",
+    "$focus_override_left": "nature_tab",
+    "$focus_override_up": "FOCUS_OVERRIDE_STOP"
+  },
+
+  "inv_construction_tab@crafting.left_tab": {
+    "$is_left_most_tab": true,
+    "$tab_view_binding_name": "construction_tab_toggle",
+    "$tab_icon": "crafting.construction_icon",
+    "$toggle_group_forced_index": "$construction_index",
+
+    "$toggle_binding_type": "global",
+    "$toggle_state_binding_name": "#is_left_tab_construct",
+
+    "$focus_id": "construction_tab",
+    "$focus_override_left": "help_button",
+    "$focus_override_right": "equipment_tab",
+    "$focus_override_up": "FOCUS_OVERRIDE_STOP"
+  },
+
+  "inv_equipment_tab@crafting.left_tab": {
+    "$tab_view_binding_name": "equipment_tab_toggle",
+    "$tab_icon": "crafting.equipment_icon",
+    "$toggle_group_forced_index": "$equipment_index",
+
+    "$toggle_binding_type": "global",
+    "$toggle_state_binding_name": "#is_left_tab_equipment",
+
+    "$focus_id": "equipment_tab",
+    "$focus_override_left": "construction_tab",
+    "$focus_override_right": "items_tab",
+    "$focus_override_up": "FOCUS_OVERRIDE_STOP"
+  },
+
+  "inv_nature_tab@crafting.left_tab": {
+    "$tab_view_binding_name": "nature_tab_toggle",
+    "$tab_icon": "crafting.nature_icon",
+    "$toggle_group_forced_index": "$nature_index",
+
+    "$toggle_binding_type": "global",
+    "$toggle_state_binding_name": "#is_left_tab_nature",
+
+    "$focus_id": "nature_tab",
+    "$focus_override_left": "items_tab",
+    "$focus_override_right": "search_tab",
+    "$focus_override_up": "FOCUS_OVERRIDE_STOP"
+  },
+
+  "inv_items_tab@crafting.left_tab": {
+    "$tab_view_binding_name": "items_tab_toggle",
+    "$tab_icon": "crafting.miscellaneous_icon",
+    "$toggle_group_forced_index": "$items_index",
+
+    "$toggle_binding_type": "global",
+    "$toggle_state_binding_name": "#is_left_tab_items",
+
+    "$focus_id": "items_tab",
+    "$focus_override_left": "equipment_tab",
+    "$focus_override_right": "nature_tab",
+    "$focus_override_up": "FOCUS_OVERRIDE_STOP"
+  },
+
+  "tab_navigation_panel_layout/navigation_tabs/content": {
+    "orientation": "vertical",
+    "offset": [ -29, 23 ],
+    "controls": [
+      {
+        "construction_tab@crafting.inv_construction_tab": {
+          "size": [ 27, "100%" ]
+        }
+      },
+      {
+        "equipment_tab@crafting.inv_equipment_tab": {
+          "size": [ 27, "100%" ]
+        }
+      },
+      {
+        "items_tab@crafting.inv_items_tab": {
+          "size": [ 27, "100%" ]
+        }
+      },
+      {
+        "nature_tab@crafting.inv_nature_tab": {
+          "size": [ 27, "100%" ]
+        }
+      },
+      {
+        "fill_panel_0": {
+          "type": "panel",
+          "size": [ 0, 31 ]
+        }
+      },
+      {
+        "search_tab@crafting.inv_search_tab": {
+          "size": [ 27, "100%" ]
+        }
+      }
+    ]
+  },
+  "armor_overlay": {
+    "alpha": 0.65,
+    "size": [12, 12]
+  },
+
+  "offhand_overlay": {
+    "alpha": 0.65,
+    "size": [12, 12]
+  },
+
+  "armor_overlay_helmet": {
+    "texture": "textures/ui/Xerox/inventory/inv_slot_icon",
+    "uv_size": [16, 16],
+    "uv": [0, 0]
+  },
+
+  "armor_overlay_chest": {
+    "texture": "textures/ui/Xerox/inventory/inv_slot_icon",
+    "uv_size": [16, 16],
+    "uv": [0, 16]
+  },
+
+  "armor_overlay_legs": {
+    "texture": "textures/ui/Xerox/inventory/inv_slot_icon",
+    "uv_size": [16, 16],
+    "uv": [0, 32]
+  },
+
+  "armor_image_feet": {
+    "texture": "textures/ui/Xerox/inventory/inv_slot_icon",
+    "uv_size": [16, 16],
+    "uv": [0, 48]
+  },
+
+  "armor_overlay_shield": {
+    "texture": "textures/ui/Xerox/inventory/inv_slot_icon",
+    "uv_size": [16, 16],
+    "uv": [0, 64]
+  },
+
+  "player_armor_panel/player_bg": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.55
+  },
+
+  "player_armor_panel/player_preview_border": {
+    "ignored": true
+  },
+
+  "crafting_label": {
+    "ignored": true
+  },
+
+  "inventory_label": {
+    "ignored": true
+  },
+
+  "crafting_arrow": {
+    "texture": "textures/ui/Xerox/others/arrow",
+    "alpha": 0.65
+  },
+
+  "crafting_arrow_large": {
+    "texture": "textures/ui/Xerox/others/arrow_large",
+    "alpha": 0.65
+  },
+
+  "work_bench_panel_3x3": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "quick_craft@common_buttons.dark_content_button": {
+              "anchor_from": "right_middle",
+              "anchor_to": "right_middle",
+              "offset": [ 0, 0 ],
+              "size": [ 25, 25 ],
+              "$button_content": "crafting.workbench_icon",
+              "$pressed_button_name": "button.crafting_output_tertiary",
+              "property_bag": {
+                "#collection_name": "crafting_output_items",
+                "#collection_index": 0
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "workbench_icon": {
+    "type": "image",
+    "texture": "textures/ui/Xerox/inventory/workbench"
+  },
+
+  "trash_icon": {
+    "type": "image",
+    "texture": "textures/ui/book_trash_default"
+  },
+
+  "crafting_panel_2x2": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "quick_craft@common_buttons.dark_content_button": {
+              "anchor_from": "right_middle",
+              "anchor_to": "right_middle",
+              "offset": [ 27, -13 ],
+              "size": [ 25, 25 ],
+              "$button_content": "crafting.workbench_icon",
+              "$pressed_button_name": "button.crafting_output_tertiary",
+              "property_bag": {
+                "#collection_name": "crafting_output_items",
+                "#collection_index": 0
+              }
+            }
+          },
+          {
+            "delete@common_buttons.dark_content_button": {
+              "anchor_from": "right_middle",
+              "anchor_to": "right_middle",
+              "offset": [ 27, 13 ],
+              "size": [ 25, 25 ],
+              "$button_content": "crafting.trash_icon",
+              "sound_name": "mob.zombie.woodbreak",
+              "$pressed_button_name": "button.destroy_selection",
+              "property_bag": {
+                "#collection_name": "crafting_output_items",
+                "#collection_index": 0
+              },
+              "bindings": [
+                {
+                  "binding_type": "global",
+                  "binding_name": "#is_creative_mode",
+                  "binding_name_override": "#enabled"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "creative_label": {
+    "ignored": true
+  },
+
+  "filter_toggle": {
+    "ignored": true
+  }, 
+
+  "new_filter_toggle@common_toggles.dark_image_toggle": {
+    "anchor_from": "top_right",
+    "$button_content": "crafting.workbench_icon",
+    "size": [15, 15],
+    "anchor_to": "top_right",
+    "$option_binding_name": "1145141919810",
+    "$toggle_name": "toggle.enableFiltering",
+    "$toggle_binding_type": "global",
+    "$toggle_state_binding_name": "#filtering_enabled",
+    "$focus_id": "craftable_toggle",
+    "$focus_override_left": "recipe_search_bar",
+    "$button_mappings": [
+      {
+        "to_button_id": "button.filter_toggle_hovered",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_select",
+        "to_button_id": "button.menu_select",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_ok",
+        "to_button_id": "button.menu_ok",
+        "mapping_type": "focused"
+      },
+      {
+        "ignored": "(not $enable_directional_toggling)",
+        "from_button_id": "button.menu_left",
+        "to_button_id": "$toggle_off_button",
+        "mapping_type": "pressed",
+        "input_mode_condition": "gamepad_and_not_gaze"
+      },
+      {
+        "ignored": "(not $enable_directional_toggling)",
+        "from_button_id": "button.menu_right",
+        "to_button_id": "$toggle_on_button",
+        "mapping_type": "pressed",
+        "input_mode_condition": "gamepad_and_not_gaze"
+      }
+    ],
+    "bindings": [
+      {
+        "binding_type": "global",
+        "binding_name": "(not #is_creative_mode)",
+        "binding_name_override": "#visible"
+      }
+    ]
+  },
+  "layout_toggle_content": {
+    "type": "panel",
+    "controls": [
+      {
+        "icon@$icon_control": {
+          "anchor_to": "center",
+          "anchor_from": "center",
+          "layer": 2
+        }
+      }
+    ]
+  },
+
+  "layout_toggle": {
+    "size": [ 25, 25 ]
+  },
+
+  "survival_panel_top_half": {
+    "offset": [0, 10]
+  },
+
+  "crafting_panel_top_half": {
+    "offset": [0, 10]
+  },
+
+  "player_inventory/common_panel": {
+    "ignored": true
+  },
+
+  "player_inventory": {
+    "$container_texture": "$crafting_panel_type",
+    "$container_name": "$crafting_panel_name",
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          { "mode_select@inv_quick_mode.inv_mode_select_panel": { "offset": [22, 0] } },
+          { "new_common_panel@Xerox_common.inv_common_panel": {} }
+        ]
+      }
+    ]
+  },
+
+  "player_inventory/inventory_panel_bottom_half": {
+    "offset": [0, 7]
+  },
+
+  "player_inventory/hotbar_grid": {
+    "offset": [0, 4]
+  },
+
+  "recipe_book": {
+    "layer": 2,
+    "$container_texture": "recipe_book",
+    "$container_name": "#tab_label_text",
+    "$show_close_button": false,
+    "$child_control": "crafting.new_filter_toggle",
+    "$bindings": [
+      {
+        "binding_name": "#tab_label_text"
+      }
+    ],
+    "controls": [
+      {
+        "bg@Xerox_common.inv_common_panel": {}
+      },
+      {
+        "gamepad_helper_bumpers@crafting.gamepad_helper_bumpers": {
+          "size": [ 146, 16 ],
+          "offset": [ 0, -5 ],
+          "anchor_from": "top_left",
+          "anchor_to": "bottom_left"
+        }
+      },
+      {
+        "tab_navigation_panel@crafting.tab_navigation_panel_layout": {
+          "size": [ 146, 23 ],
+          "anchor_from": "top_left",
+          "anchor_to": "bottom_left",
+
+          "$is_search_right_most_tab": "#is_recipe_book_layout",
+          "bindings": [
+            {
+              "binding_type": "global",
+              "binding_name": "#is_recipe_book_layout"
+            }
+          ]
+        }
+      },
+      {
+        "tab_content_panel@crafting.tab_content": {
+          "size": [ "100%", "100%" ],
+          "layer": 2,
+          "$scrolling_pane_control": "crafting.recipe_book_scroll_panel"
+        }
+      },
+      {
+        "creative_hotbar_panel@crafting.creative_hotbar_panel": {
+          "layer": 3,
+          "offset": [ 0, -5 ],
+          "anchor_from": "bottom_middle",
+          "anchor_to": "top_middle",
+          "bindings": [
+            {
+              "binding_type": "global",
+              "binding_name": "#is_creative_layout",
+              "binding_name_override": "#visible"
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "creative_hotbar_panel/creative_hotbar_background": {
+    "texture": "textures/ui/Xerox/image/BlackToTransparent4",
+    "alpha": 0.30
+  },
+
+  "center_fold": {
+    "ignored": true
+  },
+
+  "recipe_book_layout_toggle_panel": {
+    "type": "stack_panel",
+    "size": ["100%c", 25],
+    "orientation": "horizontal",
+    "controls": [
+      {
+        "creative_layout_toggle@crafting.creative_layout_toggle": {
+          "$focus_override_left": "search_tab",
+          "bindings": [
+            {
+              "binding_type": "global",
+              "binding_name": "#creative_layout_button_visible",
+              "binding_name_override": "#visible"
+            }
+          ]
+        }
+      },
+      {
+        "recipe_book_layout_toggle_panel_survival": {
+          "type": "panel",
+          "size": [ 25, 25 ],
+          "bindings": [
+            {
+              "binding_type": "global",
+              "binding_name": "(not #is_creative_mode)",
+              "binding_name_override": "#visible"
+            }
+          ],
+          "controls": [
+            {
+              "recipe_book_layout_toggle@crafting.recipe_book_layout_toggle": {
+                "$focus_override_left": "search_tab"
+              }
+            },
+            { "open_recipe_book_tip@game_tip.open_recipe_book_factory": {} }
+          ]
+        }
+      },
+      {
+        "recipe_book_layout_toggle@crafting.recipe_book_layout_toggle": {
+          "bindings": [
+            {
+              "binding_type": "global",
+              "binding_name": "#is_creative_mode",
+              "binding_name_override": "#visible"
+            }
+          ]
+        }
+      },
+      { "survival_layout_toggle@crafting.survival_layout_toggle": {} }
+    ]
+  },
+
+  "toolbar_panel": {
+    "ignored": true
+  },
+
+  "inventory_screen_base": {
+    "$screen_animations": [
+      "@container_animation.container_screen_exit_offset_push",
+      "@container_animation.container_screen_exit_offset_pop",
+      "@container_animation.container_screen_entrance_offset_push",
+      "@container_animation.container_screen_entrance_offset_pop",
+      "@container_animation.container_screen_exit_size_push",
+      "@container_animation.container_screen_exit_size_pop",
+      "@container_animation.container_screen_entrance_size_push",
+      "@container_animation.container_screen_entrance_size_pop",
+      "@container_animation.container_screen_exit_alpha_push",
+      "@container_animation.container_screen_exit_alpha_pop",
+      "@container_animation.container_screen_entrance_alpha_push",
+      "@container_animation.container_screen_entrance_alpha_pop"
+    ]
+  },
+
+  "crafting_screen": {
+    "$crafting_panel_type": "crafting",
+    "$crafting_panel_name": "container.inventory"
+  },
+
+  "inventory_screen": {
+    "$crafting_panel_type": "backpack",
+    "$crafting_panel_name": "container.backpack"
+  },
+
+  "recipe_inventory_screen_content": {
+    "type": "input_panel",
+    "size": [326, 166],
+    "inline_modal": true,
+    "button_mappings": [
+      {
+        "from_button_id": "button.menu_select",
+        "to_button_id": "button.menu_select",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_ok",
+        "to_button_id": "button.menu_ok",
+        "mapping_type": "focused"
+      }
+    ],
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "panel": {
+              "type": "panel",
+              "size": [0, 166],
+              "controls": [
+                { "logo@Xerox_common.client_logo": { "offset": [0, 55]} }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }, 
+
+  "recipe_inventory_screen_content/content_stack_panel": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_back",
+        "value": [
+          {
+            "toolbar_new": {
+              "size": [0, "100%"],
+              "type": "panel",
+              "controls": [
+                {
+                  "toggle@recipe_book_layout_toggle_panel": {
+                    "anchor_from": "top_right",
+                    "anchor_to": "bottom_right"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

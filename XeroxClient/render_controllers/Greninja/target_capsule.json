@@ -1,0 +1,43 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "format_version": "1.10.0",
+  "render_controllers": {
+    "controller.render.killaura_esp": {
+      "geometry": "Geometry.killaura_esp",
+      "materials": [ { "*": "material.killaura_esp" } ],
+      "textures": [ "v.killaura_esp_static_rgb ? Texture.killaura_esp_static_rgb : Texture.killaura_esp" ],
+      "color": {
+        "r": "v.killaura_esp_static_rgb ? 1.0 : v.killaura_esp_color_r_custom",
+        "g": "v.killaura_esp_static_rgb ? 1.0 : v.killaura_esp_color_g_custom",
+        "b": "v.killaura_esp_static_rgb ? 1.0 : v.killaura_esp_color_b_custom",
+        "a": "v.killaura_esp_alpha_blend = v.hurt_time ? math.min((v.killaura_esp_alpha_blend+v.killaura_esp_color_enter_blend_speed), v.killaura_esp_color_opacity) : math.max((v.killaura_esp_alpha_blend-v.killaura_esp_color_out_blend_speed), 0.0); return v.killaura_esp_alpha_blend;"
+      },
+      "overlay_color": {
+        "r": 1.0,
+        "g": 1.0,
+        "b": 1.0,
+        "a": "v.killaura_esp_static_rgb*0.4"
+      },
+      "is_hurt_color": {
+        "r": 1.0,
+        "g": 1.0,
+        "b": 1.0,
+        "a": "v.killaura_esp_static_rgb*0.4"
+      },
+      "on_fire_color": {
+        "r": 1.0,
+        "g": 1.0,
+        "b": 1.0,
+        "a": "v.killaura_esp_static_rgb*0.4"
+      },
+      "ignore_lighting": true,
+      "filter_lighting": true,
+      "light_color_multiplier": 1.25
+    }
+  }
+}

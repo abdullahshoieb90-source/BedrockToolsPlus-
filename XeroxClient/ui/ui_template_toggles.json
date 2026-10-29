@@ -1,0 +1,204 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "common_toggles",
+
+  "content_toggle_label_panel/toggle_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "dark_template_toggle": {
+    "$xeroxclient_button_color_default|default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "light_template_toggle": {
+    "$xeroxclient_button_alpha_default|default": "$xeroxclient_ui_theme_button_default_alpha",
+    "$xeroxclient_button_alpha_hover|default": "$xeroxclient_ui_theme_button_hover_alpha",
+    "$xeroxclient_button_alpha_pressed|default": "$xeroxclient_ui_theme_button_pressed_alpha",
+    "$xeroxclient_button_alpha_locked|default": "$xeroxclient_ui_theme_button_locked_alpha",
+
+    "$xeroxclient_button_color_default|default": "$xeroxclient_ui_theme_light_button_default_color",
+    "$xeroxclient_button_color_hover|default": "$xeroxclient_ui_theme_button_hover_color",
+    "$xeroxclient_button_color_pressed|default": "$xeroxclient_ui_theme_button_pressed_color",
+    "$xeroxclient_button_color_locked|default": "$xeroxclient_ui_theme_button_locked_color",
+
+    "$xeroxclient_button_text_offset_default|default": "$xeroxclient_ui_theme_button_text_default_offset",
+    "$xeroxclient_button_text_offset_hover|default": "$xeroxclient_ui_theme_button_text_hover_offset",
+    "$xeroxclient_button_text_offset_pressed|default": "$xeroxclient_ui_theme_button_text_pressed_offset"
+  },
+
+  "switch_toggle@settings_common.option_toggle": {},
+
+  "dark_ui_toggle_collection": {
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "light_ui_toggle_collection": {
+    "$xeroxclient_button_alpha_default": "$xeroxclient_ui_theme_button_default_alpha",
+    "$xeroxclient_button_alpha_hover": "$xeroxclient_ui_theme_button_hover_alpha",
+    "$xeroxclient_button_alpha_pressed": "$xeroxclient_ui_theme_button_pressed_alpha",
+    "$xeroxclient_button_alpha_locked": "$xeroxclient_ui_theme_button_locked_alpha",
+
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_light_button_default_color",
+    "$xeroxclient_button_color_hover": "$xeroxclient_ui_theme_button_hover_color",
+    "$xeroxclient_button_color_pressed": "$xeroxclient_ui_theme_button_pressed_color",
+    "$xeroxclient_button_color_locked": "$xeroxclient_ui_theme_button_locked_color",
+
+    "$xeroxclient_button_text_offset_default": "$xeroxclient_ui_theme_button_text_default_offset",
+    "$xeroxclient_button_text_offset_hover": "$xeroxclient_ui_theme_button_text_hover_offset",
+    "$xeroxclient_button_text_offset_pressed": "$xeroxclient_ui_theme_button_text_pressed_offset"
+  },
+
+  "switch_toggle_collection": {},
+
+  "toggle_unchecked": {
+    "$new_ui_button_texture": "textures/ui/Xerox/White",
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_default",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_default",
+    "$xeroxclient_button_text_offset": "$xeroxclient_button_text_offset_default"
+  },
+
+  "toggle_checked": {
+    "$new_ui_button_texture": "textures/ui/Xerox/White",
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_pressed",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_pressed",
+    "$xeroxclient_button_text_offset": "$xeroxclient_button_text_offset_pressed"
+  },
+
+  "toggle_unchecked_hover": {
+    "$new_ui_button_texture": "textures/ui/Xerox/White",
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_hover",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_hover",
+    "$xeroxclient_button_text_offset": "$xeroxclient_button_text_offset_hover"
+  },
+
+  "toggle_checked_hover": {
+    "$new_ui_button_texture": "textures/ui/Xerox/White",
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_hover",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_default",
+    "$xeroxclient_button_text_offset": "$xeroxclient_button_text_offset_hover"
+  },
+
+  "toggle_locked": {
+    "$new_ui_button_texture": "textures/ui/Xerox/White",
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_locked",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked"
+  },
+
+  "toggle_unchecked_locked": {
+    "$new_ui_button_texture": "textures/ui/Xerox/White",
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_locked",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked"
+  },
+
+  "toggle_checked_locked": {
+    "$new_ui_button_texture": "textures/ui/Xerox/White",
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_locked",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked"
+  },
+
+  "radio_off_icon": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_light_button_default_color",
+    "alpha": "$xeroxclient_ui_theme_button_default_alpha",
+    "size": [ 2, 10 ]
+  },
+
+  "radio_off_hover_icon": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_button_hover_color",
+    "alpha": "$xeroxclient_ui_theme_button_hover_alpha",
+    "size": [ 2, 10 ]
+  },
+
+  "radio_on_icon": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_button_pressed_color",
+    "alpha": "$xeroxclient_ui_theme_button_pressed_alpha",
+    "size": [ 2, 10 ]
+  },
+
+  "radio_on_hover_icon": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_light_button_default_color",
+    "alpha": "$xeroxclient_ui_theme_button_hover_alpha",
+    "size": [ 2, 10 ]
+  },
+
+  "check_box_button_toggle_image": {
+    "size": [ 2, 10 ],
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "checkbox_button_checked_state": {
+    "color": "$xeroxclient_ui_theme_button_pressed_color",
+    "alpha": "$xeroxclient_ui_theme_button_pressed_alpha"
+  },
+
+  "checkbox_button_unchecked_state": {
+    "color": "$xeroxclient_ui_theme_light_button_default_color",
+    "alpha": "$xeroxclient_ui_theme_button_default_alpha"
+  },
+
+  "checkbox_button_checked_hover_state": {
+    "color": "$xeroxclient_ui_theme_light_button_default_color",
+    "alpha": "$xeroxclient_ui_theme_button_hover_alpha"
+  },
+
+  "checkbox_button_unchecked_hover_state": {
+    "color": "$xeroxclient_ui_theme_button_hover_color",
+    "alpha": "$xeroxclient_ui_theme_button_hover_alpha"
+  },
+
+  "checkbox_button_checked_locked_state": {
+    "color": "$xeroxclient_ui_theme_button_locked_color",
+    "alpha": "$xeroxclient_ui_theme_button_locked_alpha"
+  },
+
+  "checkbox_button_unchecked_locked_state": {
+    "color": "$xeroxclient_ui_theme_button_locked_color",
+    "alpha": "$xeroxclient_ui_theme_button_locked_alpha"
+  },
+
+  "toggle_checkbox_unchecked": {
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_default",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_default",
+    "$xeroxclient_button_text_offset": "$xeroxclient_button_text_offset_default"
+  },
+
+  "toggle_checkbox_checked": {
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_pressed",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_pressed",
+    "$xeroxclient_button_text_offset": "$xeroxclient_button_text_offset_pressed"
+  },
+
+  "toggle_checkbox_unchecked_hover": {
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_hover",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_hover",
+    "$xeroxclient_button_text_offset": "$xeroxclient_button_text_offset_hover"
+  },
+
+  "toggle_checkbox_checked_hover": {
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_hover",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_default",
+    "$xeroxclient_button_text_offset": "$xeroxclient_button_text_offset_hover"
+  },
+
+  "toggle_checkbox_unchecked_locked": {
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_locked",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked"
+  },
+
+  "toggle_checkbox_checked_locked": {
+    "$xeroxclient_button_alpha": "$xeroxclient_button_alpha_locked",
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked"
+  },
+
+  "check_box_button_ui_panel/toggle_image/border": {
+    "ignored": true
+  }
+}

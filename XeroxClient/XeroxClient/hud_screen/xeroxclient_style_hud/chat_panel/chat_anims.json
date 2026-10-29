@@ -1,0 +1,106 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "xeroxclient_style_chat_panel_anims",
+
+  "chat_start_anim": {
+    "anim_type": "size",
+    "easing": "out_quint",
+    "duration": 0.4,
+    "from": [ "100%-2px", 0 ],
+    "to": [ "100%-2px", "100%c" ],
+    "next": "@xeroxclient_style_chat_panel_anims.chat_wait_anim"
+  },
+  "chat_wait_anim": {
+    "anim_type": "wait",
+    "duration": "$chat_item_lifetime",
+    "next": "@xeroxclient_style_chat_panel_anims.chat_end_anim"
+  },
+  "chat_end_anim": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.4,
+    "from": [ "100%-2px", "100%c" ],
+    "to": [ "100%-2px", 0 ]
+  },
+
+  "chat_bg_start_anim": {
+    "anim_type": "alpha",
+    "duration": 0.4,
+    "from": 0,
+    "to": 0.65,
+    "easing": "out_cubic",
+    "next": "@xeroxclient_style_chat_panel_anims.chat_bg_wait_anim"
+  },
+  "chat_bg_wait_anim": {
+    "anim_type": "wait",
+    "duration": "$chat_item_lifetime",
+    "next": "@xeroxclient_style_chat_panel_anims.chat_bg_end_anim"
+  },
+  "chat_bg_end_anim": {
+    "anim_type": "alpha",
+    "destroy_at_end": "hud.chat_grid_item",
+    "easing": "out_cubic",
+    "duration": 0.25,
+    "from": 0.65,
+    "to": 0
+  },
+
+  "chat_text_offset_start_anim": {
+    "anim_type": "offset",
+    "from": [0, 0],
+    "to": [2, 0],
+    "duration": 0.4,
+    "next": "@xeroxclient_style_chat_panel_anims.chat_text_offset_wait_anim"
+  },
+  "chat_text_offset_wait_anim": {
+    "anim_type": "wait",
+    "duration": "$chat_item_lifetime",
+    "next": "@xeroxclient_style_chat_panel_anims.chat_text_offset_end_anim"
+  },
+  "chat_text_offset_end_anim": {
+    "anim_type": "offset",
+    "destroy_at_end": "hud.chat_grid_item",
+    "easing": "out_cubic",
+    "duration": 0.4,
+    "from": [2, 0],
+    "to": [2, "-100%"]
+  },
+  "chat_line_offset_start_anim": {
+    "anim_type": "offset",
+    "from": [0, 0],
+    "to": [-2, 0],
+    "duration": 0.4,
+    "next": "@xeroxclient_style_chat_panel_anims.chat_line_offset_wait_anim"
+  },
+  "chat_line_offset_wait_anim": {
+    "anim_type": "wait",
+    "duration": "$chat_item_lifetime"
+  },
+
+  "chat_text_start_anim": {
+    "anim_type": "alpha",
+    "easing": "out_quint",
+    "from": 0,
+    "to": 1,
+    "duration": 0.4,
+    "next": "@xeroxclient_style_chat_panel_anims.chat_text_wait_anim"
+  },
+  "chat_text_wait_anim": {
+    "anim_type": "wait",
+    "duration": "$chat_item_lifetime",
+    "next": "@xeroxclient_style_chat_panel_anims.chat_text_end_anim"
+  },
+  "chat_text_end_anim": {
+    "anim_type": "alpha",
+    "destroy_at_end": "chat_grid_item",
+    "easing": "out_quart",
+    "duration": 0.3,
+    "from": 1.0,
+    "to": 0
+  }
+}

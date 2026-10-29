@@ -1,0 +1,31 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "controls_section",
+
+  "keyboard_and_mouse_button": { "$icon_name": "keyboard" },
+  "controller_button": { "$icon_name": "gamepad" },
+  "touch_button": { "$icon_name": "touch" },
+
+  "gamepad_mapping_item/option_info_label_control/keymapping_label_control": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "keymapping_item/option_info_label_control/keymapping_label_control": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "keymapping_item/option_info_label_control": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.35
+  },
+
+  "gamepad_mapping_item/option_info_label_control": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.35
+  }
+}

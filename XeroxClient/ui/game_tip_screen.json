@@ -1,0 +1,29 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "game_tip",
+
+  "game_tip_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "game_tip_item_background": {
+    "texture": "textures/ui/Xerox/Black",
+    "$fill_alpha|default": 0.45,
+    "variables": [
+      {
+        "requires": "($is_holographic or $is_inventory_tip)",
+        "$fill_alpha": 0.65
+      }
+    ]
+  },
+
+  "cell_image_classic_hint": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.30
+  }
+}

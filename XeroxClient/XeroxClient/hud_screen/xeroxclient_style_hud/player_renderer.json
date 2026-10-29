@@ -1,0 +1,23 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "xeroxclient_style_paperdoll",
+  "hud_player_renderer": {
+    "type": "custom",
+    "renderer": "($paper_doll_type + '_' + 'p' + 'l' + 'a' + 'y' + 'e' + 'r' + '_' + 'r' + 'e' + 'n' + 'd' + 'e' + 'r' + 'e' + 'r')",
+    "size": [ 60, 60 ],
+    "offset": [30, -15],
+    "anchor_from": "bottom_left",
+    "anchor_to": "bottom_left",
+    "bindings": [
+      {
+        "binding_name": "#paper_doll_visible",
+        "binding_name_override": "#visible"
+      }
+    ]
+  }
+}

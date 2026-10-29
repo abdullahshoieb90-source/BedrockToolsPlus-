@@ -1,0 +1,7 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.10.0","animation_controllers":{"controller.animation.throwing_project_trail":{"initial_state":"default","states":{"default":{"on_entry":["v.life_time = q.life_time;"],"transitions":[{"particle":"(q.life_time - v.life_time >= 0.05)"}]},"particle":{"particle_effects":[{"effect":"trail","pre_effect_script":"v.direction.x = 0.0; v.direction.y = 0.0; v.direction.z = 0.0;"}],"transitions":[{"default":"1.0"}]}}}}}

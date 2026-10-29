@@ -1,0 +1,369 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "start_animation",
+
+  "main_panel_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.7,
+    "from": [ 0, 0 ],
+    "to": [ 0, 20 ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "main_panel_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.7,
+    "from": [ 0, 0 ],
+    "to": [ 0, 20 ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "main_panel_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.7,
+    "to": [ 0, 0 ],
+    "from": [ 0, 20 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "main_panel_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.7,
+    "to": [ 0, 0 ],
+    "from": [ 0, 20 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "main_buttons_panel_out_animation": {
+    "anim_type": "alpha",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": 1.0,
+    "to": 0.0,
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "main_buttons_panel_out_animation_pop": {
+    "anim_type": "alpha",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": 1.0,
+    "to": 0.0,
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "main_buttons_panel_enter_animation": {
+    "anim_type": "alpha",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": 0.0,
+    "to": 1.0,
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "main_buttons_panel_enter_animation_pop": {
+    "anim_type": "alpha",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": 0.0,
+    "to": 1.0,
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "main_buttons_panel_background_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "from": ["-100% + 180px", 0],
+    "to": ["-100%", 0],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "main_buttons_panel_background_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "from": ["-100% + 180px", 0],
+    "to": ["-100%", 0],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "main_buttons_panel_background_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "to": ["-100% + 180px", 0],
+    "from": ["-100%", 0],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "main_buttons_panel_background_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "to": ["-100% + 180px", 0],
+    "from": ["-100%", 0],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "main_buttons_panel_background_blur_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "from": ["100% - 180px", 0],
+    "to": ["100%", 0],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "main_buttons_panel_background_blur_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "from": ["100% - 180px", 0],
+    "to": ["100%", 0],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "main_buttons_panel_background_blur_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "to": ["100% - 180px", 0],
+    "from": ["100%", 0],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "main_buttons_panel_background_blur_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.9,
+    "to": ["100% - 180px", 0],
+    "from": ["100%", 0],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "bottom_panel_background_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "100% - 20px" ],
+    "to": [ 0, "100%" ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "bottom_panel_background_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "100% - 20px" ],
+    "to": [ 0, "100%" ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "bottom_panel_background_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "to": [ 0, "100% - 20px" ],
+    "from": [ 0, "100%" ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "bottom_panel_background_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "to": [ 0, "100% - 20px" ],
+    "from": [ 0, "100%" ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "bottom_panel_background_blur_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "-100% + 20px" ],
+    "to": [ 0, "-100%" ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "bottom_panel_background_blur_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "-100% + 20px" ],
+    "to": [ 0, "-100%" ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "bottom_panel_background_blur_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "-100%" ],
+    "to": [ 0, "-100% + 20px" ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "bottom_panel_background_blur_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "-100%" ],
+    "to": [ 0, "-100% + 20px" ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "bottom_text_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, 0 ],
+    "to": [ 0, 24 ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "bottom_text_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, 0 ],
+    "to": [ 0, 24 ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "bottom_text_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "to": [ 0, 0 ],
+    "from": [ 0, 24 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "bottom_text_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "to": [ 0, 0 ],
+    "from": [ 0, 23 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "bottom_button_out_animation": {
+    "anim_type": "offset",
+    "easing": "in_cubic",
+    "duration": 0.4,
+    "from": [ 0, -20 ],
+    "to": [ 0, 50 ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "bottom_button_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "in_cubic",
+    "duration": 0.4,
+    "from": [ 0, -20 ],
+    "to": [ 0, 50 ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "bottom_button_enter_animation": {
+    "anim_type": "offset",
+    "easing": "in_cubic",
+    "duration": 0.4,
+    "to": [ 0, -20 ],
+    "from": [ 0, 50 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "bottom_button_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "in_cubic",
+    "duration": 0.4,
+    "to": [ 0, -20 ],
+    "from": [ 0, 50 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "top_content_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, 0 ],
+    "to": [ 0, -35 ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "top_content_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, 0 ],
+    "to": [ 0, -35 ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "top_content_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "to": [ 0, 0 ],
+    "from": [ 0, -35 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "top_content_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "to": [ 0, 0 ],
+    "from": [ 0, -35 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  }
+}

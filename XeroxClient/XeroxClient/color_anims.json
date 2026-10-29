@@ -1,0 +1,73 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "color_anim",
+  "base": {
+    "anim_type": "color",
+    "duration": 10.0
+  },
+
+  "button_hover_color_1@color_anim.base": {
+    "from": "$xeroxclient_ui_theme_button_hover_color_1",
+    "to": "$xeroxclient_ui_theme_button_hover_color_2",
+    "next": "@color_anim.button_hover_color_2"
+  },
+
+  "button_hover_color_2@color_anim.base": {
+    "to": "$xeroxclient_ui_theme_button_hover_color_1",
+    "from": "$xeroxclient_ui_theme_button_hover_color_2",
+    "next": "@color_anim.button_hover_color_1"
+  },
+
+  "button_pressed_color_1@color_anim.base": {
+    "from": "$xeroxclient_ui_theme_button_pressed_color_1",
+    "to": "$xeroxclient_ui_theme_button_pressed_color_2",
+    "next": "@color_anim.button_pressed_color_2"
+  },
+
+  "button_pressed_color_2@color_anim.base": {
+    "to": "$xeroxclient_ui_theme_button_hover_color_1",
+    "from": "$xeroxclient_ui_theme_button_hover_color_2",
+    "next": "@color_anim.button_pressed_color_1"
+  },
+
+  "switch_toggle_checked_hover_color_1@color_anim.base": {
+    "from": "$xeroxclient_ui_theme_switch_checked_hover_color_1",
+    "to": "$xeroxclient_ui_theme_switch_checked_hover_color_2",
+    "next": "@color_anim.switch_toggle_checked_hover_color_2"
+  },
+
+  "switch_toggle_checked_hover_color_2@color_anim.base": {
+    "to": "$xeroxclient_ui_theme_switch_checked_hover_color_1",
+    "from": "$xeroxclient_ui_theme_switch_checked_hover_color_2",
+    "next": "@color_anim.switch_toggle_checked_hover_color_1"
+ },
+
+  "switch_toggle_unchecked_hover_color_1@color_anim.base": {
+    "from": "$xeroxclient_ui_theme_switch_unchecked_hover_color_1",
+    "to": "$xeroxclient_ui_theme_switch_unchecked_hover_color_2",
+    "next": "@color_anim.switch_toggle_unchecked_hover_color_2"
+  },
+
+  "switch_toggle_unchecked_hover_color_2@color_anim.base": {
+    "to": "$xeroxclient_ui_theme_switch_unchecked_hover_color_1",
+    "from": "$xeroxclient_ui_theme_switch_unchecked_hover_color_2",
+    "next": "@color_anim.switch_toggle_unchecked_hover_color_1"
+ },
+
+  "edit_box_hover_color_1@color_anim.base": {
+    "from": "$xeroxclient_ui_theme_edit_box_background_hover_color_1",
+    "to": "$xeroxclient_ui_theme_edit_box_background_hover_color_2",
+    "next": "@color_anim.edit_box_hover_color_2"
+  },
+
+  "edit_box_hover_color_2@color_anim.base": {
+    "to": "$xeroxclient_ui_theme_edit_box_background_hover_color_1",
+    "from": "$xeroxclient_ui_theme_edit_box_background_hover_color_2",
+    "next": "@color_anim.edit_box_hover_color_1"
+ }
+}

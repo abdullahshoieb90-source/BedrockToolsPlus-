@@ -1,0 +1,29 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "persona",
+
+  "emote_wheel_screen": {
+    "$default_text_color": [ 1.0, 1.0, 1.0 ],
+    "$is_full_screen_layout": false,
+    "force_render_below": true
+  },
+
+  "emote_wheel_touch_zone": {
+  },
+
+  "emote_wheel_screen_content/instruction_panel/instruction_background/instruction_label_keyboard": {
+    "font_type": "$global_font_type"
+  },
+
+  "emote_wheel_screen_content/instruction_panel/instruction_background/instruction_label_touch": {
+    "font_type": "$global_font_type"
+  },
+  "emote_wheel_screen_content/dressing_room_button_panel/dressing_room_button": {
+  "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  }
+}

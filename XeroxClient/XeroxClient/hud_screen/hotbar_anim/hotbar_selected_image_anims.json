@@ -1,0 +1,54 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "hotbar_anims",
+
+  "icon_alpha": {
+    "anim_type": "alpha",
+    "from": 0.50,
+    "to": 1.0,
+    "easing": "out_cric",
+    "duration": 0.2,
+    "reset_event": "button.hotbar_selected_anim"
+  },
+
+  "icon_offset": {
+    "anim_type": "offset",
+    "from": [0, 0],
+    "to": [0, -4],
+    "easing": "out_cric",
+    "duration": 0.2,
+    "reset_event": "button.hotbar_selected_anim"
+  },
+
+  "icon_size": {
+    "anim_type": "size",
+    "from": [14, 14],
+    "to": [20, 20],
+    "easing": "out_cric",
+    "duration": 0.2,
+    "reset_event": "button.hotbar_selected_anim"
+  },
+
+  "from_bottom_to_top": {
+    "anim_type": "offset",
+    "from": [0, 9],
+    "to": [0, 8.875],
+    "easing": "out_cric",
+    "duration": 0.35,
+    "reset_event": "button.hotbar_selected_anim"
+  },
+
+  "size_expand": {
+    "anim_type": "size",
+    "from": [0, 1],
+    "to": [10, 1.125],
+    "easing": "out_sine",
+    "duration": 0.3,
+    "reset_event": "button.hotbar_selected_anim"
+  }
+}

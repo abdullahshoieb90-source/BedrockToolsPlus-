@@ -1,0 +1,181 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "start_main_screen",
+
+  "to_play_screen@common_buttons.dark_text_button": {
+    "size": [125, 25],
+    "anchor_from": "top_middle",
+    "anchor_to": "top_middle",
+    "$pressed_button_name": "$play_button_target",
+    "$button_text": "menu.play"
+  },
+
+  "to_profile_screen@xeroxclient_common_buttons.wl_tbutton_b": {
+    "size": [65, 30],
+    "$pressed_button_name": "button.to_profile_screen",
+    "$button_text": "profileScreen.header"
+  },
+
+  "to_setting_screen@common_buttons.dark_text_button": {
+    "size": [125, 22],
+    "anchor_from": "bottom_middle",
+    "anchor_to": "bottom_middle",
+    "$pressed_button_name": "button.menu_settings",
+    "$button_text": "menu.settings"
+  },
+
+  "to_achievements_screen@xeroxclient_common_buttons.wl_tbutton_b": {
+    "size": [65, 30],
+    "$pressed_button_name": "button.menu_achievements",
+    "$button_text": "menu.achievements",
+    "bindings": [
+      {
+        "binding_name": "(not #sign_in_visible)",
+        "binding_name_override": "#visible"
+      }
+    ]
+  },
+
+  "to_store_screen@xeroxclient_common_buttons.wl_tbutton_b": {
+    "size": [65, 30],
+    "$pressed_button_name": "button.menu_store",
+    "$button_text": "menu.store"
+  },
+
+  "xbl_signin_button@xeroxclient_common_buttons.wl_tbutton_b": {
+    "size": [65, 30],
+    "$pressed_button_name": "button.signin",
+    "$button_text": "xbox.signin",
+    "bindings": [
+      {
+        "binding_name": "#sign_in_visible",
+        "binding_name_override": "#visible"
+      }
+    ]
+  },
+
+  "main_buttons_panel": {
+    "type": "panel",
+    "size": [ 180, "100%"],
+    "propagate_alpha": true,
+    "anchor_from": "center",
+    "anchor_to": "center",
+    "controls": [
+      {
+        "main_panel": {
+          "type": "stack_panel",
+          "size": [145, "100%c+30px"],
+          "orientation": "vertical",
+          "controls": [
+            {
+              "logo": {
+                "type": "image",
+                "size": [145, 50],
+                "layer": 5,
+                "bilinear": true,
+                "texture": "textures/Greninja/client_icon"
+              }
+            },
+            {
+              "padding0": {
+                "type": "panel",
+                "size": [0, 2]
+              }
+            },
+            {
+              "client_name": {
+                "type": "panel",
+                "size": [ 145, "100%c" ],
+                "controls": [
+                  {
+                    "_label": {
+                      "type": "label",
+                      "layer": 6,
+                      "text": "($ClientVersion + ' - ' + $ClientAuthor)",
+                      "font_type": "Roboto-Bold",
+                      "font_scale_factor": 1.2
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "padding1": {
+                "type": "panel",
+                "size": [0, 7]
+              }
+            },
+            {
+              "button_panel": {
+                "type": "panel",
+                "size": [145, 47],
+                "layer": 5,
+                "controls": [
+                  { "play@start_main_screen.to_play_screen": {} },
+                  { "setting@start_main_screen.to_setting_screen": {} }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "animation_reset_name": "screen_animation_reset",
+    "anims": [
+      "@start_animation.main_buttons_panel_out_animation",
+      "@start_animation.main_buttons_panel_out_animation_pop",
+      "@start_animation.main_buttons_panel_enter_animation",
+      "@start_animation.main_buttons_panel_enter_animation_pop",
+      "@start_animation.main_panel_out_animation",
+      "@start_animation.main_panel_out_animation_pop",
+      "@start_animation.main_panel_enter_animation",
+      "@start_animation.main_panel_enter_animation_pop"
+    ]
+  },
+
+  "start_screen_content": {
+    "type": "panel",
+    "controls": [
+      { "button_panel@start_main_screen.main_buttons_panel": { "layer": 0 } },
+      {
+        "lower_online_buttons_panel@start.lower_online_buttons_panel": {
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "offset": [0, -20],
+          "$feedback_ignored": false,
+          "size": ["100%c", "100%c"],
+          "animation_reset_name": "screen_animation_reset",
+          "anims": [
+            "@start_animation.bottom_button_out_animation",
+            "@start_animation.bottom_button_out_animation_pop",
+            "@start_animation.bottom_button_enter_animation",
+            "@start_animation.bottom_button_enter_animation_pop"
+          ]
+        }
+      },
+      { "bottom_info_panel@start_bottom_info_panel.bottom_info_panel_content": { "layer": 50 } },
+      { "top_content_panel@start_top_content.top_content": {} },
+      {
+        "popup_dialog_factory": {
+          "type": "factory",
+          "control_ids": {
+            "cloud_upload_prompt": "@start.cloud_upload_prompt"
+          }
+        }
+      },
+      { "screen_backgrounds_content@start_main_screen.screen_backgrounds_content": {} }
+    ]
+  },
+
+  "screen_backgrounds_content": {
+    "type": "panel",
+    "controls": [
+      { "background@xc_common.background_blur": {} }
+    ]
+  }
+}

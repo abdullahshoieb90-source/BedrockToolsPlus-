@@ -1,0 +1,232 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "progress",
+
+  "modal_progress_panel_no_cancel/common_panel": {
+    "ignored": true
+  },
+
+  "modal_progress_panel_with_cancel/common_panel": {
+    "ignored": true
+  },
+
+  "world_modal_progress_panel/inside_content/loading_bar_panel/progress_loading_bars": {
+    "bindings": [
+      {
+        "binding_name": "(not #loading_bar_visible)",
+        "binding_name_override": "#visible"
+      }
+    ]
+  },
+
+  "world_convert_modal_progress_screen_content/title_panel_content": {
+    "ignored": true
+  },
+
+  "world_save_modal_progress_screen_content/title_panel_content": {
+    "ignored": true
+  },
+
+  "world_modal_progress_panel/common_panel": {
+    "ignored": true
+  },
+
+  "fancy_progress_loading_bars/progress_bar_nub": {
+    "ignored": true
+  },
+
+  "progress_loading_bars": {
+    "color": [0.99, 0.99, 1.0],
+    "alpha": 0.9
+  },
+
+  "simple_popup_dialog_base": {
+    "size": ["25%", "100%c"],
+    "controls": [
+      {
+        "background@dialog_image.dialog_background_2": {
+          "size": [ "100%", "100%c" ],
+          "controls": [
+            {
+              "content_panel": {
+                "type": "stack_panel",
+                "size": [ "100% - 8px", "100%c" ],
+                "controls": [
+                  {
+                    "padding_0": {
+                      "type": "panel",
+                      "size": [ 0, 4 ]
+                    }
+                  },
+                  {
+                    "title": {
+                      "layer": 101,
+                      "type": "label",
+                      "font_type": "$global_font_type",
+                      "size": [ "95%", 10 ],
+                      "text": "$title_text"
+                    }
+                  },
+                  {
+                    "padding_1": {
+                      "type": "panel",
+                      "size": [ 0, 4 ]
+                    }
+                  },
+                  {
+                    "description": {
+                      "layer": 101,
+                      "type": "label",
+                      "size": [ "100%", "default" ],
+                      "font_type": "$global_font_type",
+                      "text": "$description_text"
+                    }
+                  },
+                  {
+                    "description2": {
+                      "layer": 101,
+                      "type": "label",
+                      "size": [ "100%", "default" ],
+                      "font_type": "$global_font_type",
+                      "text": "$description_text2",
+                      "ignored": "(not $has_second_line)"
+                    }
+                  },
+                  {
+                    "padding_2": {
+                      "type": "panel",
+                      "size": [ 0, 3 ]
+                    }
+                  },
+                  {
+                    "top_optional_button@popup_dialog.popup_dialog_button_with_binding": {
+                      "visible": "$use_top_button",
+                      "enabled": "$use_top_button",
+                      "size": [ "100%", 20 ],
+                      "$pressed_button_name": "$top_button_press",
+                      "$button_binding_condition": "once",
+                      "$button_text_binding_type": "global",
+                      "$button_text": "$top_button_text"
+                    }
+                  },
+                  {
+                    "padding_3": {
+                      "type": "panel",
+                      "size": [ 0, 1 ],
+                      "visible": "$use_top_button",
+                      "enabled": "$use_top_button"
+                    }
+                  },
+                  {
+                    "middle_button@popup_dialog.popup_dialog_button_with_binding": {
+                      "size": [ "100%", 20 ],
+                      "$pressed_button_name": "$middle_button_press",
+                      "$button_binding_condition": "once",
+                      "$button_text_binding_type": "global",
+                      "$button_text": "$middle_button_text"
+                    }
+                  },
+                  {
+                    "padding_4": {
+                      "type": "panel",
+                      "size": [ 0, 1 ]
+                    }
+                  },
+                  {
+                    "bottom_button@popup_dialog.popup_dialog_button": {
+                      "size": [ "100%", 20 ],
+                      "$pressed_button_name": "$bottom_button_press",
+                      "$button_text": "$bottom_button_text"
+                    }
+                  },
+                  {
+                    "padding_5": {
+                      "type": "panel",
+                      "size": [ 0, 4 ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "progress_screen_text": {
+    "font_type": "$global_font_type",
+    "text_alignment": "center"
+  },
+
+  "progress_title_text": {
+    "font_type": "Roboto-Bold"
+  },
+
+  "progress_bar_text": {
+    "font_type": "Roboto-Regular"
+  },
+
+  "modal_button_panel_with_retry": {
+    "controls": [
+      {
+        "stack_panel": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": ["180px", 23],
+          "controls": [
+            { "abort_button@progress.abort_button": {} },
+            { "cancel_button@progress.cancel_button": {} },
+            { "retry_button@progress.retry_button": {} }
+          ]
+        }
+      }
+    ]
+  },
+
+  "modal_progress_screen": {
+    "$screen_bg_content": "xc_common.background_blur_for_pregame_only"
+  },
+
+  "realms_loading_progress_screen": {
+    "$screen_bg_content": "xc_common.background"
+  },
+
+  "overworld_loading_progress_screen": {
+    "$screen_bg_content": "xc_common.background"
+  },
+
+  "nether_loading_progress_screen": {
+    "$screen_bg_content": "xc_common.background"
+  },
+
+  "theend_loading_progress_screen": {
+    "$screen_bg_content": "xc_common.background"
+  },
+
+  "progress_screen": {
+    "force_render_below": "$is_pregame",
+    "$screen_animations": [
+      "@common.screen_exit_animation_push_fade",
+      "@common.screen_exit_animation_pop_fade"
+    ],
+    "$screen_bg_content": "xc_common.background"
+  },
+
+  "cancel_button": {
+    "size": [60, 23]
+  },
+
+  "retry_button": {
+    "size": [60, 23]
+  },
+
+  "abort_button": {
+    "size": [60, 23]
+  }
+}

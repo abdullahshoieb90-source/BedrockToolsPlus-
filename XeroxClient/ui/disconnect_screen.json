@@ -1,0 +1,171 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "disconnect",
+
+  "disconnect_screen_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "menu_button_template": {
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color",
+    "size": [ 200, 22 ]
+  },
+
+  "open_uri_button": {
+    "size": [ 200, 22 ],
+    "$xeroxclient_button_color_default": "$xeroxclient_ui_theme_dark_button_default_color"
+  },
+
+  "cancel_button": {
+    "size": [ 200, 22 ]
+  },
+
+  "button_panel": {
+    "type": "stack_panel",
+    "orientation": "vertical",
+    "anchor_from": "middle",
+    "anchor_to": "middle",
+    "offset": [ 0, 50 ],
+    "controls": [
+      {
+        "open_uri_button_panel": {
+          "type": "panel",
+          "size": [ "100%", 22 ],
+          "ignored": "$is_holographic",
+          "visible": false,
+          "bindings": [
+            {
+              "binding_name": "#open_uri_button_visible",
+              "binding_name_override": "#visible"
+            }
+          ],
+          "controls": [
+            { "open_uri_button@disconnect.open_uri_button": {} }
+          ]
+        }
+      },
+      {
+        "open_button_panel": {
+          "type": "panel",
+          "size": [ "100%", 22 ],
+          "controls": [
+            { "ok_button@disconnect.ok_button": {} }
+          ]
+        }
+      }
+    ]
+  },
+
+  "disconnect_screen": {
+    "$screen_bg_content": "Xerox_common.background_blur"
+  },
+
+  "realms_disconnect_screen": {
+    "$screen_bg_content": "Xerox_common.background_blur"
+  },
+
+  "realms_disconnect_button_panel": {
+    "type": "stack_panel",
+    "orientation": "vertical",
+    "offset": [ 0, 30 ],
+    "size": [ "100%", "100%c" ],
+    "controls": [
+      {
+        "open_uri_button_panel": {
+          "type": "panel",
+          "size": [ "100%", 22 ],
+          "ignored": "$is_holographic",
+          "visible": false,
+          "bindings": [
+            {
+              "binding_name": "#open_uri_button_visible",
+              "binding_name_override": "#visible"
+            }
+          ],
+          "controls": [
+            { "open_uri_button@disconnect.open_uri_button": {} }
+          ]
+        }
+      },
+      {
+        "realm_buttons_panel": {
+          "type": "panel",
+          "size": [ "100%", 22 ],
+          "controls": [
+            {
+              "realm_buttons": {
+                "type": "stack_panel",
+                "orientation": "horizontal",
+                "controls": [
+                  { "check_store_button@disconnect.check_store_button": {} },
+                  {
+                    "spacing_gap@disconnect.spacing_gap": {
+                      "ignored": "$is_holographic"
+                    }
+                  },
+                  { "exit_button@disconnect.exit_button": {} }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "realms_warning_screen": {
+    "$screen_bg_content": "Xerox_common.background_blur"
+  },
+
+  "realms_warning_button_panel": {
+    "type": "stack_panel",
+    "orientation": "vertical",
+    "offset": [ 0, 30 ],
+    "size": [ "100%", "100%c" ],
+    "controls": [
+      {
+        "continue_button_panel": {
+          "type": "panel",
+          "size": [ "100%", 22 ],
+          "controls": [
+            {
+              "continue_button_stack_panel": {
+                "type": "stack_panel",
+                "orientation": "horizontal",
+                "controls": [
+                  { "check_store_button@disconnect.check_store_button": {} },
+                  {
+                    "spacing_gap@disconnect.spacing_gap": {
+                      "ignored": "$is_holographic"
+                    }
+                  },
+                  { "continue_button@disconnect.continue_button": {} }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "realms_warning_button_gap@disconnect.spacing_gap": {
+          "type": "panel",
+          "size": [ "100%", 5 ]
+        }
+      },
+      {
+        "cancel_button_panel": {
+          "type": "panel",
+          "size": [ "100%", 22 ],
+          "controls": [
+            { "cancel_button@disconnect.cancel_button": {} }
+          ]
+        }
+      }
+    ]
+  }
+}

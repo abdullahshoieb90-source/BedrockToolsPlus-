@@ -1,0 +1,7 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.8.0","animations":{"animation.crosshair_attack":{"loop":true,"bones":{"crosshair":{"scale":"q.is_gliding ? 1.640625 : 1","position":[0,"q.is_swimming ? -20",0],"rotation":["q.is_gliding ? -q.body_x_rotation-90","(q.is_riding ? q.target_y_rotation)+(q.is_gliding ? q.body_y_rotation)",0]},"top":{"position":[0,"v.attack_time ? (1-v.attack_body_rot_y)+2",0]},"bottom":{"position":[0,"v.attack_time ? -(1-v.attack_body_rot_y)-2",0]},"left":{"position":["v.attack_time ? -(1-v.attack_body_rot_y)-2",0,0]},"right":{"position":["v.attack_time ? (1-v.attack_body_rot_y)+2",0,0]}}}}}}

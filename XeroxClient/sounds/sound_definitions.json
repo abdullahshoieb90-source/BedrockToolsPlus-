@@ -1,0 +1,676 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "random.click": {
+    "category": "ui",
+    "sounds": [
+      {
+        "name": "sounds/ui_sounds/button_click",
+        "volume": 0.2,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "client.welcome": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/ui_sounds/welcome",
+        "volume": 0.3,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.water.axolotl": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/water/axolotl",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.water.dragon_fish": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/water/dragon_fish",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.water.shuniji": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/water/shuniji",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.menu1": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/menu/menu1",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.menu2": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/menu/menu2",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.menu3": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/menu/menu3",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "minecraft.music.menu.menu4": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/menu/menu4",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  
+  "minecraft.music.menu.one_more_day": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/one_more_day",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.an_ordinary_day": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/an_ordinary_day",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.comforting_memories": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/comforting_memories",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.floating_dream": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/floating_dream",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.infinite_amethyst": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/infinite_amethyst",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.left_to_bloom": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/left_to_bloom",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.stand_tall": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/stand_tall",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.menu.wending": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/wending",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nether.nether1": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nether/nether1",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nether.nether2": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nether/nether2",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nether.nether3": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nether/nether3",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nether.nether4": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nether/nether4",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nether.chrysopoeia": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nether/chrysopoeia",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nether.rubedo": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nether/rubedo",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nether.so_below": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nether/so_below",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.creative.creative1": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/creative/creative1",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.creative.creative2": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/creative/creative2",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.creative.creative3": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/creative/creative3",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.creative.creative4": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/creative/creative4",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.creative.creative5": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/creative/creative5",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.creative.creative6": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/creative/creative6",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.calm1": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/calm1",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.calm2": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/calm2",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.calm3": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/calm3",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.hal1": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/hal1",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.hal2": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/hal2",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.hal3": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/hal3",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.hal4": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/hal4",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nuance1": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nuance1",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.nuance2": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/nuance2",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.piano1": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/piano1",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.piano2": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/piano2",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "minecraft.music.game.piano3": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/piano3",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "record.play.13": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/13",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.cat": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/cat",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.blocks": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/blocks",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.chirp": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/chirp",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.far": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/far",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.mall": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/mall",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.mellohi": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/mellohi",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.stal": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/stal",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.strad": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/strad",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.ward": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/ward",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.11": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/11",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.wait": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/wait",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+  "record.play.pigstep_master": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/pigstep_master",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "record.play.otherside": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "sounds/music/game/records/otherside",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "xeroxclient.music.custom1": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "music_player/custom1",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "xeroxclient.music.custom2": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "music_player/custom2",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "xeroxclient.music.custom3": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "music_player/custom3",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "xeroxclient.music.custom4": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "music_player/custom4",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "xeroxclient.music.custom5": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "music_player/custom5",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  },
+
+  "xeroxclient.music.custom6": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "music_player/custom6",
+        "stream": true,
+        "load_on_low_memory": true
+      }
+    ]
+  }
+}

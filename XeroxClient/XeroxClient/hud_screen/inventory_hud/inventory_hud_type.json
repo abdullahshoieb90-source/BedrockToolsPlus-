@@ -1,0 +1,73 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "inventory_hud_type",
+
+  "horizontal_type": {
+    "type": "panel",
+    "size": [126, 42],
+    "layer": 19,
+    "anchor_from": "top_left",
+    "anchor_to": "top_left",
+    "clips_children": true,
+    "controls": [
+      { "num@inventory_hud_slot_number.slot_number_horizontal": { "layer": 25 } },
+      {
+        "inv_grid": {
+          "type": "grid",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "$hotbar_collection_name": "hotbar_items",
+          "collection_name": "hotbar_items",
+          "grid_dimensions": [9, 4],
+          "grid_item_template": "inventory_grid_item_template.inv_grid_item"
+        }
+      },
+      {
+        "background": {
+          "type": "image",
+          "size": ["100%", "100%"],
+          "texture": "textures/ui/Xerox/Black",
+          "alpha": 0.6,
+          "layer": 20
+        }
+      }
+    ]
+  },
+
+  "vertical_type": {
+    "type": "panel",
+    "size": [42, 126],
+    "layer": 19,
+    "anchor_from": "top_right",
+    "anchor_to": "top_right",
+    "clips_children": true,
+    "controls": [
+      { "num@inventory_hud_slot_number.slot_number_vertical": { "layer": 25 } },
+      {
+        "inv_grid": {
+          "type": "grid",
+          "anchor_from": "bottom_middle",
+          "anchor_to": "bottom_middle",
+          "$hotbar_collection_name": "hotbar_items",
+          "collection_name": "hotbar_items",
+          "grid_dimensions": [3, 12],
+          "grid_item_template": "inventory_grid_item_template.inv_grid_item"
+        }
+      },
+      {
+        "background": {
+          "type": "image",
+          "size": ["100%", "100%"],
+          "texture": "textures/ui/Xerox/Black",
+          "alpha": 0.6,
+          "layer": 20
+        }
+      }
+    ]
+  }
+}

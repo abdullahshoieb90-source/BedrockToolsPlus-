@@ -1,0 +1,255 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "chest",
+  "chest_label": {
+    "ignored": true
+  },
+
+  "small_chest_panel_top_half/small_chest_grid": {
+    "offset": [7, 12]
+  },
+
+  "large_chest_panel_top_half/large_chest_grid": {
+    "offset": [7, 13]
+  },
+
+  "paper_doll": {
+    "type": "panel",
+    "anchor_from": "left_middle",
+    "anchor_to": "left_middle",
+    "size": [52, 90],
+    "offset": [-52, 0],
+    "clips_children": true,
+    "controls": [
+      {
+        "player_renderer_panel": {
+          "type": "panel",
+          "size": [30, 90],
+          "offset": [0, -20],
+          "controls": [
+            {
+              "paper_doll_renderer": {
+                "type": "custom",
+                "renderer": "live_player_renderer",
+                "property_bag": {
+                  "#look_at_cursor": true
+                },
+                "animation_reset_name": "screen_animation_reset",
+                "anims": [
+                  "@container_animation.paperdoll_exit_animation_push",
+                  "@container_animation.paperdoll_exit_animation_pop",
+                  "@container_animation.paperdoll_entrance_animation_push",
+                  "@container_animation.paperdoll_entrance_animation_pop"
+                ],
+                "anchor_from": "top_middle",
+                "anchor_to": "top_middle"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "small_chest_panel/root_panel/common_panel": {
+    "ignored": true
+  },
+
+  "small_chest_panel/root_panel": {
+    "$container_texture": "$chest_texture",
+    "$chest_texture|default": "chest/small_chest",
+    "$container_name": "$container_title",
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          { "logo@Xerox_common.client_logo": { "offset": [0, 35]} },
+          { "mode_select@inv_quick_mode.inv_mode_select_panel": { "offset": [22, 0] } },
+          { "new_common_panel@Xerox_common.inv_common_panel": {} },
+          { "paper_doll@chest.paper_doll": {} }
+        ]
+      }
+    ]
+  },
+
+  "large_chest_panel/root_panel/common_panel": {
+    "ignored": true
+  },
+
+  "large_chest_panel/root_panel": {
+    "$container_texture": "chest/large_chest",
+    "$type_image_size": [20, 10],
+    "$type_name_offset": [24, 2],
+    "$container_name": "$container_title",
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          { "logo@Xerox_common.client_logo": { "offset": [0, 35]} },
+          { "mode_select@inv_quick_mode.inv_mode_select_panel": { "offset": [22, 0] } },
+          { "new_common_panel@Xerox_common.inv_common_panel": {} },
+          { "paper_doll@chest.paper_doll": {} }
+        ]
+      }
+    ]
+  },
+
+  "ender_chest_panel": {
+    "$chest_texture": "chest/ender_chest"
+  },
+
+  "shulker_box_panel": {
+    "$chest_texture": "chest/shulker_box"
+  },
+
+  "barrel_panel": {
+    "$chest_texture": "chest/barrel"
+  },
+
+  "small_chest_screen": {
+    "variables": [
+      {
+        "requires": "$desktop_screen",
+        "$screen_content": "chest.small_chest_panel",
+        "$screen_bg_content": "common.screen_background",
+        "$screen_animations": [
+          "@container_animation.container_screen_exit_offset_push",
+          "@container_animation.container_screen_exit_offset_pop",
+          "@container_animation.container_screen_entrance_offset_push",
+          "@container_animation.container_screen_entrance_offset_pop",
+          "@container_animation.container_screen_exit_size_push",
+          "@container_animation.container_screen_exit_size_pop",
+          "@container_animation.container_screen_entrance_size_push",
+          "@container_animation.container_screen_entrance_size_pop",
+          "@container_animation.container_screen_exit_alpha_push",
+          "@container_animation.container_screen_exit_alpha_pop",
+          "@container_animation.container_screen_entrance_alpha_push",
+          "@container_animation.container_screen_entrance_alpha_pop"
+        ]
+      },
+      {
+        "requires": "$pocket_screen",
+        "$screen_content": "pocket_containers.small_chest_panel"
+      }
+    ]
+  },
+
+  "large_chest_screen": {
+    "variables": [
+      {
+        "requires": "$desktop_screen",
+        "$screen_content": "chest.large_chest_panel",
+        "$screen_bg_content": "common.screen_background",
+        "$screen_animations": [
+          "@container_animation.container_screen_exit_offset_push",
+          "@container_animation.container_screen_exit_offset_pop",
+          "@container_animation.container_screen_entrance_offset_push",
+          "@container_animation.container_screen_entrance_offset_pop",
+          "@container_animation.container_screen_exit_size_push",
+          "@container_animation.container_screen_exit_size_pop",
+          "@container_animation.container_screen_entrance_size_push",
+          "@container_animation.container_screen_entrance_size_pop",
+          "@container_animation.container_screen_exit_alpha_push",
+          "@container_animation.container_screen_exit_alpha_pop",
+          "@container_animation.container_screen_entrance_alpha_push",
+          "@container_animation.container_screen_entrance_alpha_pop"
+        ]
+      },
+      {
+        "requires": "$pocket_screen",
+        "$screen_content": "pocket_containers.large_chest_panel"
+      }
+    ]
+  },
+
+  "ender_chest_screen": {
+    "variables": [
+      {
+        "requires": "$desktop_screen",
+        "$screen_content": "chest.ender_chest_panel",
+        "$screen_bg_content": "common.screen_background",
+        "$screen_animations": [
+          "@container_animation.container_screen_exit_offset_push",
+          "@container_animation.container_screen_exit_offset_pop",
+          "@container_animation.container_screen_entrance_offset_push",
+          "@container_animation.container_screen_entrance_offset_pop",
+          "@container_animation.container_screen_exit_size_push",
+          "@container_animation.container_screen_exit_size_pop",
+          "@container_animation.container_screen_entrance_size_push",
+          "@container_animation.container_screen_entrance_size_pop",
+          "@container_animation.container_screen_exit_alpha_push",
+          "@container_animation.container_screen_exit_alpha_pop",
+          "@container_animation.container_screen_entrance_alpha_push",
+          "@container_animation.container_screen_entrance_alpha_pop"
+        ]
+      },
+      {
+        "requires": "$pocket_screen",
+        "$screen_content": "pocket_containers.ender_chest_panel"
+      }
+    ]
+  },
+
+  "shulker_box_screen": {
+    "variables": [
+      {
+        "requires": "$desktop_screen",
+        "$screen_content": "chest.shulker_box_panel",
+        "$screen_bg_content": "common.screen_background",
+        "$screen_animations": [
+          "@container_animation.container_screen_exit_offset_push",
+          "@container_animation.container_screen_exit_offset_pop",
+          "@container_animation.container_screen_entrance_offset_push",
+          "@container_animation.container_screen_entrance_offset_pop",
+          "@container_animation.container_screen_exit_size_push",
+          "@container_animation.container_screen_exit_size_pop",
+          "@container_animation.container_screen_entrance_size_push",
+          "@container_animation.container_screen_entrance_size_pop",
+          "@container_animation.container_screen_exit_alpha_push",
+          "@container_animation.container_screen_exit_alpha_pop",
+          "@container_animation.container_screen_entrance_alpha_push",
+          "@container_animation.container_screen_entrance_alpha_pop"
+        ]
+      },
+      {
+        "requires": "$pocket_screen",
+        "$screen_content": "pocket_containers.shulker_box_panel"
+      }
+    ]
+  },
+
+  "barrel_screen": {
+    "variables": [
+      {
+        "requires": "$desktop_screen",
+        "$screen_content": "chest.barrel_panel",
+        "$screen_bg_content": "common.screen_background",
+        "$screen_animations": [
+          "@container_animation.container_screen_exit_offset_push",
+          "@container_animation.container_screen_exit_offset_pop",
+          "@container_animation.container_screen_entrance_offset_push",
+          "@container_animation.container_screen_entrance_offset_pop",
+          "@container_animation.container_screen_exit_size_push",
+          "@container_animation.container_screen_exit_size_pop",
+          "@container_animation.container_screen_entrance_size_push",
+          "@container_animation.container_screen_entrance_size_pop",
+          "@container_animation.container_screen_exit_alpha_push",
+          "@container_animation.container_screen_exit_alpha_pop",
+          "@container_animation.container_screen_entrance_alpha_push",
+          "@container_animation.container_screen_entrance_alpha_pop"
+        ]
+      },
+      {
+        "requires": "$pocket_screen",
+        "$screen_content": "pocket_containers.barrel_panel"
+      }
+    ]
+  }
+}

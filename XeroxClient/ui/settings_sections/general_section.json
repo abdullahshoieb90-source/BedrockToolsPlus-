@@ -1,0 +1,199 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "general_section",
+
+  "general_tab_section": {
+    "$spatialPatternsPadding": [ 0, 6 ],
+    "$paddingLineDivider": [ 0, 10 ]
+  },
+
+  "general_tab_section/network_label_header": {
+    "font_type": "$global_font_type"
+  },
+
+  "general_tab_section/licenses_label_header": {
+    "font_type": "$global_font_type"
+  },
+
+  "general_tab_section/third_party_copyright_info_label_panel/copyright_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "general_tab_section/build_info_label_panel/build_id_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "general_tab_section/build_info_label_panel/protocol_version_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "general_tab_section/build_info_label_panel/treatment_ids_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "general_tab_section/build_info_label_panel/build_date_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "general_tab_section/build_info_label_panel/world_converter_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "account_section/device_id_label": {
+    "font_type": "$global_font_type"
+  },
+  
+  "account_section/MinecraftAccount_id_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "automation_section/automation_tab_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "debug_select_windows_store_panel/sandbox_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "debug_select_windows_store_panel/stores_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "unused_treatment_grid_item/unused_treatment_id_panel/unused_treatment_id": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "treatment_grid_item/treatment_id_panel/treatment_id": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "progression_grid_item/progression_id_panel/progression_id": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "sandbox_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "debug_override_treatments_panel/override_treatments_panel_background/treatments_label_panel/treatments_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "debug_override_treatments_panel/override_treatments_panel_background/unused_treatments_label_panel/treatments_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "dot_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "override_date_panel/hour_minute_slash": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "override_date_panel/day_hour_slash": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "override_date_panel/month_day_slash": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "override_date_panel/year_month_slash": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "view_subscriptions_section/loading_subscriptions_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "view_subscriptions_section/failed_loading_subscriptions_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "realms_subscription_panel/middle_panel/renews_text": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "realms_subscription_stack/info/realms_desc_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "possible_store_mismatch/panel_content/label_panel/name_label2": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "consumable_not_extendable/panel_content/label_panel/name_label2": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "gamertag_controls/gamertag_label/panel_gamertag/gamertag_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "gamertag_controls/gamertag_label/panel_descriptor/label_descriptor": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "signin_subscription/sign_in": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "sound_section/paddingMusic": {
+    "size": [ "100%", 6 ]
+  },
+
+  "sound_section/paddingDividerAudioSettings": {
+    "ignored": true
+  },
+
+  "sound_section": {
+    "$spatialPatternsPadding": [ "100%", 14 ],
+    "$audioSlidersSize": [ "100% - 2px", 16 ]
+  },
+
+  "content_log_panel/content_log_location_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "content_log_panel/content_log_location_label_header": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "content_log_panel/content_log_section_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "switch_accounts_panel/name_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "switch_accounts_button_content/padded_label/label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "view_account_errors_button_content": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "creator_toggles_panel/copy_coordinate_section_stack_panel/content_log_section_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "notification_duration_info_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "notification_duration_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "darkness_slider_label": {
+    "font_type": "$global_font_type_2"
+  }
+}

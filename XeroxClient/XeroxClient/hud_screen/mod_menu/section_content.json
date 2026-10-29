@@ -1,0 +1,549 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "Greninja:mod_menu_section",
+
+  "base_stack_panel": {
+    "size": [110, "100%c"],
+    "anchor_from": "top_left",
+    "anchor_to": "top_left",
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "$source_control_name",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ],
+    "type": "stack_panel"
+  },
+
+  "game_play@Greninja:mod_menu_section.base_stack_panel": {
+    "$source_control_name": "game_play_section",
+    "controls": [
+      {
+        "title_text": {
+          "type": "label",
+          "size": ["100%", "default"],
+          "text": "modmenu.sec.gameplay",
+          "font_scale_factor": 1.35,
+          "font_type": "$global_font_type",
+          "shadow": true
+        }
+      },
+      {
+        "title@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.title",
+          "$toggle_default_state": "$title_enabled",
+          "$toggle_view_binding_name": "mod_title"
+        }
+      },
+      {
+        "chat@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.chat",
+          "$toggle_default_state": "$chat_enabled",
+          "$toggle_view_binding_name": "mod_chat"
+        }
+      },
+      {
+        "actionbar@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.actionbar",
+          "$toggle_default_state": "$actionbar_enabled",
+          "$toggle_view_binding_name": "mod_actionbar"
+        }
+      },
+      {
+        "scoreboard@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.scoreboard",
+          "$toggle_default_state": "$scoreboard_enabled",
+          "$toggle_view_binding_name": "mod_scoreboard"
+        }
+      },
+      {
+        "itemname@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.itemname",
+          "$toggle_default_state": "$itemname_enabled",
+          "$toggle_view_binding_name": "mod_itemname"
+        }
+      },
+      {
+        "tip@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.tip",
+          "$toggle_default_state": "$tip_enabled",
+          "$toggle_view_binding_name": "mod_tip"
+        }
+      },
+      {
+        "bossbar@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.bossbar",
+          "$toggle_default_state": "$bossbar_enabled",
+          "$toggle_view_binding_name": "mod_bossbar"
+        }
+      }
+    ]
+  },
+
+  "render@Greninja:mod_menu_section.base_stack_panel": {
+    "$source_control_name": "render_section",
+    "controls": [
+      {
+        "title_text": {
+          "type": "label",
+          "size": ["100%", "default"],
+          "text": "modmenu.sec.render",
+          "font_scale_factor": 1.35,
+          "font_type": "$global_font_type",
+          "shadow": true
+        }
+      },
+      {
+        "armorhud@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.armorhud",
+          "$toggle_default_state": "$armorhud_enabled",
+          "$toggle_view_binding_name": "mod_armorhud"
+        }
+      },
+      {
+        "directionhud@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.directionhud",
+          "$toggle_default_state": "$directionhud_enabled",
+          "$toggle_view_binding_name": "mod_directionhud"
+        }
+      },
+      {
+        "paperdoll@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.paperdoll",
+          "$toggle_default_state": "$paperdoll_enabled",
+          "$toggle_view_binding_name": "mod_paperdoll"
+        }
+      },
+      {
+        "clock@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.clock",
+          "$toggle_default_state": "$clock_enabled",
+          "$toggle_view_binding_name": "mod_clock"
+        }
+      },
+      {
+        "compass@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.compass",
+          "$toggle_default_state": "$compass_enabled",
+          "$toggle_view_binding_name": "mod_compass"
+        }
+      },
+      {
+        "mainhand@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.mainhand",
+          "$toggle_default_state": "$mainhand_enabled",
+          "$toggle_view_binding_name": "mod_mainhand"
+        }
+      },
+      {
+        "vignette@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.vignette",
+          "$toggle_default_state": "$vignette_enabled",
+          "$toggle_view_binding_name": "mod_vignette"
+        }
+      },
+      {
+        "inv_hud@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.invhud",
+          "$toggle_default_state": "$invhud_enabled",
+          "$toggle_view_binding_name": "mod_invhud"
+        }
+      }
+    ]
+  },
+
+  "crosshair@Greninja:mod_menu_section.base_stack_panel": {
+    "$source_control_name": "crosshair_section",
+    "$mod_toggle_group": "mod_crosshair",
+    "controls": [
+      {
+        "title_text": {
+          "type": "label",
+          "size": ["100%", "default"],
+          "text": "modmenu.sec.crosshair",
+          "font_scale_factor": 1.35,
+          "font_type": "$global_font_type",
+          "shadow": true
+        }
+      },
+      {
+        "dynamiccrosshair@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.dynacrosshair",
+          "$radio_toggle_group": true,
+          "$toggle_name": "$mod_toggle_group",
+          "$toggle_group_default_selected": "$crosshair_type",
+          "$toggle_view_binding_name": "mod_crosshair_0",
+          "$toggle_group_forced_index": 0
+        }
+      },
+      {
+        "scrolling_panel@common.scrolling_panel": {
+          "size": [108, 55],
+          "$scrolling_content": "Greninja:mod_menu_section.crosshair_scrolling_content"
+        }
+      }
+    ]
+  },
+
+  "crosshair_scrolling_content": {
+    "type": "stack_panel",
+    "$icon_path": "textures/xc_ui/crosshairs/",
+    "size": [100, "100%c"],
+    "controls": [
+      {
+        "stack_1": {
+          "type": "stack_panel",
+          "size": ["100%", 20],
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "type_1@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "1",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_1",
+                "$toggle_group_forced_index": 1
+              }
+            },
+            {
+              "type_2@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "2",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_2",
+                "$toggle_group_forced_index": 2
+              }
+            },
+            {
+              "type_3@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "3",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_3",
+                "$toggle_group_forced_index": 3
+              }
+            },
+            {
+              "type_4@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "4",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_4",
+                "$toggle_group_forced_index": 4
+              }
+            },
+            {
+              "type_5@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "5",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_5",
+                "$toggle_group_forced_index": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "stack_2": {
+          "type": "stack_panel",
+          "size": ["100%", 20],
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "type_6@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "6",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_6",
+                "$toggle_group_forced_index": 6
+              }
+            },
+            {
+              "type_7@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "7",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_7",
+                "$toggle_group_forced_index": 7
+              }
+            },
+            {
+              "type_8@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "8",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_8",
+                "$toggle_group_forced_index": 8
+              }
+            },
+            {
+              "type_9@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "9",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_9",
+                "$toggle_group_forced_index": 9
+              }
+            },
+            {
+              "type_10@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "10",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_10",
+                "$toggle_group_forced_index": 10
+              }
+            }
+          ]
+        }
+      },
+      {
+        "stack_3": {
+          "type": "stack_panel",
+          "size": ["100%", 20],
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "type_11@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "11",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_11",
+                "$toggle_group_forced_index": 11
+              }
+            },
+            {
+              "type_12@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "12",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_12",
+                "$toggle_group_forced_index": 12
+              }
+            },
+            {
+              "type_13@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "13",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_13",
+                "$toggle_group_forced_index": 13
+              }
+            },
+            {
+              "type_14@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "14",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_14",
+                "$toggle_group_forced_index": 14
+              }
+            },
+            {
+              "type_15@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "15",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_15",
+                "$toggle_group_forced_index": 15
+              }
+            }
+          ]
+        }
+      },
+      {
+        "stack_4": {
+          "type": "stack_panel",
+          "size": ["100%", 20],
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "type_16@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_texture": "16",
+                "$toggle_group_default_selected": "$crosshair_type",
+                "$toggle_view_binding_name": "mod_crosshair_16",
+                "$toggle_group_forced_index": 16
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "backgrounds@Greninja:mod_menu_section.base_stack_panel": {
+    "$source_control_name": "backgrounds_section",
+    "$mod_toggle_group": "mod_backgrounds",
+    "controls": [
+      {
+        "title_text": {
+          "type": "label",
+          "size": ["100%", "default"],
+          "text": "modmenu.sec.backgrounds",
+          "font_scale_factor": 1.35,
+          "font_type": "$global_font_type",
+          "shadow": true
+        }
+      },
+      {
+        "bg_enabled@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.toggle.enabled",
+          "$toggle_default_state": "$background_enabled",
+          "$toggle_view_binding_name": "mod_background"
+        }
+      },
+      {
+        "toggle_and_slider": {
+          "type": "stack_panel",
+          "size": ["100%", "100%c"],
+          "bindings": [
+            {
+              "binding_type": "view",
+              "source_control_name": "mod_background",
+              "source_property_name": "#toggle_state",
+              "target_property_name": "#enabled"
+            }
+          ],
+          "controls": [
+            {
+              "mod_backgrounds_alpha_slider@Greninja:mod_menu_common.slider": {
+                "$source_control_name": "mod_backgrounds_alpha_slider",
+                "$slider_value_expression": "((#slider_value + $background_alpha)*10)",
+                "$value_0_text": "Opacity: 0%%",
+                "$value_1_text": "Opacity: 10%%",
+                "$value_2_text": "Opacity: 20%%",
+                "$value_3_text": "Opacity: 30%%",
+                "$value_4_text": "Opacity: 40%%",
+                "$value_5_text": "Opacity: 50%%",
+                "$value_6_text": "Opacity: 60%%",
+                "$value_7_text": "Opacity: 70%%",
+                "$value_8_text": "Opacity: 80%%",
+                "property_bag": {
+                  "#slider_steps": 9
+                }
+              }
+            },
+            {
+              "lighter@Greninja:mod_menu_common.normal_toggle": {
+                "$button_text": "mod.bg.lighter",
+                "$radio_toggle_group": true,
+                "$toggle_name": "$mod_toggle_group",
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_lighter",
+                "$toggle_group_forced_index": 0
+              }
+            },
+            {
+              "darker@Greninja:mod_menu_common.normal_toggle": {
+                "$button_text": "mod.bg.darker",
+                "$radio_toggle_group": true,
+                "$toggle_name": "$mod_toggle_group",
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_darker",
+                "$toggle_group_forced_index": 10
+              }
+            },
+            {
+              "scrolling_panel@common.scrolling_panel": {
+                "size": [108, 55],
+                "$scrolling_content": "Greninja:mod_menu_section.backgrounds_scrolling_content"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "backgrounds_scrolling_content": {
+    "type": "stack_panel",
+    "$icon_texture": "White",
+    "$icon_path": "textures/ui/Xerox/",
+    "size": [100, "100%c"],
+    "controls": [
+      {
+        "stack_1": {
+          "type": "stack_panel",
+          "size": ["100%", 20],
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "type_1@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [0.9294117647, 0.1098039216, 0.1411764706],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_red",
+                "$toggle_group_forced_index": 1
+              }
+            },
+            {
+              "type_2@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [1.0, 0.4980392157, 0.1529411765],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_orange",
+                "$toggle_group_forced_index": 2
+              }
+            },
+            {
+              "type_3@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [1.0, 0.7882352941, 0.05490196078],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_yellow",
+                "$toggle_group_forced_index": 3
+              }
+            },
+            {
+              "type_4@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [0.7098039216, 0.9019607843, 0.1137254902],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_chartreuse",
+                "$toggle_group_forced_index": 4
+              }
+            },
+            {
+              "type_5@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [0.1333333333, 0.6941176471, 0.2980392157],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_green",
+                "$toggle_group_forced_index": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "stack_2": {
+          "type": "stack_panel",
+          "size": ["100%", 20],
+          "orientation": "horizontal",
+          "controls": [
+            {
+              "type_6@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [0.0, 0.6352941176, 0.9098039216],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_blue",
+                "$toggle_group_forced_index": 6
+              }
+            },
+            {
+              "type_7@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [0.2470588235, 0.2823529412, 0.8],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_indigo",
+                "$toggle_group_forced_index": 7
+              }
+            },
+            {
+              "type_8@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [0.6392156863, 0.2862745098, 0.6431372549],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_purple",
+                "$toggle_group_forced_index": 8
+              }
+            },
+            {
+              "type_9@Greninja:mod_menu_common.radio_icon_toggle": {
+                "$icon_color": [1.0, 0.6823529412, 0.7882352941],
+                "$toggle_group_default_selected": "$background_type",
+                "$toggle_view_binding_name": "mod_backgrounds_pink",
+                "$toggle_group_forced_index": 9
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

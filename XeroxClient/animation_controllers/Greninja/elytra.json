@@ -1,0 +1,7 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.10.0","animation_controllers":{"controller.animation.elytra_default":{"initial_state":"default","states":{"default":{"animations":["elytra_default"],"transitions":[{"gliding":"q.is_gliding"},{"sneaking":"q.is_sneaking"},{"sleeping":"q.is_sleeping"},{"swimming":"q.is_swimming"}],"blend_transition":0.1,"blend_via_shortest_path":true},"gliding":{"animations":["elytra_gliding"],"transitions":[{"sleeping":"q.is_sleeping"},{"swimming":"q.is_swimming"},{"default":"!q.is_gliding"}],"blend_transition":0.1,"blend_via_shortest_path":true},"sneaking":{"animations":["elytra_sneaking"],"transitions":[{"gliding":"q.is_gliding"},{"sleeping":"q.is_sleeping"},{"swimming":"q.is_swimming"},{"default":"!q.is_sneaking"}],"blend_transition":0.1,"blend_via_shortest_path":true},"sleeping":{"animations":["elytra_sleeping"],"transitions":[{"gliding":"q.is_gliding"},{"sneaking":"q.is_sneaking"},{"swimming":"q.is_swimming"},{"default":"!q.is_sleeping"}],"blend_transition":0.1,"blend_via_shortest_path":true},"swimming":{"animations":["elytra_swimming"],"transitions":[{"gliding":"q.is_gliding"},{"sneaking":"q.is_sneaking"},{"sleeping":"q.is_sleeping"},{"default":"!q.is_swimming"}],"blend_transition":0.1,"blend_via_shortest_path":true}}}}}}}

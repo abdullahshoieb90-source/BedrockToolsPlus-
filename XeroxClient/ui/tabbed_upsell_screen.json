@@ -1,0 +1,14 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "tabbed_upsell_screen": {
+    "force_render_below": false,
+    "$screen_content": "music_player_main_screen.main_screen_content",
+    "$button_texture_path": "textures/ui/Xerox/music_player/",
+    "$button_icon_path": "textures/ui/Xerox/image/icon/"
+  }
+}

@@ -1,0 +1,21 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "achievement",
+
+  "empty_progress_bar_icon": {
+    "size": [240, 5],
+    "texture": "textures/ui/progress/progress_bar",
+    "alpha": 0.8,
+    "color": [0.4, 0.4, 0.42]
+  },
+
+  "full_progress_bar_icon_base": {
+    "size": [240, 5],
+    "texture": "textures/ui/progress/progress_bar"
+  }
+}

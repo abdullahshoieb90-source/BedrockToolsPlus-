@@ -1,0 +1,169 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "chat_main_screen",
+
+  "paste_button@common_buttons.dark_content_button": {
+    "size": [16, 16],
+    "$button_content": "chat.paste_image",
+    "$pressed_button_name": "paste_button",
+    "$focus_id": "paste_button_focus_id",
+    "$focus_override_left": "coordinate_copy_button_focus_id",
+    "$focus_override_down": "text_edit_box_focus_id"
+  },
+
+  "copy_coordinate_button@common_buttons.dark_content_button": {
+    "size": [0, 0],
+    "$button_content": "chat.copy_image",
+    "$pressed_button_name": "copy_coordinates_button",
+    "$focus_id": "coordinate_copy_button_focus_id",
+    "$focus_override_left": "coordinate_dropdown_focus_id",
+    "$focus_override_right": "paste_button_focus_id",
+    "$focus_override_down": "text_edit_box_focus_id",
+    "bindings": [
+      {
+        "binding_name": "#copy_button_enabled",
+        "binding_name_override": "#enabled"
+      }
+    ]
+  },
+
+  "chat_header@Xerox_common.common_header_no_background_blur": {
+    "anchor_to": "top_left",
+    "anchor_from": "top_left",
+    "$header_text|default": "chat",
+    "$header_text_bindings": [
+      {
+        "binding_name": "#chat_title_visible",
+        "binding_name_override": "#visible"
+      }
+    ],
+    "$header_extra_control": "chat_coordinates_panel.coordinate_panel"
+  },
+
+  "keyboard_button@common_buttons.dark_content_button": {
+    "size": [ 27, 27 ],
+    "$text_color": [1, 1, 1, 1],
+    "$button_content": "chat.keyboard_image_panel",
+    "$pressed_button_name": "button.keyboard_toggle",
+    "$focus_id": "keyboard_button_focus_id",
+    "$button_tts_header": "accessibility.chat.tts.keyboard",
+    "bindings": [
+      {
+        "binding_name": "#keyboard_button_focus_override_up",
+        "binding_name_override": "#focus_change_up"
+      },
+      {
+        "binding_name": "#keyboard_button_focus_override_down",
+        "binding_name_override": "#focus_change_down"
+      }
+    ]
+  },
+
+  "chat_settings_button@common_buttons.dark_content_button": {
+    "size": [ 27, 27 ],
+    "$button_content": "chat.gear_image",
+    "$pressed_button_name": "button.open_chat_settings",
+    "$focus_id": "chat_settings_button_focus_id",
+    "$button_tts_header": "chat.settings"
+  },
+
+  "send_button@common_buttons.dark_content_button": {
+    "$pressed_button_name": "button.send",
+    "size": [ 44, 27 ],
+    "$tts_enabled|default": true,
+    "focus_enabled": "$tts_enabled",
+
+    "$button_content": "chat.send_panel",
+    "$button_tts_header": "#send_button_accessibility_text",
+    "bindings": [
+      {
+        "binding_name": "#send_button_visible",
+        "binding_name_override": "#enabled"
+      },
+      {
+        "binding_name": "#send_button_accessibility_text"
+      }
+    ]
+  },
+
+  "auto_complete_back_button@common_buttons.dark_text_button": {
+    "size": [ 27, 27 ],
+    "$button_text": "TAB▲",
+    "$pressed_button_name": "button.chat_autocomplete_back",
+    "ignored": "(not $touch)"
+  },
+
+  "auto_complete_button@common_buttons.dark_text_button": {
+    "size": [ 27, 27 ],
+    "$button_text": "TAB▼",
+    "$pressed_button_name": "button.chat_autocomplete",
+    "ignored": "(not $touch)"
+  },
+
+  "previous_button@common_buttons.dark_text_button": {
+    "size": [ 27, 27 ],
+    "$button_text": "▲",
+    "$pressed_button_name": "button.chat_previous_message",
+    "ignored": "(not $touch)"
+  },
+
+  "next_button@common_buttons.dark_text_button": {
+    "size": [ 27, 27 ],
+    "$button_text": "▼",
+    "$pressed_button_name": "button.chat_next_message",
+    "ignored": "(not $touch)"
+  },
+
+  "chat_bottom_button": {
+    "type": "stack_panel",
+    "orientation": "horizontal",
+    "size": ["100%", 27],
+    "controls": [
+      { "keyboard@chat_main_screen.keyboard_button": {} },
+      { "chat_settings@chat_main_screen.chat_settings_button": {} },
+      { "auto_complete_back@chat_main_screen.auto_complete_back_button": {} },
+      { "auto_complete@chat_main_screen.auto_complete_button": {} },
+      { "previous@chat_main_screen.previous_button": {} },
+      { "next@chat_main_screen.next_button": {} },
+      { "text_box@chat.text_edit_box": {} },
+      { "host_main_button@host_options.host_main_button": {} },
+      { "send@chat_main_screen.send_button": {} }
+    ]
+  },
+
+  "chat_bottom_panel": {
+    "type": "image",
+    "alpha": 0.20,
+    "anchor_from": "bottom_left",
+    "anchor_to": "bottom_left",
+    "size": ["100%", 27],
+    "texture": "textures/ui/Xerox/Black",
+    "controls": [
+      { "chat_bottom_panel@chat_main_screen.chat_bottom_button": {} }
+    ],
+    "animation_reset_name": "screen_animation_reset",
+    "anims": [
+      "@chat_animation.bot_pane_out_animation",
+      "@chat_animation.bot_pane_out_animation_pop",
+      "@chat_animation.bot_pane_enter_animation",
+      "@chat_animation.bot_pane_enter_animation_pop"
+    ]
+  },
+
+  "chat_screen_content": {
+    "type": "panel",
+    "controls": [
+      { "messages_panel@chat.messages_scrolling_panel": {} },
+      { "chat_bottom_panel@chat_main_screen.chat_bottom_panel": { "layer": 2 } },
+      { "chat_top_panel@chat_main_screen.chat_header": { "layer": 2 } },
+      { "autocomplete_commands_panel@chat.commands_panel": { "layer": 3 } },
+      { "host_main_panel@host_options.host_panel": { "layer": 4 } },
+      { "popup_factory@chat_settings.popup_factory": {} }
+    ]
+  }
+}

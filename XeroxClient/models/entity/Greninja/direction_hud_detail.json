@@ -1,0 +1,7 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.direction_hud_ones","texture_width":37,"texture_height":55,"visible_bounds_width":2,"visible_bounds_height":1.5,"visible_bounds_offset":[0,0.25,0]},"bones":[{"name":"direction_hud_detail","pivot":[0,3.5,0]},{"name":"direc_ones","parent":"direction_hud_detail","cubes":[{"origin":[-2.5,0,0],"size":[5,7,0],"uv":{"north":{"uv":[0,0],"uv_size":[37,55]}}}]}]},{"description":{"identifier":"geometry.direction_hud_tens","texture_width":37,"texture_height":55,"visible_bounds_width":2,"visible_bounds_height":1.5,"visible_bounds_offset":[0,0.25,0]},"bones":[{"name":"direction_hud_detail","pivot":[0,3.5,0]},{"name":"direc_tens","parent":"direction_hud_detail","cubes":[{"origin":[-2.5,0,0],"size":[5,7,0],"uv":{"north":{"uv":[0,0],"uv_size":[37,55]}}}]}]},{"description":{"identifier":"geometry.direction_hud_hundreds","texture_width":37,"texture_height":55,"visible_bounds_width":2,"visible_bounds_height":1.5,"visible_bounds_offset":[0,0.25,0]},"bones":[{"name":"direction_hud_detail","pivot":[0,3.5,0]},{"name":"direc_hundreds","parent":"direction_hud_detail","cubes":[{"origin":[-2.5,0,0],"size":[5,7,0],"uv":{"north":{"uv":[0,0],"uv_size":[37,55]}}}]}]}]}]}}}}}

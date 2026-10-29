@@ -1,0 +1,53 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "xcs_common",
+  "side_bar_button@common_tabs.tab_left": {
+    "size": ["25px", "25px"],
+    "$tab_content": "xcs_common.side_bar_button_control",
+    "$toggle_tts_enabled_binding_type": "global",
+    "$radio_toggle_group": true,
+    "$toggle_name": "nagivation_tab",
+    "$toggle_group_default_selected": 0
+  },
+
+  "side_bar_button_control": {
+    "type": "stack_panel",
+    "size": ["100% + 3px", "100% + 2px"],
+    "$button_texture|default": "unknown",
+    "$side_bar_button_text|default": "unknown",
+    "controls": [
+      {
+        "icon": {
+          "type": "image",
+          "size": ["100%", "17px"],
+          "texture": "('textures/ui/setting_screen/side_bar_button_icons' + $texture)",
+          "layer": 5
+        }
+      },
+      {
+        "text_panel": {
+          "type": "panel",
+          "size": ["100%", "fill"],
+          "layer": 5,
+          "controls": [
+            {
+              "button_text": {
+                "type": "label",
+                "size": ["default", "default"],
+                "max_size": ["100%", "default"],
+                "text": "$side_bar_button_text",
+                "font_type": "$global_font_type",
+                "font_scale_factor": 0.6
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

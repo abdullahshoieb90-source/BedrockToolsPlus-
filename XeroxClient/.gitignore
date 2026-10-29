@@ -1,0 +1,22 @@
+# Build output
+dist/
+build/
+*.mcpack
+*.mcaddon
+*.mcworld
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# The parent repository ignores *.zip; keep the vanilla particle archive that
+# ships with the pack.
+!*.zip

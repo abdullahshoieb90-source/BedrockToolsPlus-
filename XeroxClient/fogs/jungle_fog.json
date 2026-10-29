@@ -1,0 +1,28 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "format_version": "1.16.100",
+  "minecraft:fog_settings": {
+    "description": {
+      "identifier": "xeroxclient:fog_jungle"
+    },
+    "distance": {
+      "air": {
+        "fog_start": 0.0,
+        "fog_end": 0.85,
+        "fog_color": "#ABE5FF", 
+        "render_distance_type": "render"
+      },
+      "water": {
+        "fog_start": 0.1,
+        "fog_end": 15.0,
+        "fog_color": "#58D68D",
+        "render_distance_type": "fixed"
+      }
+    }
+  }
+}

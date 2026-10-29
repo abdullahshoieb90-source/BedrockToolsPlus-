@@ -1,0 +1,209 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "container_animation",
+
+  "paperdoll_exit_animation_push": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "to": [ 52, 19.2 ],
+    "from": [ 0, 0 ],
+    "duration": 0.7,
+    "play_event": "screen.exit_push",
+    "end_event": "screen.exit_end"
+  },
+
+  "paperdoll_exit_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "to": [ 52, 19.2],
+    "from": [ 0, 0 ],
+    "duration": 0.7,
+    "play_event": "screen.exit_pop",
+    "end_event": "screen.exit_end"
+  },
+
+  "paperdoll_entrance_animation_push": {
+    "anim_type": "offset",
+    "easing": "out_quart",
+    "from": [ 52, -19.2 ],
+    "to": [ 0, 0 ],
+    "duration": 0.75,
+    "play_event": "screen.entrance_push",
+    "end_event": "screen.entrance_end"
+  },
+
+  "paperdoll_entrance_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_quart",
+    "from": [ 52, -19.2 ],
+    "to": [ 0, 0 ],
+    "duration": 0.75,
+    "play_event": "screen.entrance_pop",
+    "end_event": "screen.entrance_end"
+  },
+
+  "container_screen_exit_alpha_push": {
+    "anim_type": "alpha",
+    "easing": "out_cubic",
+    "to": 0.0,
+    "from": 1.0,
+    "duration": 0.5,
+    "play_event": "screen.exit_push",
+    "end_event": "screen.exit_end"
+  },
+
+  "container_screen_exit_alpha_pop": {
+    "anim_type": "alpha",
+    "easing": "out_cubic",
+    "to": 0.0,
+    "from": 1.0,
+    "duration": 0.5,
+    "play_event": "screen.exit_pop",
+    "end_event": "screen.exit_end"
+  },
+
+  "container_screen_entrance_alpha_push": {
+    "anim_type": "alpha",
+    "easing": "in_sine",
+    "from": 0.0,
+    "to": 1.0,
+    "duration": 0.6,
+    "play_event": "screen.entrance_push",
+    "end_event": "screen.entrance_end"
+  },
+
+  "container_screen_entrance_alpha_pop": {
+    "anim_type": "alpha",
+    "easing": "in_sine",
+    "from": 0.0,
+    "to": 1.0,
+    "duration": 0.6,
+    "play_event": "screen.entrance_pop",
+    "end_event": "screen.entrance_end"
+  },
+
+  "container_screen_exit_offset_push": {
+    "anim_type": "offset",
+    "easing": "out_quart",
+    "to": [ 0, -19.2 ],
+    "from": [ 0, 0 ],
+    "duration": 0.9,
+    "play_event": "screen.exit_push",
+    "end_event": "screen.exit_end"
+  },
+
+  "container_screen_exit_offset_pop": {
+    "anim_type": "offset",
+    "easing": "out_quart",
+    "to": [ 0, -19.2 ],
+    "from": [ 0, 0 ],
+    "duration": 0.9,
+    "play_event": "screen.exit_pop",
+    "end_event": "screen.exit_end"
+  },
+
+  "container_screen_entrance_offset_push": {
+    "anim_type": "offset",
+    "easing": "in_sine",
+    "from": [ 0, 19.2 ],
+    "to": [ 0, 0 ],
+    "duration": 0.6,
+    "play_event": "screen.entrance_push",
+    "end_event": "screen.entrance_end"
+  },
+
+  "container_screen_entrance_offset_pop": {
+    "anim_type": "offset",
+    "easing": "in_sine",
+    "from": [ 0, 19.2 ],
+    "to": [ 0, 0 ],
+    "duration": 0.6,
+    "play_event": "screen.entrance_pop",
+    "end_event": "screen.entrance_end"
+  },
+
+  "container_screen_exit_size_push": {
+    "anim_type": "size",
+    "duration": 0.9,
+    "easing": "out_quart",
+    "from": [ "100%", "100%" ],
+    "to": [ 0, 0 ],
+    "play_event": "screen.exit_push",
+    "end_event": "screen.exit_end"
+  },
+
+  "container_screen_exit_size_pop": {
+    "anim_type": "size",
+    "duration": 0.9,
+    "easing": "out_quart",
+    "from": [ "100%", "100%" ],
+    "to": [ 0, 0 ],
+    "play_event": "screen.exit_pop",
+    "end_event": "screen.exit_end"
+  },
+
+  "container_screen_entrance_size_push": {
+    "anim_type": "size",
+    "duration": 0.6,
+    "easing": "in_sine",
+    "to": [ "100%", "100%" ],
+    "from": [ 0, 0 ],
+    "play_event": "screen.entrance_push",
+    "end_event": "screen.entrance_end"
+  },
+
+  "container_screen_entrance_size_pop": {
+    "anim_type": "size",
+    "duration": 0.6,
+    "easing": "in_sine",
+    "to": [ "100%", "100%" ],
+    "from": [ 0, 0 ],
+    "play_event": "screen.entrance_pop",
+    "end_event": "screen.entrance_end"
+  },
+
+  "logo_exit_animation_push": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "to": ["100%c", 0],
+    "from": ["100%c", "100%c"],
+    "duration": 0.5,
+    "play_event": "screen.exit_push",
+    "end_event": "screen.exit_end"
+  },
+
+  "logo_exit_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "to": ["100%c", 0],
+    "from": ["100%c", "100%c"],
+    "duration": 0.5,
+    "play_event": "screen.exit_pop",
+    "end_event": "screen.exit_end"
+  },
+
+  "logo_entrance_animation_push": {
+    "anim_type": "size",
+    "easing": "out_quart",
+    "from": ["100%c", 0],
+    "to": ["100%c", "100%c"],
+    "duration": 1.0,
+    "play_event": "screen.entrance_push",
+    "end_event": "screen.entrance_end"
+  },
+
+  "logo_entrance_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_quart",
+    "from": ["100%c", 0],
+    "to": ["100%c", "100%c"],
+    "duration": 1.0,
+    "play_event": "screen.entrance_pop",
+    "end_event": "screen.entrance_end"
+  }
+}

@@ -1,0 +1,65 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "inventory_grid_item_template",
+
+  "inv_grid_item": {
+    "type": "panel",
+    "size": [14, 14],
+    "layer": 21,
+    "bindings": [
+      {
+        "binding_collection_name": "hotbar_items",
+        "binding_type": "collection_details"
+      }
+    ],
+    "$durability_bar_required|default": true,
+    "$stack_count_required|default": true,
+    "controls": [
+      {
+        "main": {
+          "type": "panel",
+          "size": [14, 14],
+          "controls": [
+            {
+              "item_icon@hud.hotbar_hud_item_icon": {
+                "layer": 22,
+                "size": [12, 12]
+              }
+            },
+            {
+              "item_dura@hud.item_durability": {
+                "layer": 23
+              }
+            },
+            {
+              "item_stack_count@common.stack_count_label": {
+                "layer": 24,
+                "font_scale_factor": 0.8,
+                "bindings": [
+                  {
+                    "binding_collection_name": "hotbar_items",
+                    "binding_name": "#inventory_stack_count",
+                    "binding_type": "collection"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "slot_bacjground": {
+          "type": "image",
+          "size": ["100%-1px", "100%-1px"],
+          "alpha": 0.02,
+          "texture": "textures/ui/Xerox/White"
+        }
+      }
+    ]
+  }
+}

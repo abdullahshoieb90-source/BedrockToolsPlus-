@@ -1,0 +1,155 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "inv_quick_mode",
+//此方案废弃
+  "item_auto_place_slot@common.container_slot_button_prototype": {
+    "button_mappings": [
+      {
+        "from_button_id": "button.menu_select",
+        "to_button_id": "button.container_auto_place",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_ok",
+        "to_button_id": "button.container_auto_place",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_secondary_select",
+        "to_button_id": "button.container_auto_place",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.controller_select",
+        "to_button_id": "button.container_auto_place",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_auto_place",
+        "to_button_id": "button.container_auto_place",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.controller_secondary_select",
+        "to_button_id": "button.container_auto_place",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_inventory_drop",
+        "to_button_id": "button.drop_one",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_inventory_drop_all",
+        "to_button_id": "button.drop_all",
+        "mapping_type": "pressed"
+      },
+      {
+        "to_button_id": "button.shape_drawing",
+        "mapping_type": "pressed"
+      },
+      {
+        "to_button_id": "button.container_slot_hovered",
+        "mapping_type": "pressed"
+      }
+    ]
+  },
+  "item_drop_one_slot@common.container_slot_button_prototype": {
+    "button_mappings": [
+      {
+        "from_button_id": "button.menu_select",
+        "to_button_id": "button.drop_one",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_ok",
+        "to_button_id": "button.drop_one",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_secondary_select",
+        "to_button_id": "button.drop_one",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.controller_select",
+        "to_button_id": "button.drop_one",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_auto_place",
+        "to_button_id": "button.drop_one",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.controller_secondary_select",
+        "to_button_id": "button.drop_one",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_inventory_drop",
+        "to_button_id": "button.drop_one",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_inventory_drop_all",
+        "to_button_id": "button.drop_all",
+        "mapping_type": "pressed"
+      },
+      {
+        "to_button_id": "button.shape_drawing",
+        "mapping_type": "pressed"
+      },
+      {
+        "to_button_id": "button.container_slot_hovered",
+        "mapping_type": "pressed"
+      }
+    ]
+  },
+  "inv_mode_select_panel": {
+    "type": "stack_panel",
+    "size": [20, "100%c"],
+    "anchor_from": "bottom_right",
+    "anchor_to": "bottom_right",
+    "controls": [
+      {
+        "normal@inv_mode_section_toggle.mode_select_tab_normal_mode": {
+          "$tab_content": "inv_mode_section_toggle.normal_mode_icon",
+          "$toggle_group_forced_index": 0,
+          "$tab_view_binding_name": "xeroxclient_inv_normal"
+        }
+      },
+      {
+        "padding0": {
+          "type": "panel",
+          "size": [0, 2]
+        }
+      },
+      {
+        "auto_place@inv_mode_section_toggle.mode_select_tab": {
+          "$tab_content": "inv_mode_section_toggle.auto_place_mode_icon",
+          "$toggle_group_forced_index": 1919810,
+          "$tab_view_binding_name": "xeroxclient_inv_auto_place"
+        }
+      },
+      {
+        "padding0": {
+          "type": "panel",
+          "size": [0, 2]
+        }
+      },
+      {
+        "drop_one@inv_mode_section_toggle.mode_select_tab": {
+          "$tab_content": "inv_mode_section_toggle.drop_one_mode_icon",
+          "$toggle_group_forced_index": 114514,
+          "$tab_view_binding_name": "xeroxclient_inv_drop_one"
+        }
+      }
+    ]
+  }
+}

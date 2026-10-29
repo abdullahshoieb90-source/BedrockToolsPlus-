@@ -1,0 +1,147 @@
+{
+  "format_version": "1.8.0",
+  "render_controllers": {
+    "controller.render.armor.helmet": {
+      "geometry": "geometry.default",
+      "materials": [
+        { "*": "variable.is_enchanted ? material.enchanted : material.default" }
+      ],
+      "textures": [
+        "texture.default",
+        "texture.enchanted"
+      ],
+      "part_visibility": [
+        { "*": false },
+        { "head_greninja": true },
+        { "hat_greninja": true }
+      ]
+    },
+    "controller.render.armor.chestplate": {
+      "geometry": "geometry.default",
+      "materials": [
+        { "*": "variable.is_enchanted ? material.enchanted : material.default" }
+      ],
+      "textures": [
+        "texture.default",
+        "texture.enchanted"
+      ],
+      "part_visibility": [
+        { "*": false },
+        { "body_greninja": true },
+        { "leftarm_greninja": true },
+        { "rightarm_greninja": true },
+        { "left_wing_greninja": true },
+        { "right_wing_greninja": true }
+      ]
+    },
+    "controller.render.armor.leggings": {
+      "geometry": "geometry.default",
+      "materials": [
+        { "*": "variable.is_enchanted ? material.enchanted : material.default" }
+      ],
+      "textures": [
+        "texture.default",
+        "texture.enchanted"
+      ],
+      "part_visibility": [
+        { "*": false },
+        { "body_greninja": true },
+        { "leftleg_greninja": true },
+        { "rightleg_greninja": true }
+      ]
+    },
+    "controller.render.armor.boots": {
+      "geometry": "geometry.default",
+      "materials": [
+        { "*": "variable.is_enchanted ? material.enchanted : material.default" }
+      ],
+      "textures": [
+        "texture.default",
+        "texture.enchanted"
+      ],
+      "part_visibility": [
+        { "*": false },
+        { "leftleg_greninja": true },
+        { "rightleg_greninja": true }
+      ]
+    },
+    "controller.render.player.first_person": {
+      "geometry": "Geometry.default",
+      "materials": [ { "*": "Material.default" } ],
+      "textures": [ "Texture.default" ],
+      "part_visibility": [
+        { "*": false },
+        { "rightArm": "q.get_equipped_item_name(0, 1) == '' || q.get_equipped_item_name(0, 1) == 'map'" },
+        { "rightSleeve": "q.get_equipped_item_name(0, 1) == '' || q.get_equipped_item_name(0, 1) == 'map'" },
+        { "leftArm": "(q.get_equipped_item_name(0, 1) == 'map' && q.get_equipped_item_name('off_hand') != 'shield') || (q.get_equipped_item_name('off_hand') == 'map' && !q.item_is_charged) || (!q.item_is_charged && (v.item_use_normalized > 0 && v.item_use_normalized < 1.0))" },
+        { "leftSleeve": "(q.get_equipped_item_name(0, 1) == 'map' && q.get_equipped_item_name('off_hand') != 'shield') || (q.get_equipped_item_name('off_hand') == 'map' && !q.item_is_charged) || (!q.item_is_charged && (v.item_use_normalized > 0 && v.item_use_normalized < 1.0))" }
+      ],
+      "is_hurt_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "on_fire_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "overlay_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      }
+    },
+    "controller.render.player.third_person": {
+      "geometry": "Geometry.default",
+      "materials": [ { "*": "Material.default" } ],
+      "textures": [ "Texture.default" ],
+      "part_visibility": [
+        { "*": true },
+        { "helmet": "v.helmet_layer_visible" },
+        { "leftLegging": "v.leg_layer_visible" },
+        { "rightLegging": "v.leg_layer_visible" },
+        { "leftBoot": "v.boot_layer_visible" },
+        { "rightBoot": "v.boot_layer_visible" },
+        { "leftSock": "v.boot_layer_visible && v.leg_layer_visible" },
+        { "rightSock": "v.boot_layer_visible && v.leg_layer_visible" },
+        { "bodyArmor": "v.chest_layer_visible && !q.has_cape" },
+        { "leftArmArmor": "v.chest_layer_visible && !q.has_cape" },
+        { "rightArmArmor": "v.chest_layer_visible && !q.has_cape" },
+        { "belt": "v.chest_layer_visible && v.leg_layer_visible" }
+      ],
+      "is_hurt_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "on_fire_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "overlay_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      }
+    },
+    "controller.render.player.map": {
+      "geometry": "Geometry.default",
+      "materials": [ { "*": "Material.default" } ],
+      "textures": [ "Texture.default" ],
+      "part_visibility": [
+        { "*": false },
+        { "head": true },
+        { "hat": true },
+        { "helmet": true }
+      ]
+    }
+  }
+}

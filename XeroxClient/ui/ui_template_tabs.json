@@ -1,0 +1,80 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "common_tabs",
+
+  "tab_image": {
+    "type": "image",
+    "texture": "$xeroxclient_button_texture",
+    "$xeroxclient_button_texture|default": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_button_alpha",
+    "$xeroxclient_button_alpha|default": 0.5,
+    "$xeroxclient_button_color|default": "",
+    "color": "$xeroxclient_button_color"
+  },
+
+  "base_tab": {
+    "$xeroxclient_button_text_color_default|default": "$xeroxclient_ui_theme_button_text_default_color",
+    "$xeroxclient_button_text_color_hover|default": "$xeroxclient_ui_theme_button_text_hover_color",
+    "$xeroxclient_button_text_color_locked|default": "$xeroxclient_ui_theme_button_text_locked_color",
+    "$xeroxclient_button_text_color_pressed|default": "$xeroxclient_ui_theme_button_text_pressed_color",
+    "$xeroxclient_button_text_color_locked|default": "$xeroxclient_ui_theme_button_text_locked_color",
+    
+    "$xeroxclient_button_color_default|default": "$xeroxclient_ui_theme_dark_button_default_color",
+    "$xeroxclient_button_color_hover|default": "$xeroxclient_ui_theme_button_hover_color",
+    "$xeroxclient_button_color_pressed|default": "$xeroxclient_ui_theme_button_pressed_color",
+    "$xeroxclient_button_color_locked|default": "$xeroxclient_ui_theme_button_locked_color"
+  },
+
+  "base_tab/$tab_view_binding_name/unchecked": {
+    "$xeroxclient_button_color": "$xeroxclient_button_color_default",
+    "$text_color": "$xeroxclient_button_text_color_default",
+    "$secondary_text_color": "$xeroxclient_button_text_color_default"
+  },
+
+  "base_tab/$tab_view_binding_name/unchecked_hover": {
+    "$xeroxclient_button_color": "$xeroxclient_button_color_hover",
+    "$text_color": "$xeroxclient_button_text_color_hover",
+    "$secondary_text_color": "$xeroxclient_button_text_color_hover"
+  },
+
+  "base_tab/$tab_view_binding_name/unchecked_locked": {
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked",
+    "$text_color": "$xeroxclient_button_text_color_locked",
+    "$secondary_text_color": "$xeroxclient_button_text_color_locked"
+  },
+
+  "base_tab/$tab_view_binding_name/unchecked_locked_hover": {
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked",
+    "$text_color": "$xeroxclient_button_text_color_locked",
+    "$secondary_text_color": "$xeroxclient_button_text_color_locked"
+  },
+
+  "base_tab/$tab_view_binding_name/checked": {
+    "$xeroxclient_button_color": "$xeroxclient_button_color_pressed",
+    "$text_color": "$xeroxclient_button_text_color_pressed",
+    "$secondary_text_color": "$xeroxclient_button_text_color_pressed"
+  },
+
+  "base_tab/$tab_view_binding_name/checked_hover": {
+    "$xeroxclient_button_color": "$xeroxclient_button_color_hover",
+    "$text_color": "$xeroxclient_button_text_color_hover",
+    "$secondary_text_color": "$xeroxclient_button_text_color_hover"
+  },
+
+  "base_tab/$tab_view_binding_name/checked_locked": {
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked",
+    "$text_color": "$xeroxclient_button_text_color_locked",
+    "$secondary_text_color": "$xeroxclient_button_text_color_locked"
+  },
+
+  "base_tab/$tab_view_binding_name/checked_locked_hover": {
+    "$xeroxclient_button_color": "$xeroxclient_button_color_locked",
+    "$text_color": "$xeroxclient_button_text_color_locked",
+    "$secondary_text_color": "$xeroxclient_button_text_color_locked"
+  }
+}

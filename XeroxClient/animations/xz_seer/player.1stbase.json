@@ -1,0 +1,16 @@
+{
+	"format_version": "1.8.0",
+	"animations": {
+		"animation.player.1stbase": {
+			"animation_length": 10.0,
+			"loop": true,
+			"bones": {
+				"rIghtItem": {
+					"position": [ 3.5, -7.5, 2.8 ],
+					"rotation": [ -12.0, 15.0, -15.0 ],
+					"scale": 0.775
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,293 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "Greninja:mod_menu_page",
+  "page_base": {
+    "type": "image",
+    "size": [138, "100%"],
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.7,
+    "controls": [
+      {
+        "scrolling@common.scrolling_panel": {
+          "size": ["100% - 25px", "100% - 25px"],
+          "$allow_scrolling_even_when_content_fits": false,
+          "$show_background": false,
+          "$scrolling_content": "Greninja:mod_menu_page.page_content"
+        }
+      }
+    ]
+  },
+
+  "text_setup": {
+    "type": "label",
+    "font_type": "Robot-Bold"
+  },
+
+  "padding": {
+    "type": "panel",
+    "size": [2, 2]
+  },
+
+  "page_content": {
+    "type": "stack_panel",
+    "size": ["100%", "100%c"],
+    "controls": [
+      { "p0@Greninja:mod_menu_page.padding": {} },
+      {
+        "text_1@Greninja:mod_menu_page.text_setup": {
+          "text": "mod.chatpanel.size.setting"
+        }
+      },
+      {
+        "mod_chat_x_size@Greninja:mod_menu_common.slider": {
+          "$slider_value_expression": "((#slider_value + $chat_panel_width)*10)",
+          "$source_control_name": "mod_chat_x_size",
+          "$value_0_text": "Width: 0%%",
+          "$value_1_text": "Width: 1.25%%",
+          "$value_2_text": "Width: 2.5%%",
+          "$value_3_text": "Width: 3.75%%",
+          "$value_4_text": "Width: 5%%",
+          "$value_5_text": "Width: 6.25%%",
+          "$value_6_text": "Width: 7.5%%",
+          "$value_7_text": "Width: 8.75%%",
+          "$value_8_text": "Width: 10%%",
+          "$value_9_text": "Width: 11.25%%",
+          "$value_10_text": "Width: 12.5%%",
+          "$value_11_text": "Width: 13.75%%",
+          "$value_12_text": "Width: 15%%",
+          "$value_13_text": "Width: 16.25%%",
+          "$value_14_text": "Width: 17.5%%",
+          "$value_15_text": "Width: 18.75%%",
+          "$value_16_text": "Width: 20%%",
+          "$value_17_text": "Width: 21.25%%",
+          "$value_18_text": "Width: 22.5%%",
+          "$value_19_text": "Width: 23.75%%",
+          "$value_20_text": "Width: 25%%",
+          "$value_21_text": "Width: 26.25%%",
+          "$value_22_text": "Width: 27.5%%",
+          "$value_23_text": "Width: 28.75%%",
+          "$value_24_text": "Width: 30%%",
+          "$value_25_text": "Width: 31.25%%",
+          "$value_26_text": "Width: 32.5%%",
+          "$value_27_text": "Width: 33.75%%",
+          "$value_28_text": "Width: 35%%",
+          "$value_29_text": "Width: 36.25%%",
+          "$value_30_text": "Width: 37.5%%",
+          "$value_31_text": "Width: 38.75%%",
+          "$value_32_text": "Width: 40%%",
+          "$value_33_text": "Width: 41.25%%",
+          "$value_34_text": "Width: 42.5%%",
+          "$value_35_text": "Width: 43.75%%",
+          "$value_36_text": "Width: 45%%",
+          "$value_37_text": "Width: 46.25%%",
+          "$value_38_text": "Width: 47.5%%",
+          "$value_39_text": "Width: 48.75%%",
+          "$value_40_text": "Width: 50%%",
+          "property_bag": {
+            "#slider_steps": 41
+          }
+        }
+      },
+      {
+        "mod_chat_y_size@Greninja:mod_menu_common.slider": {
+          "$slider_value_expression": "((#slider_value + $chat_panel_height)*10)",
+          "$source_control_name": "mod_chat_y_size",
+          "$value_0_text": "Height: 0%%",
+          "$value_1_text": "Height: 5%%",
+          "$value_2_text": "Height: 10%%",
+          "$value_3_text": "Height: 15%%",
+          "$value_4_text": "Height: 20%%",
+          "$value_5_text": "Height: 25%%",
+          "$value_6_text": "Height: 30%%",
+          "$value_7_text": "Height: 35%%",
+          "$value_8_text": "Height: 40%%",
+          "$value_9_text": "Height: 45%%",
+          "$value_10_text": "Height: 50%%",
+          "$value_11_text": "Height: 55%%",
+          "$value_12_text": "Height: 60%%",
+          "$value_13_text": "Height: 65%%",
+          "$value_14_text": "Height: 70%%",
+          "$value_15_text": "Height: 75%%",
+          "$value_16_text": "Height: 80%%",
+          "$value_17_text": "Height: 85%%",
+          "$value_18_text": "Height: 90%%",
+          "$value_19_text": "Height: 95%%",
+          "$value_20_text": "Height: 100%%",
+          "property_bag": {
+            "#slider_steps": 21
+          }
+        }
+      },
+      { "p1@Greninja:mod_menu_page.padding": {} },
+      {
+        "text_2@Greninja:mod_menu_page.text_setup": {
+          "text": "mod.invhud.position.setting"
+        }
+      },
+      {
+        "mod:inv_hud_x_offset@Greninja:mod_menu_common.slider": {
+          "$slider_value_expression": "((#slider_value + $inv_hud_x_offset)*10)",
+          "$source_control_name": "mod:inv_hud_x_offset",
+          "$value_0_text": "X Offset: 0%%",
+          "$value_1_text": "X Offset: 2%%",
+          "$value_2_text": "X Offset: 4%%",
+          "$value_3_text": "X Offset: 6%%",
+          "$value_4_text": "X Offset: 8%%",
+          "$value_5_text": "X Offset: 10%%",
+          "$value_6_text": "X Offset: 12%%",
+          "$value_7_text": "X Offset: 14%%",
+          "$value_8_text": "X Offset: 16%%",
+          "$value_9_text": "X Offset: 18%%",
+          "$value_10_text": "X Offset: 20%%",
+          "$value_11_text": "X Offset: 22%%",
+          "$value_12_text": "X Offset: 24%%",
+          "$value_13_text": "X Offset: 26%%",
+          "$value_14_text": "X Offset: 28%%",
+          "$value_15_text": "X Offset: 30%%",
+          "$value_16_text": "X Offset: 32%%",
+          "$value_17_text": "X Offset: 34%%",
+          "$value_18_text": "X Offset: 36%%",
+          "$value_19_text": "X Offset: 38%%",
+          "$value_20_text": "X Offset: 40%%",
+          "$value_21_text": "X Offset: 42%%",
+          "$value_22_text": "X Offset: 44%%",
+          "$value_23_text": "X Offset: 46%%",
+          "$value_24_text": "X Offset: 48%%",
+          "$value_25_text": "X Offset: 50%%",
+          "$value_26_text": "X Offset: 52%%",
+          "$value_27_text": "X Offset: 54%%",
+          "$value_28_text": "X Offset: 56%%",
+          "$value_29_text": "X Offset: 58%%",
+          "$value_30_text": "X Offset: 60%%",
+          "$value_31_text": "X Offset: 62%%",
+          "$value_32_text": "X Offset: 64%%",
+          "$value_33_text": "X Offset: 66%%",
+          "$value_34_text": "X Offset: 68%%",
+          "$value_35_text": "X Offset: 70%%",
+          "$value_36_text": "X Offset: 72%%",
+          "$value_37_text": "X Offset: 74%%",
+          "$value_38_text": "X Offset: 76%%",
+          "$value_39_text": "X Offset: 78%%",
+          "$value_40_text": "X Offset: 80%%",
+          "$value_41_text": "X Offset: 82%%",
+          "$value_42_text": "X Offset: 84%%",
+          "$value_43_text": "X Offset: 86%%",
+          "$value_44_text": "X Offset: 88%%",
+          "$value_45_text": "X Offset: 90%%",
+          "$value_46_text": "X Offset: 92%%",
+          "$value_47_text": "X Offset: 94%%",
+          "$value_48_text": "X Offset: 96%%",
+          "$value_49_text": "X Offset: 98%%",
+          "$value_50_text": "X Offset: 100%%",
+          "property_bag": {
+            "#slider_steps": 51
+          }
+        }
+      },
+      {
+        "mod:inv_hud_y_offset@Greninja:mod_menu_common.slider": {
+          "$slider_value_expression": "((#slider_value + $inv_hud_y_offset)*10)",
+          "$source_control_name": "mod:inv_hud_y_offset",
+          "$value_0_text": "Y Offset: 0%%",
+          "$value_1_text": "Y Offset: 2%%",
+          "$value_2_text": "Y Offset: 4%%",
+          "$value_3_text": "Y Offset: 6%%",
+          "$value_4_text": "Y Offset: 8%%",
+          "$value_5_text": "Y Offset: 10%%",
+          "$value_6_text": "Y Offset: 12%%",
+          "$value_7_text": "Y Offset: 14%%",
+          "$value_8_text": "Y Offset: 16%%",
+          "$value_9_text": "Y Offset: 18%%",
+          "$value_10_text": "Y Offset: 20%%",
+          "$value_11_text": "Y Offset: 22%%",
+          "$value_12_text": "Y Offset: 24%%",
+          "$value_13_text": "Y Offset: 26%%",
+          "$value_14_text": "Y Offset: 28%%",
+          "$value_15_text": "Y Offset: 30%%",
+          "$value_16_text": "Y Offset: 32%%",
+          "$value_17_text": "Y Offset: 34%%",
+          "$value_18_text": "Y Offset: 36%%",
+          "$value_19_text": "Y Offset: 38%%",
+          "$value_20_text": "Y Offset: 40%%",
+          "$value_21_text": "Y Offset: 42%%",
+          "$value_22_text": "Y Offset: 44%%",
+          "$value_23_text": "Y Offset: 46%%",
+          "$value_24_text": "Y Offset: 48%%",
+          "$value_25_text": "Y Offset: 50%%",
+          "$value_26_text": "Y Offset: 52%%",
+          "$value_27_text": "Y Offset: 54%%",
+          "$value_28_text": "Y Offset: 56%%",
+          "$value_29_text": "Y Offset: 58%%",
+          "$value_30_text": "Y Offset: 60%%",
+          "$value_31_text": "Y Offset: 62%%",
+          "$value_32_text": "Y Offset: 64%%",
+          "$value_33_text": "Y Offset: 66%%",
+          "$value_34_text": "Y Offset: 68%%",
+          "$value_35_text": "Y Offset: 70%%",
+          "$value_36_text": "Y Offset: 72%%",
+          "$value_37_text": "Y Offset: 74%%",
+          "$value_38_text": "Y Offset: 76%%",
+          "$value_39_text": "Y Offset: 78%%",
+          "$value_40_text": "Y Offset: 80%%",
+          "$value_41_text": "Y Offset: 82%%",
+          "$value_42_text": "Y Offset: 84%%",
+          "$value_43_text": "Y Offset: 86%%",
+          "$value_44_text": "Y Offset: 88%%",
+          "$value_45_text": "Y Offset: 90%%",
+          "$value_46_text": "Y Offset: 92%%",
+          "$value_47_text": "Y Offset: 94%%",
+          "$value_48_text": "Y Offset: 96%%",
+          "$value_49_text": "Y Offset: 98%%",
+          "$value_50_text": "Y Offset: 100%%",
+          "property_bag": {
+            "#slider_steps": 51
+          }
+        }
+      },
+      {
+        "hor_stack": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": ["100%c", "100%cm"],
+          "controls": [
+            {
+              "type_1@Greninja:mod_menu_common.normal_toggle": {
+                "$button_text": "mod.invhud.type.hor",
+                "size": [54, 18],
+                "$radio_toggle_group": true,
+                "$toggle_name": "inv_hud_type",
+                "$toggle_group_default_selected": "$invhud_type",
+                "$toggle_view_binding_name": "mod_horinvhud",
+                "$toggle_group_forced_index": 0
+              }
+            },
+            {
+              "type_2@Greninja:mod_menu_common.normal_toggle": {
+                "$button_text": "mod.invhud.type.ver",
+                "size": [54, 18],
+                "$radio_toggle_group": true,
+                "$toggle_name": "inv_hud_type",
+                "$toggle_group_default_selected": "$invhud_type",
+                "$toggle_view_binding_name": "mod_verinvhud",
+                "$toggle_group_forced_index": 1
+              }
+            }
+          ]
+        }
+      },
+      {
+        "inv_slot_num@Greninja:mod_menu_common.normal_toggle": {
+          "$button_text": "mod.invhud.slotnum",
+          "$toggle_view_binding_name": "mod_invhudslotnum",
+          "$toggle_default_state": "$invhudslotnum_enabled"
+        }
+      },
+      { "p2@Greninja:mod_menu_page.padding": {} }
+    ]
+  }
+}

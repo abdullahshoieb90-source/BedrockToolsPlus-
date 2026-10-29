@@ -1,0 +1,229 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "play_animation",
+
+  "section_content_alpha": {
+    "anim_type": "wait",
+    "duration": 0.3,
+    "reset_event": "button.tab_anim"
+  },
+
+  "background_blur_out_animation_pop": {
+    "anim_type": "alpha",
+    "duration": 0.0,
+    "from": 1.0,
+    "to": 0.0,
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "background_blur_enter_animation": {
+    "anim_type": "alpha",
+    "duration": 0.0,
+    "from": 0.0,
+    "to": 1.0,
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "background_out_animation": {
+    "anim_type": "alpha",
+    "duration": 0.0,
+    "from": 1.0,
+    "to": 0.0,
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "background_out_animation_pop": {
+    "anim_type": "alpha",
+    "duration": 0.25,
+    "from": 1.0,
+    "to": 0.0,
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "background_enter_animation": {
+    "anim_type": "alpha",
+    "duration": 0.25,
+    "from": 0.0,
+    "to": 1.0,
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "background_enter_animation_pop": {
+    "anim_type": "alpha",
+    "duration": 0.0,
+    "from": 1.0,
+    "to": 1.0,
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "tab_button_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 2, 0 ],
+    "to": [ "-20%", 0 ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "tab_button_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 2, 0 ],
+    "to": [ "-20%", 0 ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "tab_button_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ "-20%", 0 ],
+    "to": [ 2, 0 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "tab_button_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ "-20%", 0 ],
+    "to": [ 2, 0 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "tab_content_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, 0 ],
+    "to": [ "80%", 0 ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "tab_content_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, 0 ],
+    "to": [ "80%", 0 ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "tab_content_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ "80%", 0 ],
+    "to": [ 0, 0 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "tab_content_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ "80%", 0 ],
+    "to": [ 0, 0 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "quick_button_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "100% - 22px" ],
+    "to": [ 0, "100%" ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "quick_button_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "100% - 22px" ],
+    "to": [ 0, "100%" ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "quick_button_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "100%" ],
+    "to": [ 0, "100% - 22px" ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "quick_button_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "100%" ],
+    "to": [ 0, "100% - 22px" ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "quick_button_background_blur_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "-100% + 22px" ],
+    "to": [ 0, "-100%" ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "quick_button_background_blur_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "-100% + 22px" ],
+    "to": [ 0, "-100%" ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "quick_button_background_blur_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "-100%" ],
+    "to": [ 0, "-100% + 22px" ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "quick_button_background_blur_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.6,
+    "from": [ 0, "-100%" ],
+    "to": [ 0, "-100% + 22px" ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  }
+}

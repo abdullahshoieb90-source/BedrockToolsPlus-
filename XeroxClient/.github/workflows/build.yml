@@ -1,0 +1,44 @@
+name: Build resource pack
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  package:
+    name: Package .mcpack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate manifest.json
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          sys.path.insert(0, "tools")
+          from package import read_manifest
+          m = read_manifest()
+          print("Pack:", m["header"]["name"], "v" + ".".join(map(str, m["header"]["version"])))
+          for key in ("header", "modules"):
+              assert key in m, f"manifest missing {key}"
+          assert m["modules"][0]["type"] == "resources", "module is not a resource module"
+          print("manifest.json OK")
+          PY
+
+      - name: Build package
+        run: python tools/package.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XeroxClient-mcpack
+          path: dist/*.mcpack
+          if-no-files-found: error

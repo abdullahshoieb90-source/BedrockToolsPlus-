@@ -1,0 +1,26 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "xeroxclient_style_hud_content",
+  "xeroxclient_style_hud_root_panel": {
+    "type": "panel",
+    "controls": [/*
+      {
+        "chat_panel@hud.chat_panel": {
+          "size": ["40%", "0px"],
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left",
+          "offset": [1, -26],
+        }
+      },*/
+      //{ "exp_progress_bar_and_hotbar@xeroxclient_style_exp_progress_bar_and_hotbar_content.exp_progress_bar_and_hotbar": {} },
+      //{ "button_panel@xeroxclient_keystroke_display.button_panel": {} },
+      { "player_position@xeroxclient_style_player_position.player_position": {} }
+      //{ "player_renderer@xeroxclient_style_paperdoll.hud_player_renderer": {} }
+    ]
+  }
+}

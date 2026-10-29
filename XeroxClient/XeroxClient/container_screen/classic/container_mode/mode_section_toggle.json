@@ -1,0 +1,33 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "inv_mode_section_toggle",
+  "normal_mode_icon": {
+    "type": "image",
+    "size": [20, 20],
+    "texture": "textures/ui/Xerox/inventory/normal_mode"
+  },
+  "auto_place_mode_icon": {
+    "type": "image",
+    "size": [20, 20],
+    "texture": "textures/ui/Xerox/inventory/auto_place_mode"
+  },
+  "drop_one_mode_icon": {
+    "type": "image",
+    "size": [20, 20],
+    "texture": "textures/ui/Xerox/inventory/drop_one_mode"
+  },
+
+  "mode_select_tab@common_tabs.tab_right": {
+    "size": [25, 25],
+    "$toggle_name": "inv_mode_selected_navigation_tab",
+    "$radio_toggle_group": true
+  },
+  "mode_select_tab_normal_mode@mode_select_tab": {
+    "$toggle_default_state": true
+  }
+}

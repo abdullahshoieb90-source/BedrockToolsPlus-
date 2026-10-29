@@ -1,0 +1,138 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "profile",
+
+  "offer_info_background": {
+    "$image": "textures/ui/Xerox/Black",
+    "alpha": 0.65
+  },
+
+  "bottom_dialog_panel": {
+    "$image": "textures/ui/Xerox/White"
+  },
+
+  "general_text_field": {
+    "$font_type|default": "$global_font_type"
+  },
+
+  "common_icon": {
+    "$icon_image|default": "textures/ui/Xerox/White"
+  },
+
+  "skin_model_renderer": {
+    "camera_tilt_degrees": 0,
+    "starting_rotation": 0
+  },
+
+  "skin_retry_button": {},
+
+  "debug_skin_view/skin_name": {
+    "font_type": "$global_font_type"
+  },
+
+  "persona_preset_main_panel": {},
+  "persona_main_preset_panel": {},
+  "preset_arrow_button_left_panel": {},
+  "preset_arrow_button_right_panel": {},
+  "edit_appearance_error_button": {},
+
+  "edit_appearance_error_button_content": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_button_locked_color",
+    "alpha": "$xeroxclient_ui_theme_button_locked_alpha",
+    "controls": [
+      {
+        "marketplace_button_label": {
+          "layer": 9,
+          "type": "label",
+          "text": "store.disabledOnBeta",
+          "font_type": "$global_font_type",
+          "color": "$xeroxclient_ui_theme_button_text_locked_color"
+        }
+      }
+    ]
+  },
+
+  "selected_persona_skin_text_display": {
+    "$title_font_type": "$global_font_type"
+  },
+
+  "title_bar": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "title_content_panel_background": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "offer_info_background": {
+    "$image": "textures/ui/Xerox/White"
+  },
+
+  "bottom_dialog_panel": {
+    "$image": "textures/ui/Xerox/White"
+  },
+
+  "popup_toast": {
+    "$toast_font_type": "$global_font_type"
+  },
+
+  "differences_common_detail_image": {
+    "$description_image|default": "textures/ui/Xerox/White"
+  },
+
+  "modal_popup_background": {
+    "$image|default": "textures/ui/Xerox/White"
+  },
+
+  "differences_left_details": {
+    "$details_font_type|default": "$global_font_type"
+  },
+
+  "modal_window_input_blocker": {
+    "$image|default": "textures/ui/Xerox/White"
+  },
+
+  "popup_frame": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_popup_dialog_background_alpha",
+    "color": "$xeroxclient_ui_theme_popup_dialog_background_color"
+  },
+
+  "delete_popup_dialog_message": {
+    "font_type": "$global_font_type"
+  },
+
+  "create_persona_choice_checked_image": {
+    "size": [ 2, 10 ],
+    "$image": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_radio_checked_color",
+    "alpha": "$xeroxclient_ui_theme_radio_checked_alpha"
+  },
+
+  "create_persona_choice_unchecked_image": {
+    "size": [ 2, 10 ],
+    "$image": "textures/ui/Xerox/White",
+    "color": "$xeroxclient_ui_theme_radio_unchecked_color",
+    "alpha": "$xeroxclient_ui_theme_radio_unchecked_alpha"
+  },
+
+  "create_persona_choice_detail": {
+    "$font_type": "$global_font_type"
+  },
+
+  "profile_screen_background_content": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_popup_dialog_background_alpha",
+    "color": "$xeroxclient_ui_theme_popup_dialog_background_color"
+  },
+
+  "profile_screen": {
+    "$screen_bg_content": "common.empty_panel"
+  }
+}

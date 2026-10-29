@@ -1,0 +1,53 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "music_player_screen_animation",
+  "duration_bar": {
+    "anim_type": "offset",
+    "duration": "$music_duration",
+    "from": [ "-100%", 0 ],
+    "to": [ 0, 0 ],
+    "next": "@music_player_screen_animation.duration_bar_in"
+  },
+
+  "duration_bar_in": {
+    "anim_type": "wait",
+    "duration": 0,
+    "next": "@music_player_screen_animation.duration_bar"
+  },
+
+  "duration_bar_show": {
+    "anim_type": "size",
+    "duration": 0,
+    "from": [ 0, 3 ],
+    "to": [ "100%", 3 ],
+    "next": "@music_player_screen_animation.duration_bar_wait"
+  },
+
+  "duration_bar_wait": {
+    "anim_type": "wait",
+    "duration": "$music_duration",
+    "next": "@music_player_screen_animation.duration_bar_reset",
+    "reset_event": "$music_name"
+  },
+
+  "duration_bar_reset": {
+    "anim_type": "size",
+    "duration": 0,
+    "from": [ 0, 3 ],
+    "to": [ 0, 3 ],
+    "end_event": "$music_name"
+  },
+
+  "duration_bar_panel_show": {
+    "anim_type": "size",
+    "duration": 0,
+    "from": [ 0, 3 ],
+    "to": [ "100%", 3 ],
+    "play_event": "$music_name"
+  }
+}

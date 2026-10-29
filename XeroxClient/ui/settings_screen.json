@@ -1,0 +1,102 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "settings",
+  "settings_screen_base": {
+    "$screen_animations": [
+      "@common.screen_exit_animation_push_fade",
+      "@common.screen_exit_animation_pop_fade",
+      "@common.screen_entrance_animation_push_fade",
+      "@common.screen_entrance_animation_pop_fade"
+    ],
+    "absorbs_input": false,
+    "render_game_behind": true
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane/selector_group_label_1": {
+    "ignored": true
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane/language_button": {
+    "ignored": false
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane/debug_button": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane/ui_debug_button": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane/marketplace_debug_button": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane/flighting_debug_button": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane/automation_button": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "section_content_panels/general_and_controls_sections/language_section": {
+    "ignored": false
+  },
+
+  "section_content_panels/general_and_controls_sections/debug_section": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "section_content_panels/general_and_controls_sections/ui_debug_section": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "section_content_panels/general_and_controls_sections/marketplace_debug_section": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "section_content_panels/general_and_controls_sections/flighting_debug_section": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "section_content_panels/general_and_controls_sections/automation_section": {
+    "ignored": "(not $show_dev_button)"
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane": {
+    "modifications": [
+      {
+        "control_name": "spacer_1",
+        "operation": "insert_after",
+        "value": [
+          {
+            "select_group_text_1@how_to_play_common.header": {
+              "$text": "$controls_section_header"
+            }
+          }
+        ]
+      },
+      {
+        "control_name": "spacer_2",
+        "operation": "insert_after",
+        "value": [
+          {
+            "select_group_text_2@how_to_play_common.header": {
+              "$text": "$general_section_header"
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "selector_stack_panel/controls_and_settings_selector_pane/selector_group_label_2": {
+    "ignored": true
+  }
+}

@@ -1,0 +1,106 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "chat_coordinates_panel",
+  
+  "coordinate_panel": {
+    "type": "stack_panel",
+    "size": ["100%c", 20],
+    "orientation": "horizontal",
+    "$radio_stack_item_element_size": ["100%c", 16],
+    "$enabled|default": true,
+    "$option_enabled_binding_name|default": "",
+    "bindings": [
+      {
+        "binding_name": "#chat_coordinate_dropdown_visible",
+        "binding_name_override": "#visible",
+        "binding_type": "global"
+      }
+    ],
+    "controls": [
+      { "radio_content@chat_coordinates_panel.coordinate_radio_content": {} },
+      {
+        "text_area": {
+          "type": "image",
+          "size": [ "100%c + 14px", 20 ],
+          "min_size": [ 160, 20 ],
+          "texture": "textures/ui/Xerox/Black",
+          "alpha": 0.4,
+          "layer": 6,
+          "controls": [
+            {
+              "coordinates_text": {
+                "type": "label",
+                "size": [ "default", 10 ],
+                "text": "#text",
+                "layer": 7,
+                "font_type": "$global_font_type",
+                "bindings": [
+                  {
+                    "binding_name": "#coordinates_text",
+                    "binding_name_override": "#text"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "copy@chat_main_screen.copy_coordinate_button": {
+          "size": [ 20, 20 ]
+        }
+      },
+      {
+        "icon@common.gamepad_helper_y": {
+          "$gamepad_helper_size": [ 20, 20 ],
+          "$gamepad_helper_icon_size": [ 20, 20 ],
+          "$gamepad_helper_icon_image_size": [ 20, 20 ],
+          "$icon_description_bind_type": "none",
+          "$gamepad_helper_visible_binding_name": "#is_using_gamepad"
+        }
+      },
+      {
+        "paste@chat_main_screen.paste_button": {
+          "size": [ 20, 20 ]
+        }
+      }
+    ]
+  },
+  "coordinate_radio_content": {
+    "type": "panel",
+    "size": [ 100, 20 ],
+    "$focus_id": "coordinate_dropdown_focus_id",
+    "controls": [
+      {
+        "my_position@settings_common.radio_item_with_label_and_content": {
+          "$toggle_state_binding_name": "#coordinate_type_position",
+          "$radio_label_text": "chat.coordinateTypeFacing",
+          "bindings": [
+            {
+              "binding_name": "#coordinate_type_facing",
+              "binding_name_override": "#visible"
+            }
+          ]
+        }
+      },
+      {
+        "block_position@settings_common.radio_item_with_label_and_content": {
+          "$toggle_state_binding_name": "#coordinate_type_facing",
+          "$radio_label_text": "chat.coordinateTypePosition",
+          "bindings": [
+            {
+              "binding_name": "#coordinate_type_position",
+              "binding_name_override": "#visible"
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+}

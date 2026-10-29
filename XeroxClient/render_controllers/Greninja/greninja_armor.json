@@ -1,0 +1,258 @@
+{
+  "format_version": "1.10.0",
+  "render_controllers": {
+    "controller.render.greninja_armor.helmet": {
+      "arrays": {
+        "textures": {
+          "array.helmet": [
+            "texture.leather_armor",
+            "texture.chain_armor",
+            "texture.iron_armor",
+            "texture.diamond_armor",
+            "texture.gold_armor",
+            "texture.elytra_armor",
+            "texture.turtle_armor",
+            "texture.netherite_armor"
+          ]
+        }
+      },
+      "geometry": "geometry.armor",
+      "materials": [ { "*": "v.is_enchanted_helmet ? material.armor : material.armor_enchanted" }
+      ],
+      "textures": [
+        "array.helmet[q.armor_texture_slot(0)]",
+        "texture.enchanted"
+      ],
+      "part_visibility": [
+        {
+          "*": false
+        },
+        {
+          "head": true
+        },
+        {
+          "hat": true
+        }
+      ],
+      "color": {
+        "r": "query.armor_color_slot(0, 0)",
+        "g": "query.armor_color_slot(0, 1)",
+        "b": "query.armor_color_slot(0, 2)",
+        "a": "1.0"
+      },
+      "is_hurt_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "on_fire_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "overlay_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      }
+    },
+    "controller.render.greninja_armor.chestplate": {
+      "arrays": {
+        "textures": {
+          "array.chestplate": [
+            "texture.leather_armor",
+            "texture.chain_armor",
+            "texture.iron_armor",
+            "texture.diamond_armor",
+            "texture.gold_armor",
+            "texture.elytra_armor",
+            "texture.turtle_armor",
+            "texture.netherite_armor"
+          ]
+        }
+      },
+      "geometry": "q.armor_texture_slot(1) == 5 ? geometry.armor_elytra : geometry.armor",
+      "materials": [
+        {
+          "*": "v.is_enchanted_chestplate ? material.armor : material.armor_enchanted"
+        }
+      ],
+      "textures": [
+        "array.chestplate[q.armor_texture_slot(1)]",
+        "texture.enchanted"
+      ],
+      "part_visibility": [
+        {
+          "*": false
+        },
+        {
+          "body": true
+        },
+        {
+          "leftarm": true
+        },
+        {
+          "rightarm": true
+        },
+        {
+          "left_wing": true
+        },
+        {
+          "right_wing": true
+        }
+      ],
+      "color": {
+        "r": "query.armor_color_slot(1, 0)",
+        "g": "query.armor_color_slot(1, 1)",
+        "b": "query.armor_color_slot(1, 2)",
+        "a": "1.0"
+      },
+      "is_hurt_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "on_fire_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "overlay_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      }
+    },
+    "controller.render.greninja_armor.leggings": {
+      "arrays": {
+        "textures": {
+          "array.leggings": [
+            "texture.leather_leggings_armor",
+            "texture.chain_leggings_armor",
+            "texture.iron_leggings_armor",
+            "texture.diamond_leggings_armor",
+            "texture.gold_leggings_armor",
+            "texture.default",
+            "texture.default",
+            "texture.netherite_leggings_armor"
+          ]
+        }
+      },
+      "geometry": "geometry.armor_leggings",
+      "materials": [
+        {
+          "*": "v.is_enchanted_leggings ? material.armor : material.armor_enchanted"
+        }
+      ],
+      "textures": [
+        "array.leggings[q.armor_texture_slot(2)]",
+        "texture.enchanted"
+      ],
+      "part_visibility": [
+        {
+          "*": false
+        },
+        {
+          "body": true
+        },
+        {
+          "leftleg": true
+        },
+        {
+          "rightleg": true
+        }
+      ] ,
+      "color": {
+        "r": "query.armor_color_slot(2, 0)",
+        "g": "query.armor_color_slot(2, 1)",
+        "b": "query.armor_color_slot(2, 2)",
+        "a": "1.0"
+      },
+      "is_hurt_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "on_fire_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "overlay_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      }
+    },
+    "controller.render.greninja_armor.boots": {
+      "arrays": {
+        "textures": {
+          "array.boots": [
+            "texture.leather_armor",
+            "texture.chain_armor",
+            "texture.iron_armor",
+            "texture.diamond_armor",
+            "texture.gold_armor",
+            "texture.elytra_armor",
+            "texture.turtle_armor",
+            "texture.netherite_armor"
+          ]
+        }
+      },
+      "geometry": "geometry.armor",
+      "materials": [
+        {
+          "*": "v.is_enchanted_boots ? material.armor : material.armor_enchanted"
+        }
+      ],
+      "textures": [
+        "array.boots[q.armor_texture_slot(3)]",
+        "texture.enchanted"
+      ],
+      "part_visibility": [
+        {
+          "*": false
+        },
+        {
+          "leftleg": true
+        },
+        {
+          "rightleg":true
+        }
+      ] ,
+      "color": {
+        "r": "query.armor_color_slot(3, 0)",
+        "g": "query.armor_color_slot(3, 1)",
+        "b": "query.armor_color_slot(3, 2)",
+        "a": "1.0"
+      },
+      "is_hurt_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "on_fire_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      },
+      "overlay_color": {
+        "r": "v.hurt_color_r_custom",
+        "g": "v.hurt_color_g_custom",
+        "b": "v.hurt_color_b_custom",
+        "a": "v.hurt_color_blend = v.hurt_time ? math.min((v.hurt_color_blend+v.hurt_color_enter_blend_speed), v.hurt_color_opacity) : math.max((v.hurt_color_blend-v.hurt_color_out_blend_speed), 0.0); return v.hurt_color_blend;"
+      }
+    }
+  }
+}

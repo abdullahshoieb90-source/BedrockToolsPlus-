@@ -1,0 +1,64 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "format_version": "1.10.0",
+  "animation_controllers": {
+    "controller.animation.greninja_r_value": {
+      "initial_state": "r1",
+      "states": {
+        "r1": {
+          "on_entry": ["v.r_value = math.min(v.r_value+0.005, 1);"],
+          "transitions": [{ "r2": "v.r_value == 1.0" }]
+        },
+        "r2": {
+          "on_entry": ["v.r_value = math.max(v.r_value-0.005, 0);"],
+          "transitions": [{ "r2": "v.r_value == 0.0" }]
+        }
+      }
+    },
+    "controller.animation.greninja_g_value": {
+      "initial_state": "g0",
+      "states": {
+        "g0": {
+          "transitions": [{ "g1": "v.r_value == 1.0" }]
+        },
+        "g1": {
+          "on_entry": ["v.g_value = math.min(v.g_value+0.005, 1);"],
+          "transitions": [{ "g2": "v.g_value == 1.0" }]
+        },
+        "g2": {
+          "on_entry": ["v.g_value = math.max(v.g_value-0.005, 0);"],
+          "transitions": [{ "g1": "v.g_value == 0.0" }]
+        }
+      }
+    },
+    "controller.animation.greninja_b_value": {
+      "initial_state": "b0",
+      "states": {
+        "b0": {
+          "transitions": [{ "b1": "v.g_value == 1.0" }]
+        },
+        "b1": {
+          "on_entry": ["v.b_value = math.min(v.b_value+0.005, 1);"],
+          "transitions": [{ "b2": "v.b_value == 1.0" }]
+        },
+        "b2": {
+          "on_entry": ["v.b_value = math.max(v.b_value-0.005, 0);"],
+          "transitions": [{ "b1": "v.b_value == 0.0" }]
+        }
+      }
+    },
+    "controller.animation.greninja_rgb_value": {
+      "initial_state": "default",
+      "states": {
+        "default": {
+          "animations": ["r", "g", "b"]
+        }
+      }
+    }
+  }
+}

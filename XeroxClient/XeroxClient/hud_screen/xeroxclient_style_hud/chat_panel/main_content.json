@@ -1,0 +1,101 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "xeroxclient_style_chat_panel_content",
+  "chat_label": {
+    "type": "label",
+    "layer": 31,
+    "text": "#text",
+    "offset": [2, 0],
+    "size": [ "100%", "default" ],
+    "shadow": true,
+    "localize": false,
+    "color": "$chat_text_color",
+    "font_type": "$chat_font_type",
+    "font_scale_factor": "$chat_font_scale_factor",
+    "line_padding": "$chat_line_spacing",
+    "bindings": [
+      {
+        "binding_name": "#chat_text",
+        "binding_name_override": "#text",
+        "binding_type": "collection",
+        "binding_collection_name": "chat_text_grid",
+        "binding_condition": "once"
+      }
+    ]
+  },
+
+  "chat_grid_item": {
+    "type": "panel",
+    "layer": 1,
+    "anchor_from": "bottom_left",
+    "anchor_to": "bottom_left",
+    "size": ["100%", "100%c"],
+    "controls": [
+      {
+        "chat_background": {
+          "type": "image",
+          "anchor_from": "top_left",
+          "anchor_to": "top_left",
+          "texture": "textures/ui/Xerox/image/BlackToTransparent2",
+          "size": "@xeroxclient_style_chat_panel_anims.chat_start_anim",
+          "alpha": "@xeroxclient_style_chat_panel_anims.chat_bg_start_anim",
+          "controls": [
+            {
+              "chat_text@xeroxclient_style_chat_panel_content.chat_label": {
+                "alpha": "@xeroxclient_style_chat_panel_anims.chat_text_wait_anim_0",
+                "propagate_alpha": true,
+                "anchor_from": "left_middle",
+                "anchor_to": "left_middle",
+                "controls": [
+                  {
+                    "text_bar": {
+                      "type": "image",
+                      "size": [1, "100%"],
+                      "texture": "textures/ui/Xerox/White",
+                      "color": "$chat_text_color",
+                      "anchor_from": "top_left",
+                      "anchor_to": "top_right",
+                      "offset": [-2, 0]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "chat_panel_like_je": {
+    "type": "panel",
+    "layer": 3,
+    "size": ["40%", "0px"],
+    "min_size": ["40%", "0px"],
+    "max_size": ["40%", "50%"],
+    "offset": [1, -26],
+    "anchor_from": "bottom_left",
+    "anchor_to": "bottom_left",
+    "controls": [
+      {
+        "stack_panel": {
+          "type": "stack_panel",
+          "anchor_from": "bottom_left",
+          "anchor_to": "bottom_left",
+          "factory": {
+            "name": "chat_item_factory",
+            "max_children_size": 10,
+            "control_ids": {
+              "chat_item": "chat_item@xeroxclient_style_chat_panel_content.chat_grid_item"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,92 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "host_options",
+
+  "button_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "host_main_button": {
+    "bindings": [
+      {
+        "binding_name": "#cheats_on",
+        "binding_name_override": "#enabled"
+      },
+      {
+        "binding_name": "#host_main_button_focus_override_up",
+        "binding_name_override": "#focus_change_up"
+      },
+      {
+        "binding_name": "#host_main_button_focus_override_down",
+        "binding_name_override": "#focus_change_down"
+      }
+    ]
+  },
+
+  "scrolling_panel/background": {
+    "texture": "textures/ui/Xerox/image/BlackToTransparent2",
+    "alpha": 0.9
+  },
+
+  "main_light_button": {
+    "$button_size|default": [ "100%", 25 ]
+  },
+
+  "main_dark_button": {
+    "$button_size|default": [ "100%", 25 ],
+    "$glyph_size": [ "17px", "17px" ]
+  },
+
+  "host_sub_command_grid_item": {
+    "size": ["100%", 25]
+  },
+
+  "host_sub_command_grid_item/host_option_banner": {
+    "$button_content_offset_glyph": [ 4, 0 ],
+    "$button_label_offset": [ 25, 0 ]
+  },
+
+  "return_from_sub_command_button": {
+    "$button_label_offset": [ 25, 0 ],
+    "$button_content_offset_glyph": [ 8.5, 0 ]
+  },
+
+  "player_pic_panel": {
+    "offset": [ 0, 0 ]
+  },
+
+  "player_button_panel": {
+    "size": ["100%-8px", "100%-4px"],
+    "offset": [8, 0]
+  },
+
+  "player_grid_item": {
+    "size": [ "100%", 25 ]
+  },
+
+  "host_friends_tab": {
+    "$button_content_offset_label": [ 25, 0 ],
+    "$button_content_offset_glyph": [ 4, 0 ]
+  },
+
+  "host_teleport_grid_item": {
+    "type": "panel",
+    "size": [ "100%", 25 ]
+  },
+
+  "host_menu_grid_item": {
+    "type": "panel",
+    "size": [ "100%", 25 ]
+  },
+
+  "host_menu_grid_item/host_option_banner": {
+    "$button_content_offset_glyph": [ -10, 0 ],
+    "$glyph_size": [ 8, 8 ],
+    "$button_label_offset": [ 10, 0 ]
+  }
+}

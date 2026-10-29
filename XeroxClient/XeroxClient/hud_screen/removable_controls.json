@@ -1,0 +1,41 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "removable_controls_hud",
+
+  "hor_inv_hud@Greninja:mod_menu_common.removable_control": {
+    "$control_x_size": ["100%-126px", "100%"],
+    "$control_y_size": ["100%", "100%-42px"],
+    "$x_filling_source_control_name": "mod:inv_hud_x_offset",
+    "$y_filling_source_control_name": "mod:inv_hud_y_offset",
+    "$element_content": "inventory_hud_type.horizontal_type",
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "mod_horinvhud",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ]
+  },
+
+  "ver_inv_hud@Greninja:mod_menu_common.removable_control": {
+    "$control_x_size": ["100%-42px", "100%"],
+    "$control_y_size": ["100%", "100%-126px"],
+    "$x_filling_source_control_name": "mod:inv_hud_x_offset",
+    "$y_filling_source_control_name": "mod:inv_hud_y_offset",
+    "$element_content": "inventory_hud_type.vertical_type",
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "mod_verinvhud",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ]
+  }
+}

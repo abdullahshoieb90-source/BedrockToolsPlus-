@@ -1,0 +1,37 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "pack_settings",
+
+  "screen@common.base_screen": {
+    "force_render_below": "$is_pregame",
+    "$screen_content": "pack_settings.main_screen_content",
+    "$screen_bg_content": "xc_common.background_for_pregame_only"
+  },
+
+  "main_screen_content": {
+    "$dialog_background_custom": "dialog_image.form_background",
+    "$close_button_offset": [ 21, 0 ],
+    "max_size": [370, 250]
+  },
+
+  "content_tiering_panel/label_panel/content_tier_label": {
+    "font_type":"$global_font_type"
+  },
+
+  "content_tiering_panel/label_panel/unsupported_content_tier_label": {
+    "font_type":"$global_font_type"
+  },
+
+  "content_tiering_panel/slider_panel/content_tier_slider": {
+    "size": ["100%-10px", 16]
+  },
+
+  "content_tiering_panel/incompatible_label_panel/label": {
+    "font_type":"$global_font_type"
+  }
+}

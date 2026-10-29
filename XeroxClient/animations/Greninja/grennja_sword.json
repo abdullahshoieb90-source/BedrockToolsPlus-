@@ -1,0 +1,147 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "format_version": "1.8.0",
+  "animations": {
+    "animation.greninja_sword.wield": {
+      "loop": true,
+      "bones": {
+        "rightitem": {
+          "rotation": [
+            "c.is_first_person ? -60 : 0.9",
+            "c.is_first_person ? -35",
+            "c.is_first_person ? -70"
+          ],
+          "position": [
+            "c.is_first_person ? 1.5 : 0.5",
+            "c.is_first_person ? 25.5 : 17",
+            "c.is_first_person ? -1.5 : 0.5"
+          ]
+        }
+      }
+    },
+    "animation.first_person.attack_rotation.grennja_sword": {
+      "loop": true,
+      "animation_length": 0.27,
+      "anim_time_update": "v.attack_time*0.27",
+      "bones": {
+        "rightitem": {
+          "rotation": {
+            "0.0": {
+              "post": [0, 0, 0],
+              "lerp_mode": "catmullrom"
+            },
+            "0.03": {
+              "post": [-1, 37.5, -55],
+              "lerp_mode": "catmullrom"
+            },
+            "0.06": {
+              "post": [-6, 42.5, -75],
+              "lerp_mode": "catmullrom"
+            },
+            "0.09": {
+              "post": [-8.95, 42, -75],
+              "lerp_mode": "catmullrom"
+            },
+            "0.12": {
+              "post": [-11, 41.75, -64],
+              "lerp_mode": "catmullrom"
+            },
+            "0.15": {
+              "post": [-14.5, 43.25, -50.75],
+              "lerp_mode": "catmullrom"
+            },
+            "0.18": {
+              "post": [-18.25, 36.75, -46.75],
+              "lerp_mode": "catmullrom"
+            },
+            "0.21": {
+              "post": [-12.25, 29.5, -24.75],
+              "lerp_mode": "catmullrom"
+            },
+            "0.24": {
+              "post": [-0.5, 14, -6.75],
+              "lerp_mode": "catmullrom"
+            },
+            "0.27": {
+              "post": [0, 0, 0],
+              "lerp_mode": "catmullrom"
+            }
+          },
+          "position": {
+            "0.0": {
+              "post": [0, 0, 0],
+              "lerp_mode": "catmullrom"
+            },
+            "0.03": {
+              "post": [0.75, -3.75, -8.35],
+              "lerp_mode": "catmullrom"
+            },
+            "0.06": {
+              "post": [5.25, -3.25, -9.1],
+              "lerp_mode": "catmullrom"
+            },
+            "0.09": {
+              "post": [10.18, -3, -7.35],
+              "lerp_mode": "catmullrom"
+            },
+            "0.12": {
+              "post": [11.25, -1.75, -5.35],
+              "lerp_mode": "catmullrom"
+            },
+            "0.15": {
+              "post": [10, -0.5, -3.6],
+              "lerp_mode": "catmullrom"
+            },
+            "0.18": {
+              "post": [10, -0.18, -2.35],
+              "lerp_mode": "catmullrom"
+            },
+            "0.21": {
+              "post": [7.25, -1.5, -0.1],
+              "lerp_mode": "catmullrom"
+            },
+            "0.24": {
+              "post": [3.5, -1, 0.15],
+              "lerp_mode": "catmullrom"
+            },
+            "0.27": {
+              "post": [0, 0, 0],
+              "lerp_mode": "catmullrom"
+            }
+          }
+        }
+      }
+    },
+    "animation.first_person.attack_rotation.greninja_sword.blocking": {
+      "loop": true,
+      "bones": {
+        "rightitem": {
+          "rotation": [
+            "math.cos(v.attack_time*(1-v.attack_time)*(1-v.attack_time)*255)*v.attack_time*10",
+            "math.sin(v.attack_time*(1-v.attack_time)*(1-v.attack_time)*185)*90",
+            "math.sin((1-v.attack_time)*v.attack_time*(1-v.attack_time)*175)*-60*(1-v.attack_time)"
+          ],
+          "position": [
+            "math.sin(90*v.attack_time*(1-v.attack_time)*math.sqrt(v.attack_time))*-5",
+            "math.sin(90*v.attack_time*(1-v.attack_time)*math.sin(1-v.attack_time))*(2-v.attack_time)*-1.5",
+            "math.sin(120*v.attack_time*(1-v.attack_time)*math.sqrt(v.attack_time))*2"
+          ]
+        }
+      }
+    },
+    "animation.greninja_sword.blocking": {
+      "loop": true,
+      "bones": {
+        "rightitem": {
+          "rotation": [32, 41.25, -108],
+          "position": [0.75, -5.75, -1.5]
+        }
+      }
+    }
+  }
+}

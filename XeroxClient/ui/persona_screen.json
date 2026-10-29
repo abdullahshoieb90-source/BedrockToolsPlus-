@@ -1,0 +1,266 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "persona",
+
+  "progress_loading": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "skin_viewer_panel_skin_model/skin_model": {
+    "camera_tilt_degrees": -10,
+    "starting_rotation": 30
+  },
+
+  "equip_piece_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "title_rarity_right_title": {
+    "font_type": "$global_font_type"
+  },
+
+  "information_and_selection_stack": {
+    "$title_bar_texture|default": "textures/ui/Xerox/White"
+  },
+
+  "special_offer_banner": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.7
+  },
+
+  "special_offer_banner/banner_info/special_banner_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "dialog_background_object_content": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "right_side_stack_debug_control/debug_skin_names/debug_current_name": {
+    "font_type": "$global_font_type"
+  },
+
+  "right_side_stack_debug_control/debug_skin_names/debug_active_name": {
+    "font_type": "$global_font_type"
+  },
+
+  "right_side_stack_debug_control/debug_preview_skin_name": {
+    "font_type": "$global_font_type"
+  },
+
+  "persona_getting_started_description": {
+    "font_type": "$global_font_type"
+  },
+
+  "info_text_box_description_stack_description_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "color_picker_info_panel_title": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "appearance_status_panel/appearance_status/label_panel/label": {
+    "font_type": "$global_font_type"
+  },
+
+  "realms_plus_skin_pack_timer": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.45
+  },
+
+  "realms_plus_skin_pack_timer/content_sizer/realms_plus_timer/timer_container/timer_string": {
+    "font_type": "$global_font_type"
+  },
+
+  "realms_extra_info_panel_text": {
+    "font_type": "$global_font_type"
+  },
+  "realms_plus_extra_info_popup_dialog_bg/background_image": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "popup_dialog__realms_plus_extra_info/background_image": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "minecraft_ten_button_label": {
+    "font_type": "MinecraftTen"
+  },
+
+  "to_realms_plus_screen_realms_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "usage_limited_right_panel_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "right_panel_classic_skins_title/author_panel/author": {
+    "font_type": "$global_font_type"
+  },
+
+  "size_option_content": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.45
+  },
+
+  "arm_size_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "body_size_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "loading_progress_bars/loading_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "color_grid_item": {
+    "$hover_button_texture": "textures/ui/Xerox/White"
+  },
+
+  "color_grid_icon": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "color_picker_panel/top_bar/title/skin_title": {
+    "font_type": "$global_font_type"
+  },
+
+  "skin_info_label_panel_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "sub_category_label_image_button_content/stack_content/content_label_panel/content_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "sub_category_label_image_button_content/bottom_bar": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "persona_classic_skin_paper_doll": {
+    "camera_tilt_degrees": -10,
+    "starting_rotation": 30
+  },
+
+  "skin_doll_button/size_control/background": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.45
+  },
+
+  "piece_section_end_panel/end_line": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "persona_subcategory_button": {
+    "$hover_button_texture": "textures/ui/Xerox/White",
+    "$pressed_button_texture": "textures/ui/Xerox/White",
+    "$locked_button_texture": "textures/ui/Xerox/White"
+  },
+
+  "popup_dialog_skin_model/paper_doll": {
+    "camera_tilt_degrees": -10,
+    "starting_rotation": 30
+  },
+
+  "popup_dialog_bg/background_image": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "popup/background": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.45
+  },
+
+  "custom_skin_popup_dialog_bg/background_image": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "custom_skin_popup_dialog_bg/vertical_align_title/title": {
+    "font_type": "$global_font_type"
+  },
+
+  "custom_skin_info_panel_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "popup_dialog__custom_skin_info/background_image": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "create_persona_choice_checked_image": {
+    "type": "image",
+    "keep_ratio": false,
+    "size": [ 10, 10 ],
+    "$image": "textures/ui/radiobox_filled"
+  },
+
+  "create_persona_choice_unchecked_image": {
+    "type": "image",
+    "keep_ratio": false,
+    "size": [ 10, 10 ],
+    "$image": "textures/ui/radiobox_unfilled"
+  },
+
+  "modal_window_input_blocker": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "switch_persona_and_classic_title": {
+    "font_type": "$global_font_type"
+  },
+
+  "switch_persona_and_classic_message": {
+    "font_type": "$global_font_type"
+  },
+
+  "switch_persona_and_classic_repeat_check_text": {
+    "font_type": "$global_font_type"
+  },
+
+  "custom_skin_popup_dialog_panel/full_screen_darkening": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "skin_pack_expand_pack": {
+    "font_type": "$global_font_type"
+  },
+
+  "persona_skin_pack_panel/pack_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "button_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "cape_button_content/stack_content/content_label_panel/content_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "cape_button_content/bottom_bar": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "cape_button": {
+    "$hover_button_texture": "textures/ui/Xerox/White",
+    "$pressed_button_texture": "textures/ui/Xerox/White",
+    "$locked_button_texture": "textures/ui/Xerox/White"
+  },
+
+  "popup_dialog__emote_equip_slot_editor/background_image": {
+    "texture": "textures/ui/Xerox/White"
+  },
+
+  "persona_screen": {
+    "$screen_bg_content": "common.empty_panel"
+  }
+}

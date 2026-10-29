@@ -1,0 +1,543 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "settings_common",
+
+  "subsection_title/sizer_0/title": {
+    "font_type": "$global_font_type"
+  },
+
+  "option_group_label/text": {
+    "font_type": "$global_font_type"
+  },
+
+  "white_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "option_generic_core/two_line_layout/option_label_panel/option_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "option_generic_core/two_line_layout/option_descriptive_text_0": {
+    "font_type": "$global_font_type"
+  },
+
+  "option_generic_core/one_line_layout/option_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "option_text_edit_control_with_button": {
+    "size": [ "100%", "25px" ]
+  },
+
+  "option_text_edit_control_with_text_button": {
+    "$option_text_edit_control_with_button_size|default": [ "100%", "25px" ]
+  },
+
+  "option_toggle_state_template": {
+    "controls": [
+      {
+        "text": {
+           "type": "label",
+           "size": [ "default", 10 ],
+           "text": "$toggle_text",
+           "color": "$toggle_text_color",
+           "font_type": "$global_font_type",
+           "layer": 3
+        }
+      }
+    ]
+  },
+
+  "option_toggle_on": {
+    "$toggle_text": "ON",
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_switch_checked_alpha",
+    "color": "$xeroxclient_ui_theme_switch_checked_color",
+    "$toggle_text_color": "$xeroxclient_ui_theme_button_text_pressed_color"
+  },
+
+  "option_toggle_off": {
+    "$toggle_text": "OFF",
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_switch_unchecked_alpha",
+    "color": "$xeroxclient_ui_theme_switch_unchecked_color",
+    "$toggle_text_color": "$xeroxclient_ui_theme_button_text_default_color"
+  },
+
+  "option_toggle_on_hover": {
+    "$toggle_text": "ON",
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_switch_checked_hover_alpha",
+    "color": "$xeroxclient_ui_theme_switch_checked_hover_color",
+    "$toggle_text_color": "$xeroxclient_ui_theme_button_text_hover_color"
+  },
+
+  "option_toggle_off_hover": {
+    "$toggle_text": "OFF",
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_switch_unchecked_hover_alpha",
+    "color": "$xeroxclient_ui_theme_switch_unchecked_hover_color",
+    "$toggle_text_color": "$xeroxclient_ui_theme_button_text_hover_color"
+  },
+
+  "option_toggle_on_locked": {
+    "$toggle_text": "ON",
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_switch_checked_locked_alpha",
+    "color": "$xeroxclient_ui_theme_switch_checked_locked_color",
+    "$toggle_text_color": "$xeroxclient_ui_theme_button_text_locked_color"
+  },
+
+  "option_toggle_off_locked": {
+    "$toggle_text": "OFF",
+    "texture": "textures/ui/Xerox/White",
+    "alpha": "$xeroxclient_ui_theme_switch_unchecked_locked_alpha",
+    "color": "$xeroxclient_ui_theme_switch_unchecked_locked_color",
+    "$toggle_text_color": "$xeroxclient_ui_theme_button_text_locked_color"
+  },
+
+  "radio_visuals_unchecked": {
+    "$alpha": "$xeroxclient_ui_theme_radio_unchecked_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_unchecked_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_default_color"
+  },
+
+  "radio_visuals_checked": {
+    "$alpha": "$xeroxclient_ui_theme_radio_checked_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_checked_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_pressed_color"
+  },
+
+  "radio_visuals_unchecked_locked": {
+    "$alpha": "$xeroxclient_ui_theme_radio_unchecked_locked_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_unchecked_locked_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_locked_color"
+  },
+
+  "radio_visuals_checked_locked": {
+    "$alpha": "$xeroxclient_ui_theme_radio_checked_locked_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_checked_locked_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_locked_color"
+  },
+
+  "radio_visuals_unchecked_hover": {
+    "$alpha": "$xeroxclient_ui_theme_radio_unchecked_hover_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_unchecked_hover_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_hover_color"
+  },
+
+  "radio_visuals_checked_hover": {
+    "$alpha": "$xeroxclient_ui_theme_radio_checked_hover_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_checked_hover_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_hover_color"
+  },
+
+  "radio_visuals/radio_image": {
+    "texture": "textures/ui/Xerox/White",
+    "size": [ 2, 10 ],
+    "color": "$color",
+    "alpha": "$alpha"
+  },
+
+  "radio_visuals/radio_label": {
+    "font_type": "$global_font_type",
+    "offset": [ 4, 0.5 ],
+    "size": [ "100% - 4px", 10 ],
+    "color": "$radio_label_color",
+    "$radio_label_color|default": "",
+    "alpha": 1.0
+  },
+
+  "radio_visuals/accessibility_selection_highlight": {
+    "alpha": 0.2
+  },
+  "radio_description_panel": {
+    "ignored": "$no_description"
+  },
+
+  "radio_with_label_and_content_unchecked": {
+    "$alpha": "$xeroxclient_ui_theme_radio_unchecked_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_unchecked_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_default_color"
+  },
+
+  "radio_with_label_and_content_checked": {
+    "$alpha": "$xeroxclient_ui_theme_radio_checked_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_checked_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_pressed_color"
+  },
+
+  "radio_with_label_and_content_unchecked_locked": {
+    "$alpha": "$xeroxclient_ui_theme_radio_unchecked_locked_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_unchecked_locked_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_locked_color"
+  },
+
+  "radio_with_label_and_content_checked_locked": {
+    "$alpha": "$xeroxclient_ui_theme_radio_checked_locked_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_checked_locked_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_locked_color"
+  },
+
+  "radio_with_label_and_content_unchecked_hover": {
+    "$alpha": "$xeroxclient_ui_theme_radio_unchecked_hover_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_unchecked_hover_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_hover_color"
+  },
+
+  "radio_with_label_and_content_checked_hover": {
+    "$alpha": "$xeroxclient_ui_theme_radio_checked_hover_alpha",
+    "$color": "$xeroxclient_ui_theme_radio_checked_hover_color",
+    "$radio_label_color": "$xeroxclient_ui_theme_button_text_hover_color"
+  },
+
+  "radio_with_label_and_content/radio_background": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$color",
+    "alpha": 0.2
+  },
+
+  "radio_item_with_label_and_content_stack/radio_image_panel/image": {
+    "texture": "textures/ui/Xerox/White",
+    "color": "$color",
+    "size": [2, 10]
+  },
+
+  "radio_item_with_label_and_content_stack/radio_label_panel/radio_label": {
+    "font_type": "$global_font_type",
+    "alpha": 1.0
+  },
+
+  "radio_description": {
+    "font_type": "$global_font_type"
+  },
+
+  "new_slider_control": {
+    "type": "panel",
+    "size": [ "100% - 2px", 16 ],
+    "controls": [
+      {
+        "slider@common.slider": {
+          "size": [ "100%-8px", 16 ],
+          "$slider_box_size": [ 10, 16 ],
+          "offset": [ 1, 0 ],
+
+          "$option_label|default": "",
+
+          "$slider_tts_header": "$option_label",
+          "$slider_tts_header_binding_type": "global",
+
+          "enabled": "$enabled",
+          "$slider_enabled_binding_name": "$option_enabled_binding_name",
+          "$slider_enabled_binding_type": "global",
+          "variables": [
+            {
+              "requires": "(not $option_enabled_binding_name or not $enabled)",
+              "$slider_enabled_binding_name": "#not_data_bound",
+              "$slider_enabled_binding_type": "none"
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "default_options_dropdown_toggle_button_state_content/label_panel/label": {
+    "font_type": "$global_font_type",
+    "alpha": 1.0
+  },
+
+  "option_dropdown_control/dropdown": {
+    "$dropdown_toggle": "settings_common.options_dropdown_dark_toggle_control"
+  },
+
+  "option_dropdown_control": {
+    "$option_dropdown_size|default": [ "100%", 25 ]
+  },
+
+  "option_info_label_with_bulb": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.80
+  },
+
+  "option_info_label_with_bulb/stack_panel/label_panel/info_label": {
+    "font_type": "$global_font_type_2"
+  },
+
+  "option_info_label_with_image": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.35
+  },
+
+  "option_info_label_with_image/control": {
+    "font_type": "$global_font_type"
+  },
+
+  "option_text_edit": {
+    "$max_text_edit_length|default": 32767
+  },
+
+  "option_text_edit_with_button": {
+    "$max_text_edit_length|default": 32767
+  },
+
+  "option_text_edit_with_text_button": {
+    "$max_text_edit_length|default": 32767
+  },
+
+  "option_slider": {
+    "$control_name": "settings_common.new_slider_control"
+  },
+
+  "option_dropdown": {
+    "$control_name": "settings_common.option_dropdown_control"
+  },
+
+
+  "option_dropdown_no_scroll": {
+    "$control_name": "settings_common.option_dropdown_control_no_scroll"
+  },
+
+  "option_custom_control": {
+  },
+
+  "option_info_label": {
+    "$control_name": "settings_common.option_info_label_image"
+  },
+
+  "dynamic_dialog_screen@common.base_screen": {
+    "type": "screen",
+    "low_frequency_rendering": true,
+    "button_mappings": [
+      {
+        "from_button_id": "button.menu_cancel",
+        "to_button_id": "button.menu_exit",
+        "mapping_type": "global"
+      },
+      {
+        "from_button_id": "button.menu_tab_left",
+        "to_button_id": "button.menu_tab_left",
+        "mapping_type": "global",
+        "scope": "view"
+      },
+      {
+        "from_button_id": "button.menu_tab_right",
+        "to_button_id": "button.menu_tab_right",
+        "mapping_type": "global",
+        "scope": "view"
+      }
+    ],
+    "$screen_content": "settings_common.screen_content",
+    "$is_full_screen_layout": false
+  },
+
+  "screen_content": {
+    "type": "panel",
+    "controls": [
+      {
+        "panel": {
+          "type": "panel",
+          "size": [350, 200],
+          "controls": [
+            {
+              "background": {
+                "type": "image",
+                "texture": "textures/ui/Xerox/image/BlackToTransparent1",
+                "alpha": 0.5,
+                "size": ["100%+5px", "100%+5px"]
+              }
+            },
+            { "$dialog_content@$dialog_content": {} },
+            {
+              "close@common.button": {
+                "size": [15, 15],
+                "offset": [3.5, -2.5],
+                "controls": [
+                  {
+                    "background": {
+                      "type": "image",
+                      "texture": "textures/ui/Xerox/Black",
+                      "alpha": 0.5
+                    }
+                  },
+                  {
+                    "pressed": {
+                      "type": "image",
+                      "texture": "textures/ui/Xerox/white_border",
+                      "size": ["100%+2px", "100%+2px"]
+                    }
+                  },
+                  {
+                    "hover": {
+                      "type": "image",
+                      "texture": "textures/ui/Xerox/white_border"
+                    }
+                  },
+                  {
+                    "x": {
+                      "type": "label",
+                      "text": "x",
+                      "shadow": true,
+                      "layer": 5
+                    }
+                  }
+                ],
+                "$pressed_button_name": "button.menu_exit",
+                "anchor_from": "top_right",
+                "anchor_to": "top_left"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "popup_dialog_factory": {
+          "type": "factory",
+          "control_ids": {
+            "purchase_failed": "@realms_create.popup_dialog__purchase_failed",
+            "purchase_in_progress": "@realms_create.popup_dialog__purchase_in_progress",
+            "share_by_link": "@realms_allowlist.popup_dialog__share_by_link",
+            "options_modal": "@realms_allowlist.popup_dialog__options",
+            "backups_modal": "@realms_settings.popup_dialog__backups"
+          }
+        }
+      }
+    ]
+  },
+
+  "toggle_button_control/glyph": {
+    "ignored": true,
+    "offset": "",
+    "texture": "",
+    "size": "",
+    "color": "",
+    "alpha": ""
+  },
+
+  "toggle_button_control/glyph_color": {
+    "ignored": true,
+    "offset": "",
+    "texture": "",
+    "size": "",
+    "color": "",
+    "alpha": ""
+  },
+
+  "toggle_button_control/tab_button_text": {
+    "font_type": "NotoSans-Regular",
+    "alpha": 1.0,
+    "offset": [7, 0]
+  },
+
+  "section_toggle_base": {
+    "$button_image_size": ["100%", 25],
+    "size": ["100%", 25]
+  },
+
+  "section_title_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "dialog_title_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "side_bar_area": {
+    "type": "stack_panel",
+    "size": ["25px", "100%"],
+    "anchor_from": "left_middle",
+    "anchor_to": "left_middle",
+    "controls": [
+      {
+        "client_icon": {
+          "type": "image",
+          "size": ["100%", "27px"],
+          "texture": "shshdj"
+        }
+      },
+      {
+        "padding0": {
+          "type": "panel",
+          "size": [0, "20px"]
+        }
+      },
+      {
+        "general@xcs_common.side_bar_button": {
+          "$tab_view_binding_name": "sidebar_general_section_tab",
+          "$button_texture": "general",
+          "$side_bar_button_text": "General"
+        }
+      },
+      {
+        "controls@xcs_common.side_bar_button": {
+          "$tab_view_binding_name": "sidebar_controls_section_tab",
+          "$button_texture": "controls",
+          "$side_bar_button_text": "Controls"
+        }
+      },
+      {
+        "others@xcs_common.side_bar_button": {
+          "$tab_view_binding_name": "sidebar_others_section_tab",
+          "$button_texture": "others",
+          "$side_bar_button_text": "Others"
+        }
+      },
+      {
+        "padding1": {
+          "type": "panel",
+          "size": [0, "fill"]
+        }
+      }
+    ]
+  },
+
+  "dialog_content": {
+    "type": "panel",
+    "anchor_from": "top_middle",
+    "anchor_to": "top_middle",
+    "controls": [
+      //{ "sidebar_area@settings_common.side_bar_area": { "offset": [0, 0] } },
+      { "selector_area@settings_common.selector_area": { "offset": [2, 0], "size": ["40% - 3px", "100%"] } },
+      { "content_area@settings_common.content_area": { "offset": ["-1px", 0], "size": ["60% - 8px", "100%"] } },
+      { "section_divider@settings_common.section_divider": { "offset": ["40%", 0], "size": ["4px", "100%"] } },
+      {
+        "popup_dialog_factory": {
+          "type": "factory",
+          "control_ids": {
+            "purchase_failed": "@realms_create.popup_dialog__purchase_failed",
+            "purchase_in_progress": "@realms_create.popup_dialog__purchase_in_progress",
+            "share_by_link": "@realms_whitelist.popup_dialog__share_by_link",
+            "options_modal": "@realms_whitelist.popup_dialog__options",
+            "backups_modal": "@realms_settings.popup_dialog__backups"
+          }
+        }
+      }
+    ]
+  },
+
+  "selector_group_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "section_divider": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.2
+  },
+
+  "screen_base@settings_common.dynamic_dialog_screen": {
+    "$dialog_content": "settings_common.dialog_content",
+    "$screen_bg_content": "xc_common.background_blur_for_pregame_only",
+    "$background_animations": [
+      "@play_animation.background_out_animation",
+      "@play_animation.background_blur_out_animation_pop",
+      "@play_animation.background_blur_enter_animation",
+      "@play_animation.background_enter_animation_pop"
+    ]
+  }
+}

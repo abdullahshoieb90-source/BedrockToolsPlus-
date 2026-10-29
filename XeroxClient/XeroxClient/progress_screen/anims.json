@@ -1,0 +1,84 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "progress_animation",
+  "icon_out_animation": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.7,
+    "to": [100, 0],
+    "from": [100, 100],
+    "play_event": "screen.exit_push",
+    "end_event": "screen.exit_end"
+  },
+
+  "icon_out_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.7,
+    "to": [100, 0],
+    "from": [100, 100],
+    "play_event": "screen.exit_pop",
+    "end_event": "screen.exit_end"
+  },
+
+  "icon_enter_animation": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.7,
+    "from": [100, 0],
+    "to": [100, 100],
+    "play_event": "screen.entrance_push",
+    "end_event": "screen.entrance_end"
+  },
+
+  "icon_enter_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_cubic",
+    "duration": 0.7,
+    "from": [100, 0],
+    "to": [100, 100],
+    "play_event": "screen.entrance_pop",
+    "end_event": "screen.entrance_end"
+  },
+
+  "loading_out_animation@progress_animation.icon_out_animation": {
+    "to": ["100%", 0],
+    "from": ["100%", "100%c"]
+  },
+
+  "loading_out_animation_pop@progress_animation.icon_out_animation_pop": {
+    "to": ["100%", 0],
+    "from": ["100%", "100%c"]
+  },
+
+  "loading_enter_animation@progress_animation.icon_enter_animation": {
+    "from": ["100%", 0],
+    "to": ["100%", "100%c"]
+  },
+
+  "loading_enter_animation_pop@progress_animation.icon_enter_animation_pop": {
+    "from": ["100%", 0],
+    "to": ["100%", "100%c"]
+  },
+
+  "button_panel_out_animation@progress_animation.loading_out_animation": {
+    "from": ["100%", 20]
+  },
+
+  "button_panel_out_animation_pop@progress_animation.loading_out_animation_pop": {
+    "from": ["100%", 20]
+  },
+
+  "button_panel_enter_animation@progress_animation.loading_enter_animation": {
+    "to": ["100%", 20]
+  },
+
+  "button_panel_enter_animation_pop@progress_animation.loading_enter_animation_pop": {
+    "to": ["100%", 20]
+  }
+}

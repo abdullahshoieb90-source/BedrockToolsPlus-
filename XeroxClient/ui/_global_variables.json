@@ -1,0 +1,168 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "$global_font_type": "SmoothFontLatin",
+  "$global_font_type_2": "SmoothFontLatin",
+
+  // Button and Toggle
+
+  "$xeroxclient_ui_theme_button_default_alpha": 0.45,
+  "$xeroxclient_ui_theme_button_hover_alpha": 0.65,
+  "$xeroxclient_ui_theme_button_pressed_alpha": 0.70,
+  "$xeroxclient_ui_theme_button_locked_alpha": 0.70,
+
+  "$xeroxclient_ui_theme_light_button_default_color": [0.0, 0.0, 0.0],
+  "$xeroxclient_ui_theme_dark_button_default_color": [0.0, 0.0, 0.0],
+  "$xeroxclient_ui_theme_button_hover_color": [0.0, 0.5764705882, 1.0],
+  "$xeroxclient_ui_theme_button_pressed_color": [0.0, 0.5764705882, 1.0],
+  "$xeroxclient_ui_theme_button_locked_color": [0.627451, 0.627451, 0.627451],
+
+  "$xeroxclient_ui_theme_button_text_default_offset": [0, 0],
+  "$xeroxclient_ui_theme_button_text_hover_offset": [0, 0],
+  "$xeroxclient_ui_theme_button_text_pressed_offset": [0, 0],
+
+  "$xeroxclient_ui_theme_button_text_default_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_button_text_hover_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_button_text_pressed_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_button_text_locked_color": [0.4784313725, 0.4784313725, 0.4784313725],
+
+  // Slider
+
+  "$xeroxclient_ui_theme_slider_background_default_alpha": 0.50,
+  "$xeroxclient_ui_theme_slider_background_hover_alpha": 0.45,
+  "$xeroxclient_ui_theme_slider_progress_default_alpha": 0.65,
+  "$xeroxclient_ui_theme_slider_progress_hover_alpha": 0.65,
+
+  "$xeroxclient_ui_theme_slider_step_default_alpha": 0.45,
+  "$xeroxclient_ui_theme_slider_step_hover_alpha": 0.40,
+  "$xeroxclient_ui_theme_slider_step_progress_default_alpha": 0.45,
+  "$xeroxclient_ui_theme_slider_step_progress_hover_alpha": 0.40,
+
+  "$xeroxclient_ui_theme_slider_box_default_alpha": 0.75,
+  "$xeroxclient_ui_theme_slider_box_hover_alpha": 0.45,
+  "$xeroxclient_ui_theme_slider_box_locked_alpha": 0.50,
+  "$xeroxclient_ui_theme_slider_box_indent_alpha": 0.80,
+
+  "$xeroxclient_ui_theme_slider_background_default_color": [0.0, 0.0, 0.0],
+  "$xeroxclient_ui_theme_slider_background_hover_color": [0.2, 0.2, 0.2],
+  "$xeroxclient_ui_theme_slider_progress_default_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_slider_progress_hover_color": [0.0, 0.5764705882, 1.0],
+
+  "$xeroxclient_ui_theme_slider_step_default_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_slider_step_hover_color": [0.8, 0.8, 0.8],
+  "$xeroxclient_ui_theme_slider_step_progress_default_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_slider_step_progress_hover_color": [0.8, 0.8, 0.8],
+
+  "$xeroxclient_ui_theme_slider_box_default_color": [0.7, 0.7, 0.7],
+  "$xeroxclient_ui_theme_slider_box_hover_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_slider_box_locked_color": [0.4784313725, 0.4784313725, 0.4784313725],
+  "$xeroxclient_ui_theme_slider_box_indent_color": [0.0, 0.5764705882, 1.0],
+
+  // Scroll
+
+  "$xeroxclient_ui_theme_scrollbar_box_alpha": 0.90,
+  "$xeroxclient_ui_theme_scroll_background_alpha": 0.65,
+
+  "$xeroxclient_ui_theme_scrollbar_box_color": [0.95, 0.95, 0.95],
+  "$xeroxclient_ui_theme_scroll_background_color": [0.7, 0.7, 0.7],
+
+  // Edit Box
+
+  "$xeroxclient_ui_theme_edit_box_background_default_color": [0.0, 0.0, 0.0],
+  "$xeroxclient_ui_theme_edit_box_background_hover_color": [0.0, 0.5764705882, 1.0],
+  "$xeroxclient_ui_theme_edit_box_background_locked_color": [0.627451, 0.627451, 0.627451],
+
+  // Radio
+
+  "$xeroxclient_ui_theme_radio_unchecked_alpha": 0.45,
+  "$xeroxclient_ui_theme_radio_checked_alpha": 0.55,
+  "$xeroxclient_ui_theme_radio_unchecked_locked_alpha": 0.70,
+  "$xeroxclient_ui_theme_radio_checked_locked_alpha": 0.70,
+  "$xeroxclient_ui_theme_radio_unchecked_hover_alpha": 0.65,
+  "$xeroxclient_ui_theme_radio_checked_hover_alpha": 0.60,
+
+  "$xeroxclient_ui_theme_radio_unchecked_color": [0.0, 0.0, 0.0],
+  "$xeroxclient_ui_theme_radio_checked_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_radio_unchecked_locked_color": [0.627451, 0.627451, 0.627451],
+  "$xeroxclient_ui_theme_radio_checked_locked_color": [0.627451, 0.627451, 0.627451],
+  "$xeroxclient_ui_theme_radio_unchecked_hover_color": [0, 0.4470588235, 0.7725490196],
+  "$xeroxclient_ui_theme_radio_checked_hover_color": [0.0, 0.5764705882, 1.0],
+
+  // Switch Toggle
+
+  "$xeroxclient_ui_theme_switch_checked_alpha": 0.55,
+  "$xeroxclient_ui_theme_switch_unchecked_alpha": 0.45,
+  "$xeroxclient_ui_theme_switch_checked_hover_alpha": 0.60,
+  "$xeroxclient_ui_theme_switch_unchecked_hover_alpha": 0.65,
+  "$xeroxclient_ui_theme_switch_checked_locked_alpha": 0.70,
+  "$xeroxclient_ui_theme_switch_unchecked_locked_alpha": 0.70,
+
+  "$xeroxclient_ui_theme_switch_checked_color": [0.0, 0.0, 0.0],
+  "$xeroxclient_ui_theme_switch_unchecked_color": [0.0, 0.0, 0.0],
+  "$xeroxclient_ui_theme_switch_checked_hover_color": [0.0, 0.5764705882, 1.0],
+  "$xeroxclient_ui_theme_switch_unchecked_hover_color": [0.0, 0.5764705882, 1.0],
+  "$xeroxclient_ui_theme_switch_checked_locked_color": [0.627451, 0.627451, 0.627451],
+  "$xeroxclient_ui_theme_switch_unchecked_locked_color": [0.627451, 0.627451, 0.627451],
+
+  // Dialog
+
+  "$xeroxclient_ui_theme_dialog_background_alpha": 0.20,
+  "$xeroxclient_ui_theme_popup_dialog_background_alpha": 1.0,
+  "$xeroxclient_ui_theme_popup_dialog_background_color": [0.0, 0.4039215686, 0.7019607843],
+  "$xeroxclient_ui_theme_popup_dialog_button_text_pressed_color": [0.3, 0.3, 0.3],
+
+  // Inventory Screen and Hotbar
+
+  "$xeroxclient_slot_selected_image_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_hotbar_selected_image_color": [1.0, 1.0, 1.0, 0.65],
+  "$xeroxclient_ui_theme_experience_bar_text_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_ui_theme_experience_bar_full_color": [1.0, 1.0, 1.0],
+  "$xeroxclient_feature_show_hotbar_when_hud_invisible": true,
+
+  // Mob Effect
+
+  "$mob_effect_name_color": [1.0, 1.0, 1.0],
+  "$mob_effect_timer_color": [0.99, 0.99, 1.0],
+  "$mob_effect_disappear_soon_timer_color": [0.9, 0.01, 0.01],
+
+  // Others
+
+  "$ClientName": "§bXerox§7Client§r",
+  "$ClientVersion": "v1.0.2",
+  "$ClientAuthor": "Made By Greninja.",
+
+  "$debug_green": [0.0, 0.7, 0.0],
+
+  "$debug_mode": false,
+  "$show_dev_button": true,
+
+  // Texture Paths
+
+  "$background_texture": "textures/ui/Xerox/image/background/background",
+  "$background_blur_texture": "textures/ui/Xerox/image/background/background_blur",
+
+  // Vanilla Variables
+
+  "$light_button_default_text_color": [ 1.0, 1.0, 1.0 ],
+  "$light_button_locked_text_color": [ 1.0, 1.0, 1.0 ],
+  "$light_toggle_default_text_color": [ 1.0, 1.0, 1.0 ],
+  "$light_toggle_checked_default_text_color": [ 1.0, 1.0, 1.0 ],
+  "$dark_button_locked_text_color": [ 0.4784313725, 0.4784313725, 0.4784313725 ],  "$title_text_color": [ 1.0, 1.0, 1.0 ],
+  "$pocket_title_text_color": [ 1.0, 1.0, 1.0 ],
+  "$tab_unchecked_text_color": [ 1.0, 1.0, 1.0 ],
+  "$tab_unchecked_locked_text_color": [ 0.4784313725, 0.4784313725, 0.4784313725 ],
+  "$tab_unchecked_locked_hover_text_color": [ 0.4784313725, 0.4784313725, 0.4784313725 ],
+  "$tab_checked_text_color": [ 1.0, 1.0, 1.0 ],
+  "$tab_checked_locked_text_color": [ 0.4784313725, 0.4784313725, 0.4784313725 ],
+  "$tab_checked_locked_hover_text_color": [ 0.4784313725, 0.4784313725, 0.4784313725 ],
+  "$portfolio_body_text_color": [ 1.0, 1.0, 1.0 ],
+  "$portfolio_close_color": [ 1.0, 1.0, 1.0 ],
+  "$dark_body_text_color": [ 1.0, 1.0, 1.0 ],
+  "$light_glyph_default_color": [ 1.0, 1.0, 1.0 ],
+  "$light_glyph_locked_color": [ 0.4784313725, 0.4784313725, 0.4784313725 ],
+  "$dark_glyph_locked_color": [ 0.4784313725, 0.4784313725, 0.4784313725 ]
+}

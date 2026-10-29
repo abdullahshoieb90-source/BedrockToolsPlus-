@@ -1,0 +1,20 @@
+{
+	"format_version": "1.8.0",
+	"animations": {
+		"animation.player.1stdefense": {
+			"loop": true,
+			"bones": {
+				"rightitem": {
+					"rotation": [ "0.0 + 0.0 " , " -50.0 + 0.0 " , " -120.0 + 0.0 " ]
+					//x轴减少，剑向屏幕左下转动
+					//y轴减少，剑向纸面向外的右边转动
+					//z轴减少，剑以中心线为轴，由下边转向看的见的剑面方向
+				},
+				"rightarm": {
+					"position": [ "-3.0 + 0.0 " , " 2.0 + 0.0 " , " -1.0 + 0.0 " ],
+					"scale": 1.0
+					}
+			}
+		}
+	}
+}

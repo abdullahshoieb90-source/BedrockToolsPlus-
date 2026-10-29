@@ -1,0 +1,164 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "start_top_content",
+
+  "top_content": {
+    "type": "image",
+    "texture": "textures/ui/Xerox/image/BlackToTransparent1",
+    "alpha": 0.7,
+    "anchor_from": "top_middle",
+    "anchor_to": "top_middle",
+    "size": ["100%", 35],
+    "animation_reset_name": "screen_animation_reset",
+    "anims": [
+      "@start_animation.top_content_out_animation",
+      "@start_animation.top_content_out_animation_pop",
+      "@start_animation.top_content_enter_animation",
+      "@start_animation.top_content_enter_animation_pop"
+    ],
+    "controls": [
+      { "main_content@start_top_content.main_content": {} }
+    ]
+  },
+
+  "button_panel": {
+    "type": "stack_panel",
+    "size": [195, 30],
+    "orientation": "horizontal",
+    "controls": [
+      { "achievements@start_main_screen.to_achievements_screen": {} },
+      { "xbl_signin@start_main_screen.xbl_signin_button": {} },
+      { "profile@start_main_screen.to_profile_screen": {} },
+      { "store@start_main_screen.to_store_screen": {} }
+    ]
+  },
+
+  "main_content": {
+    "type": "stack_panel",
+    "orientation": "horizontal",
+    "size": ["100%", 30],
+    "controls": [
+      {
+        "filling0": {
+          "type": "panel",
+          "size": [20, 0]
+        }
+      },
+      {
+        "client_name": {
+          "type": "label",
+          "layer": 12,
+          "size": ["default", 30],
+          "font_scale_factor": 3,
+          "font_type": "KaushanScript-Regular",
+          "text": "($ClientName - '§b' - '§7')"
+        }
+      },
+      {
+        "filling1": {
+          "type": "panel",
+          "size": [15, 0]
+        }
+      },
+      { "button_panel@start_top_content.button_panel": {} },
+      {
+        "filling2": {
+          "type": "panel",
+          "size": ["fill", 0]
+        }
+      },
+      {
+        "player_info_content": {
+          "type": "panel",
+          "size": ["100%c", 30],
+          "controls": [
+            { "player_info_content@start_top_content.player_info_content": {} }
+          ]
+        }
+      },
+      {
+        "filling3": {
+          "type": "panel",
+          "size": ["5px", 0]
+        }
+      }
+    ]
+  },
+
+  "player_info_content": {
+    "type": "stack_panel",
+    "layer": 12,
+    "anchor_from": "top_right",
+    "anchor_to": "top_right",
+    "orientation": "horizontal",
+    "size": ["100%c", 20],
+    "controls": [
+      {
+        "player_head_portrait": {
+          "type": "image",
+          "size": [30, 20],
+          "layer": 12,
+          "bilinear": true,
+          "bindings": [
+            {
+              "binding_name": "#gamerpic_texture_path",
+              "binding_name_override": "#texture"
+            },
+            {
+              "binding_name": "#gamerpic_texture_location_type",
+              "binding_name_override": "#texture_file_system"
+            }
+          ]
+        }
+      },
+      {
+        "welcome": {
+          "type": "panel",
+          "size": ["100%c", 20],
+          "controls": [
+            { "welcome_text@start_top_content.welcome_text": {} }
+          ]
+        }
+      }
+    ]
+  },
+
+  "welcome_text":{
+    "type":"stack_panel",
+    "layer": 12,
+    "orientation": "horizontal",
+    "size": [ "100%c", "100%cm" ],
+    "controls":[
+      { "hellow@start_top_content.hellow_text": {} },
+      { "player_name@start_top_content.player_name_text": {} }
+    ]
+  },
+
+  "hellow_text": {
+    "type": "label",
+    "layer": 12,
+    "size": ["default", "default"],
+    "max_size": ["default", "default"],
+    "font_type": "$global_font_type",
+    "text": "Hello, "
+  },
+
+  "player_name_text": {
+    "type": "label",
+    "layer": 12,
+    "text": "#playername",
+    "size": ["default", "default"],
+    "max_size": ["default", "default"],
+    "font_type": "$global_font_type",
+    "bindings": [
+      {
+        "binding_name": "#playername"
+      }
+    ]
+  }
+}

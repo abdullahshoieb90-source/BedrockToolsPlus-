@@ -1,0 +1,7 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.10.0","animation_controllers":{"controller.animation.jump_circle":{"initial_state":"default","states":{"default":{"transitions":[{"ready":"q.is_jumping && !q.is_sleeping && !q.is_swimming"}]},"ready":{"transitions":[{"show":"q.is_on_ground"}]},"show":{"on_entry":["v.life_time = q.life_time;"],"particle_effects":[{"effect":"jump_circle","locator":"root"}],"transitions":[{"default":"(q.life_time-v.life_time)>0.225"}]}}}}}

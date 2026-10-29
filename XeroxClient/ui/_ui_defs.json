@@ -1,0 +1,85 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "ui_defs": [
+    //XeroxClient
+    "XeroxClient/chat_screen/anims.json",
+    "XeroxClient/chat_screen/coordinate.json",
+    "XeroxClient/chat_screen/main_screen.json",
+
+    "XeroxClient/client_ui_common/xc_buttons.json",
+
+    "XeroxClient/color_anims.json",
+
+    "XeroxClient/container_screen/classic/anims.json",
+    "XeroxClient/container_screen/classic/common.json",
+    "XeroxClient/container_screen/classic/container_mode/inv_quick_mode.json",
+    "XeroxClient/container_screen/classic/container_mode/mode_section_toggle.json",
+
+    "XeroxClient/death_screen/death_text.json",
+    "XeroxClient/death_screen/main_screen.json",
+
+    "XeroxClient/dialog_image.json",
+
+    "XeroxClient/hud_screen/anims.json",
+    "XeroxClient/hud_screen/hotbar_anim/button_mappings_panel.json",
+    "XeroxClient/hud_screen/hotbar_anim/hotbar_selected_image_anims.json",
+    "XeroxClient/hud_screen/inventory_hud/inventory_hud_item.json",
+    "XeroxClient/hud_screen/inventory_hud/inventory_hud_slot_number.json",
+    "XeroxClient/hud_screen/inventory_hud/inventory_hud_type.json",
+    "XeroxClient/hud_screen/mod_menu/common.json",
+    "XeroxClient/hud_screen/mod_menu/main_content.json",
+    "XeroxClient/hud_screen/mod_menu/option_page.json",
+    "XeroxClient/hud_screen/mod_menu/section_content.json",
+    "XeroxClient/hud_screen/mods/backgrounds.json",
+    "XeroxClient/hud_screen/removable_controls.json",
+    "XeroxClient/hud_screen/xeroxclient_style_hud/chat_panel/chat_anims.json",
+    "XeroxClient/hud_screen/xeroxclient_style_hud/chat_panel/main_content.json",
+    "XeroxClient/hud_screen/xeroxclient_style_hud/display/hand-hold_item_display.json",
+    "XeroxClient/hud_screen/xeroxclient_style_hud/display/keystroke_display_for_gamepad.json",
+    "XeroxClient/hud_screen/xeroxclient_style_hud/player_position.json",
+    "XeroxClient/hud_screen/xeroxclient_style_hud/player_renderer.json",
+    "XeroxClient/hud_screen/xeroxclient_style_hud_content.json",
+
+    "XeroxClient/mob_effect_screen/anims.json",
+
+    "XeroxClient/music_player/anims.json",
+    "XeroxClient/music_player/button_template.json",
+    "XeroxClient/music_player/icons.json",
+    "XeroxClient/music_player/main_screen.json",
+
+    "XeroxClient/pause_screen/anims.json",
+    "XeroxClient/pause_screen/button_common.json",
+    "XeroxClient/pause_screen/main_menu.json",
+    "XeroxClient/pause_screen/memo.json",
+    "XeroxClient/pause_screen/player_list.json",
+
+    "XeroxClient/play_screen/anims.json",
+    "XeroxClient/play_screen/main_screen.json",
+    "XeroxClient/play_screen/tab_common.json",
+
+    "XeroxClient/profile_card/anims.json",
+
+    "XeroxClinet/progress_screen/anims.json",
+    "XeroxClinet/progress_screen/progress_bar.json",
+
+    "XeroxClient/server_form/anims.json",
+
+    "XeroxClient/settings_screen/module_settings/module_controls.json",
+    "XeroxClient/settings_screen/common_controls.json",
+
+    "XeroxClient/start_screen/anims.json",
+    "XeroxClient/start_screen/bottom_info_panel.json",
+    "XeroxClient/start_screen/main_screen.json",
+    "XeroxClient/start_screen/top_content.json",
+
+    "XeroxClient/Xerox_ui_common.json",
+    "XeroxClient/xerox_client_common.json",
+
+    "ui/!config.txt"
+  ]
+}

@@ -1,0 +1,64 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "play_tab_common",
+
+  "left_tab@common_tabs.tab_left": {
+    "$button_mappings": [
+      {
+        "from_button_id": "button.menu_select",
+        "to_button_id": "button.tab_anim",
+        "mapping_type": "pressed"
+      },
+      {
+        "from_button_id": "button.menu_ok",
+        "to_button_id": "button.tab_anim",
+        "mapping_type": "focused"
+      }
+    ],
+    "size": ["100%", 30],
+    "$toggle_tts_enabled_binding_type": "global",
+    "$radio_toggle_group": true,
+    "$default_tab": 0,
+    "$toggle_name": "nagivation_tab",
+    "$toggle_group_default_selected": "$default_tab"
+  },
+
+  "world_nav_tab@play_tab_common.left_tab": {
+    "$tab_view_binding_name": "play_world_section",
+    "$tab_icon": "play.worlds_icon",
+    "$count_text_name": "#world_item_count",
+    "$tab_text_name": "selectWorld.tab.worlds",
+    "$toggle_group_forced_index": 0,
+    "$tab_content": "play.common_navigation_tab_content"
+  },
+
+  "friends_nav_tab@play_tab_common.left_tab": {
+    "$tab_view_binding_name": "play_friend_section",
+    "$tab_icon": "play.friends_icon_2",
+    "$tab_icon_2": "play.friends_icon_1",
+    "$tab_icon_nobounce": "play.friends_icon_2",
+    "$tab_icon_nobounce_2": "play.friends_icon_1",
+    "$tab_icon_notification": "play.invite_icon",
+    "$visibility_binding_override_name": "#friends_tab_show_bouncing",
+    "$visibility_binding_override_name_nobounce": "#friends_tab_show_not_bouncing",
+    "$visibility_binding_override_name_notification": "#friends_tab_show_invites",
+    "$count_text_name": "#friend_world_item_count",
+    "$tab_text_name": "selectWorld.tab.friends",
+    "$toggle_group_forced_index": 1,
+    "$tab_content": "play.friends_navigation_tab_content"
+  },
+
+  "server_nav_tab@play_tab_common.left_tab": {
+    "$tab_view_binding_name": "play_server_section",
+    "$tab_icon": "play.server_tab_icon",
+    "$count_text_name": "#server_world_item_count",
+    "$tab_text_name": "selectWorld.tab.thirdParty",
+    "$toggle_group_forced_index": 2,
+    "$tab_content": "play.common_navigation_tab_content"
+  }
+}

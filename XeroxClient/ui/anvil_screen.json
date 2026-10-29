@@ -1,0 +1,232 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "anvil",
+
+  "recipe_panel": {
+    "offset": [0, 35]
+  },
+
+  "plus_sign_icon": {
+    "texture": "textures/ui/Xerox/others/plus",
+    "alpha": 0.65
+  },
+
+  "arrow_icon": {
+    "texture": "textures/ui/Xerox/others/arrow_large",
+    "alpha": 0.65
+  },
+
+  "generic_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "expand": {
+    "type": "image",
+    "texture": "textures/ui/Xerox/image/icon/expand"
+  },
+
+  "text_edit_panel": {
+    "type": "stack_panel",
+    "orientation": "horizontal",
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_back",
+        "value": [
+          {
+            "larger_text_edit_box_toggle@common_toggles.dark_ui_toggle": {
+              "size": [30, 30],
+              "$toggle_name": "larger_text_edit_box_toggle",
+              "$button_type_panel": "anvil.expand",
+              "$toggle_view_binding_name": "larger_text_edit_box"
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "text_edit_control": {
+    "enabled_newline": true,
+    "max_length": 32767,
+    "size": ["fill", 30]
+  },
+  "anvil_title_and_text_panel": {
+    "size": [ "100%", "100%" ],
+    "offset": []
+  },
+
+  "anvil_title_and_text_panel/title_panel": {
+    "ignored": true
+  },
+
+  "icon_and_text_panel/anvil_icon_panel": {
+    "ignored": true
+  },
+
+  "title_label": {
+    "ignored": true
+  },
+
+  "cost_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "anvil_panel/root_panel/common_panel": {
+    "ignored": true
+  },
+
+  "larger_text_edit_box_panel@common.root_panel": {
+    "size": [146, 166],
+    "controls": [
+      {
+        "bg@Xerox_common.inv_common_panel": {
+          "$inv_top_visible": false
+        }
+      },
+      {
+        "text_edit_box@common.scrollable_multiline_text_edit_box": {
+          "size": ["100% - 12px", "100% - 12px"],
+          "property_bag": {
+            "#property_field": "#item_name"
+          },
+          "max_length": 32767,
+          "$text_edit_binding_name": "#text_box_item_name"
+        }
+      }
+    ]
+  },
+
+  "right_panel@common.root_panel": {
+    "$container_texture": "anvil",
+    "$container_name": "container.repair",
+    "layer": 1,
+    "controls": [
+      { "mode_select@inv_quick_mode.inv_mode_select_panel": { "offset": [22, 0] } },
+      { "new_common_panel@Xerox_common.inv_common_panel": {} },
+      {
+        "anvil_screen_inventory": {
+          "type": "panel",
+          "layer": 2,
+          "controls": [
+            { "top_half_panel@anvil.top_half_panel": {} },
+            { "inventory_panel_bottom_half_with_label@common.inventory_panel_bottom_half_with_label": {} },
+            { "hotbar_grid@common.hotbar_grid_template": {} },
+            { "inventory_take_progress_icon_button@common.inventory_take_progress_icon_button": {} }
+          ]
+        }
+      },
+      { "inventory_selected_icon_button@common.inventory_selected_icon_button": {} },
+      { "gamepad_cursor@common.gamepad_cursor_button": {} }
+    ]
+  },
+
+  "screen_stack_panel": {
+    "type": "stack_panel",
+    "orientation": "horizontal",
+    "size": [ "100%c", "100%cm" ],
+    "controls": [
+      {
+        "left_panel": {
+          "type": "stack_panel",
+          "orientation": "horizontal",
+          "size": [ "100%c", "100%cm" ],
+          "controls": [
+            { "larger_text_edit_box_panel@anvil.larger_text_edit_box_panel": {} },
+            {
+              "center_fold": {
+                "type": "panel",
+                "size": [4, 0]
+              }
+            }
+          ],
+          "bindings": [
+            {
+              "binding_type": "view",
+              "source_control_name": "larger_text_edit_box",
+              "source_property_name": "#toggle_state",
+              "target_property_name": "#visible"
+            }
+          ]
+        }
+      },
+      {
+        "paperdoll_panel": {
+          "type": "panel",
+          "size": [0, 166],
+          "controls": [
+            { "paper_doll@chest.paper_doll": {} }
+          ],
+          "bindings": [
+            {
+              "resolve_sibling_scope": true,
+              "binding_type": "view",
+              "source_control_name": "larger_text_edit_box",
+              "source_property_name": "(not #toggle_state)",
+              "target_property_name": "#visible"
+            }
+          ]
+        }
+      },
+      { "right_panel@anvil.right_panel": {} }
+    ]
+  },
+
+  "anvil_panel/root_panel": {
+    "ignored": true
+  },
+
+  "anvil_panel": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          { "screen_stack_panel@anvil.screen_stack_panel": {} },
+          {
+            "logo_panel": {
+              "type": "panel",
+              "size": [0, 166],
+              "controls": [
+                { "logo@Xerox_common.client_logo": { "offset": [0, 35] } }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+
+  "anvil_screen": {
+    "variables": [
+      {
+        "requires": "$desktop_screen",
+        "$screen_content": "anvil.anvil_panel",
+        "$screen_bg_content": "common.screen_background",
+        "$screen_animations": [
+          "@container_animation.container_screen_exit_offset_push",
+          "@container_animation.container_screen_exit_offset_pop",
+          "@container_animation.container_screen_entrance_offset_push",
+          "@container_animation.container_screen_entrance_offset_pop",
+          "@container_animation.container_screen_exit_size_push",
+          "@container_animation.container_screen_exit_size_pop",
+          "@container_animation.container_screen_entrance_size_push",
+          "@container_animation.container_screen_entrance_size_pop",
+          "@container_animation.container_screen_exit_alpha_push",
+          "@container_animation.container_screen_exit_alpha_pop",
+          "@container_animation.container_screen_entrance_alpha_push",
+          "@container_animation.container_screen_entrance_alpha_pop"
+        ]
+      },
+      {
+        "requires": "$pocket_screen",
+        "$screen_content": "anvil_pocket.anvil_panel"
+      }
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "format_version": "1.16.100",
+  "minecraft:fog_settings": {
+    "description": {
+      "identifier": "xeroxclient:fog_default"
+    },
+    "distance": {
+      "air": {
+        "fog_start": 0.2,
+        "fog_end": 0.95,
+        "fog_color": "#ABD2FF", 
+        "render_distance_type": "render"
+      },
+      "water": {
+        "fog_start": 0.0,
+        "fog_end": 50.0,
+        "fog_color": "#44AFF5",
+        "render_distance_type": "fixed"
+      },
+      "weather": {
+        "fog_start": 0.0,
+        "fog_end": 0.67,
+        "fog_color": "#666666",
+        "render_distance_type": "render"
+      },
+      "lava": {
+        "fog_start": 0.0,
+        "fog_end": 0.64,
+        "fog_color": "#991A00",
+        "render_distance_type": "fixed"
+      },
+      "lava_resistance": {
+        "fog_start": 0.0,
+        "fog_end": 15.0,
+        "fog_color": "#FF5E00",
+        "render_distance_type": "fixed"
+      }
+    }
+                 
+            
+  }
+}

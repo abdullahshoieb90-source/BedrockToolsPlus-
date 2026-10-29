@@ -1,0 +1,48 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "server_form_animation",
+  "form_out_animation": {
+    "anim_type": "size",
+    "easing": "in_out_cric",
+    "duration": 0.6,
+    "to": [235, "25%"],
+    "from": [235, "80%"],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "form_out_animation_pop": {
+    "anim_type": "size",
+    "easing": "in_out_cric",
+    "duration": 0.6,
+    "to": [235, "25%"],
+    "from": [235, "80%"],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "form_enter_animation": {
+    "anim_type": "size",
+    "easing": "out_cric",
+    "duration": 0.6,
+    "from": [235, "25%"],
+    "to": [235, "80%"],
+    "play_event": "screen.entrance_push",
+    "end_event": "screen.entrance_end"
+  },
+
+  "form_enter_animation_pop": {
+    "anim_type": "size",
+    "easing": "out_cric",
+    "duration": 0.6,
+    "from": [235, "25%"],
+    "to": [235, "80%"],
+    "play_event": "screen.entrance_pop",
+    "end_event": "screen.entrance_end"
+  }
+}

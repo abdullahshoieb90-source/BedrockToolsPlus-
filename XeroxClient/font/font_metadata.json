@@ -1,0 +1,123 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+    "version" : 1,
+    "fonts" : [
+      {
+        "font_format": "ttf",
+        "font_name": "MinecraftTen",
+        "version": 1,
+        "font_file": "font/minecraft/minecraft-ten",
+        "lowPerformanceCompatible": true
+      },
+      {
+        "font_format" : "msdf",
+        "font_name" : "OldSmoothFont",
+        "font_file" : "font/smooth/smooth_"
+      },
+      {
+        "font_format": "ttf",
+        "font_name": "KaushanScript-Regular",
+        "font_file": "font/KaushanScript-Regular",
+        "lowPerformanceCompatible": true
+      },
+      {
+        "font_format": "ttf",
+        "font_name": "Roboto-Bold",
+        "font_file": "font/Roboto-Bold",
+        "lowPerformanceCompatible": true
+      },
+      {
+        "font_format": "ttf",
+        "font_name": "Roboto-Regular",
+        "font_file": "font/Roboto-Regular",
+        "lowPerformanceCompatible": true
+      },
+      {
+        "font_format": "ttf",
+        "font_name": "NotoSans-Regular",
+        "font_file": "font/NotoSans-Regular",
+        "lowPerformanceCompatible": true
+      },
+      {
+        "font_format": "otf",
+        "font_name": "MinecraftSeven",
+        "font_file": "font/minecraft/minecraft-seven"
+      },
+      {
+        "font_format": "otf",
+        "font_name": "MinecraftFive",
+        "font_file": "font/minecraft/minecraft-five",
+        "lowPerformanceCompatible": true
+      },
+      {
+        "font_format": "otf",
+        "font_name": "MinecraftFiveBold",
+        "font_file": "font/minecraft/minecraft-five-bold",
+        "lowPerformanceCompatible": true
+      }
+    ],
+    "font_aliases" : [
+      {
+        "alias" : "SmoothFontLatin", 
+
+        "fonts" : [
+          {
+            "font_reference" : "OldSmoothFont"
+          },
+          {
+            "font_reference" : "UnicodeFont",
+            "font_ranges" : [
+              { "first" : 54620, "last" : 54620 },
+              { "first" : 44397, "last" : 44397 },
+              { "first" : 50612, "last" : 50612 },
+              { "first" : 45824, "last" : 45824 },
+              { "first" : 48124, "last" : 48124 },
+              { "first" : 57344, "last" : 63743 }
+            ]
+          }
+        ]
+      },
+      {
+        "alias": "MinecraftTenEmoticon",
+        "fonts": [
+          {
+            "font_reference": "MinecraftTen"
+          },
+          {
+            "font_reference": "OldSmoothFont",
+            "font_ranges": [
+              {
+                "first": 57344,
+                "last": 63743
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "alias": "SmoothSmall",
+        "font_scale_factor": 1,
+        "fonts": [
+          {
+            "font_reference": "OldSmoothFont"
+          },
+          {
+            "font_reference": "UnicodeFont",
+            "font_ranges" : [
+              { "first" : 54620, "last" : 54620 },
+              { "first" : 44397, "last" : 44397 },
+              { "first" : 50612, "last" : 50612 },
+              { "first" : 45824, "last" : 45824 },
+              { "first" : 48124, "last" : 48124 },
+              { "first" : 57344, "last" : 63743 }
+            ]
+          }
+        ]
+      }
+    ]    
+}

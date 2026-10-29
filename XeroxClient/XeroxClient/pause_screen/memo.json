@@ -1,0 +1,108 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "pause_memo",
+
+  "memo_panel_content": {
+    "type": "stack_panel",
+    "size": [200, "100%c"],
+    "controls": [
+      {
+        "title_panel": {
+          "type": "image",
+          "size": ["100%", 25],
+          "texture": "textures/ui/Xerox/Black",
+          "alpha": 0.2,
+          "clips_children": true,
+          "controls": [
+            {
+              "title_text": {
+                "type": "label",
+                "size": ["100%", 20],
+                "text": "Memo",
+                "offset": [0, -2],
+                "font_scale_factor": 2,
+                "font_type": "KaushanScript-Regular",
+                "text_alignment": "center",
+                "layer": 10
+              }
+            },
+            {
+              "top_line": {
+                "type": "image",
+                "size": ["100%", 1],
+                "texture": "textures/ui/Xerox/White",
+                "anchor_from": "top_middle",
+                "anchor_to": "top_middle",
+                "layer": 10
+              }
+            },
+            {
+              "bottom_line": {
+                "type": "image",
+                "size": ["100%", 1],
+                "texture": "textures/ui/Xerox/White",
+                "anchor_from": "bottom_middle",
+                "anchor_to": "bottom_middle",
+                "layer": 10
+              }
+            },
+            {
+              "background": {
+                "type": "image",
+                "size": ["100%", "400%"],
+                "texture": "textures/ui/Xerox/image/BlackToTransparent1",
+                "anchor_from": "bottom_middle",
+                "anchor_to": "top_middle",
+                "layer": -10,
+                "offset": [0, 2],
+                "alpha": 0.8
+              }
+            }
+          ],
+          "animation_reset_name": "screen_animation_reset",
+          "anims": [
+            "@pause_animation.title_out_animation",
+            "@pause_animation.title_out_animation_pop",
+            "@pause_animation.title_enter_animation",
+            "@pause_animation.title_enter_animation_pop"
+          ]
+        }
+      },
+      {
+        "padding": {
+          "type": "panel",
+          "size": [0, 2]
+        }
+      },
+      {
+        "memo_edit_panel": {
+          "type": "panel",
+          "size": [200, 120],
+          "controls": [
+            { "text_edit@pause_memo.memo_edit_box": { "layer": 3 } }
+          ]
+        }
+      }
+    ],
+    "bindings": [
+      {
+        "binding_type": "view",
+        "source_control_name": "memo_panel",
+        "source_property_name": "#toggle_state",
+        "target_property_name": "#visible"
+      }
+    ]
+  },
+
+  "memo_edit_box@common.scrollable_multiline_text_edit_box": {
+    "size": [ "100% - 2px", "100% - 2px"],
+    "max_length": 32767,
+    "$place_holder_text": "You can take some notes here...",
+    "$text_box_name": "memo"
+  },
+}

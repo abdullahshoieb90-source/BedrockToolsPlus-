@@ -1,0 +1,70 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "format_version": 2,
+  "header": {
+    "description": "Made By Greninja.\n============\nFeature List:\n- Armor HUD\n- Direction HUD\n- Dynamic Crosshair\n- Killaura ESP(Just a Vision)\n- Original User Interfaces\n- 3D Throwing Projects\n- 2D Fishing Hook\n- Cape Physics\n- Armor Stand Like Player\n- First Person Hand Like Java Edition\n- Fog\n- Music Player\n- Lower Fire\n- Effect HUD\n- Java Style Durability Bar\n- FPS Boost",
+    "name": "§l§bXerox§rClient",
+    "uuid": "1B29F76B-A621-42D3-A1FB-02282B268865",
+    "version": [1, 0, 2],
+    "min_engine_version": [1, 18, 30]
+  },
+  "modules": [
+    {
+      "description": "",
+      "type": "resources",
+      "uuid": "1D7C96D0-03B9-45A8-B335-5BAFDAD0279E",
+      "version": [1, 0, 0]
+    }
+  ],
+  "subpacks": [
+    {
+      "folder_name": "foggy",
+      "name": "Foggy",
+      "memory_tier": 0
+    },
+    {
+      "folder_name": "nofog",
+      "name": "No Fog",
+      "memory_tier": 0
+    }
+  ],
+  "settings": [
+    {
+      "type": "label",
+      "text": "Design by Greninja."
+    },
+    {
+      "type": "label",
+      "text": "============"
+    },
+    {
+      "type": "label",
+      "text": "Thanks For:"
+    },
+    {
+      "type": "label",
+      "text": " - Vargoo."
+    },
+    {
+      "type": "label",
+      "text": " - LiuXingGuanZhu."
+    },
+    {
+      "type": "label",
+      "text": " - MapleLeaf."
+    },
+    {
+      "type": "label",
+      "text": "============"
+    },
+    {
+      "type": "label",
+      "text": "Don't steal my code!!!"
+    }
+  ]
+}

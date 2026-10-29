@@ -1,0 +1,42 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "sidebar_navigation",
+
+  "sidebar_bg": {
+    "texture": "textures/ui/Xerox/Black",
+    "alpha": 0.7
+  },
+
+  "sidebar_divider": {
+    "ignored": true
+  },
+
+  "sidebar_divider_panel": {
+    "size": [ "100%", 3 ]
+  },
+
+  "verbose_button_content/button_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "verbose_button": {
+    "$default_button_texture": "textures/ui/Xerox/White",
+    "$hover_button_texture": "textures/ui/Xerox/White",
+    "$pressed_button_texture": "textures/ui/Xerox/White"
+  },
+
+  "verbose_screen_nav_button": {
+    "$default_button_texture": "textures/ui/Xerox/White",
+    "$hover_button_texture": "textures/ui/Xerox/White",
+    "$pressed_button_texture": "textures/ui/Xerox/White"
+  },
+
+  "edge_bar": {
+    "alpha": 0
+  }
+}

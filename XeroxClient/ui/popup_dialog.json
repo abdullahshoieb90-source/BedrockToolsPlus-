@@ -1,0 +1,287 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "popup_dialog",
+
+  "popup_dialog_message": {
+    "font_type": "$global_font_type"
+  },
+
+  "black_tint_image": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.45
+  },
+
+  "modal_title_text": {
+    "$title_text_offset|default": [ 0, 5 ],
+    "size": [ "100% - 8px", 15 ],
+    "$title_text_anchor|default": "top_middle",
+    "$title_text_alignment": "center",
+    "font_type": "$global_font_type",
+    "layer": 101
+  },
+
+  "modal_label_text/text": {
+    "font_type": "$global_font_type"
+  },
+
+  "modal_dialog_with_buttons/background_with_buttons": {
+    "$dialog_background": "dialog_image.dialog_background_2",
+    "layer": 100
+  },
+
+  "progress_dialog_popup/background": {
+    "$dialog_background": "dialog_image.dialog_background_2"
+  },
+
+  "progress_label": {
+    "font_type": "$global_font_type"
+  },
+
+  "empty_progress_bar_icon": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.65
+  },
+
+  "full_progress_bar_icon": {
+    "texture": "textures/ui/Xerox/White",
+    "alpha": 0.85,
+    "color": "$xeroxclient_ui_theme_button_pressed_color"
+  },
+
+  "progress_bar_nub": {
+    "ignored": true
+  },
+
+  "popup_dialog_button": {
+    "$default_button_texture": "textures/ui/Xerox/white_border",
+    "$hover_button_texture": "textures/ui/popup_dialog/button_hover",
+    "$xeroxclient_button_text_color_pressed": "$xeroxclient_ui_theme_popup_dialog_button_text_pressed_color",
+    "$xeroxclient_button_alpha_default": 1,
+    "$xeroxclient_button_alpha_hover": 1,
+    "$xeroxclient_button_alpha_pressed": 1,
+    "$xeroxclient_button_color_default": [],
+    "$xeroxclient_button_color_hover": [],
+    "$xeroxclient_button_color_pressed": []
+  },
+
+  "popup_dialog_button_with_binding": {
+    "$default_button_texture": "textures/ui/Xerox/white_border",
+    "$hover_button_texture": "textures/ui/popup_dialog/button_hover",
+    "$xeroxclient_button_text_color_pressed": "$xeroxclient_ui_theme_popup_dialog_button_text_pressed_color",
+    "$xeroxclient_button_alpha_default": 1,
+    "$xeroxclient_button_alpha_hover": 1,
+    "$xeroxclient_button_alpha_pressed": 1,
+    "$xeroxclient_button_color_default": [],
+    "$xeroxclient_button_color_hover": [],
+    "$xeroxclient_button_color_pressed": []
+  },
+
+  "modal_left_button": {
+    "anchor_to": "bottom_left",
+    "anchor_from": "bottom_left",
+    "size": [ "50%", "100%" ],
+    "$default_button_texture": "textures/ui/Xerox/white_border",
+    "$hover_button_texture": "textures/ui/popup_dialog/button_hover",
+    "$xeroxclient_button_text_color_pressed": "$xeroxclient_ui_theme_popup_dialog_button_text_pressed_color",
+    "$xeroxclient_button_alpha_default": 1,
+    "$xeroxclient_button_alpha_hover": 1,
+    "$xeroxclient_button_alpha_pressed": 1,
+    "$xeroxclient_button_color_default": [],
+    "$xeroxclient_button_color_hover": [],
+    "$xeroxclient_button_color_pressed": []
+  },
+
+  "modal_middle_button": {
+    "size": [ "100%", "100%" ],
+    "$default_button_texture": "textures/ui/Xerox/white_border",
+    "$hover_button_texture": "textures/ui/popup_dialog/button_hover",
+    "$xeroxclient_button_text_color_pressed": "$xeroxclient_ui_theme_popup_dialog_button_text_pressed_color",
+    "$xeroxclient_button_alpha_default": 1,
+    "$xeroxclient_button_alpha_hover": 1,
+    "$xeroxclient_button_alpha_pressed": 1,
+    "$xeroxclient_button_color_default": [],
+    "$xeroxclient_button_color_hover": [],
+    "$xeroxclient_button_color_pressed": []
+  },
+
+  "modal_rightcancel_button": {
+    "anchor_to": "bottom_right",
+    "anchor_from": "bottom_right",
+    "size": [ "50%", "100%" ],
+    "$default_button_texture": "textures/ui/Xerox/white_border",
+    "$hover_button_texture": "textures/ui/popup_dialog/button_hover",
+    "$xeroxclient_button_text_color_pressed": "$xeroxclient_ui_theme_popup_dialog_button_text_pressed_color",
+    "$xeroxclient_button_alpha_default": 1,
+    "$xeroxclient_button_alpha_hover": 1,
+    "$xeroxclient_button_alpha_pressed": 1,
+    "$xeroxclient_button_color_default": [],
+    "$xeroxclient_button_color_hover": [],
+    "$xeroxclient_button_color_pressed": []
+  },
+
+  "three_buttons_panel/left": {
+    "size": [ "33% + 0.5px", "100%" ]
+  },
+
+  "three_buttons_panel/middle": {
+    "size": [ "33% + 0.5px", "100%" ]
+  },
+
+  "three_buttons_panel/right": {
+    "size": [ "33% + 0.5px", "100%" ]
+  },
+
+  "modal_dialog_with_buttons": {
+    "size": [ 200, 120 ],
+    "layer": 100
+  },
+
+  "modal_dialog_with_buttons/text": {
+    "size": [ "100% - 8px", "100% - 44px" ],
+    "offset": [ 0, 18 ],
+    "layer": 100
+  },
+
+  "modal_dialog_with_buttons/button_panel": {
+    "anchor_to": "bottom_middle",
+    "anchor_from": "bottom_middle",
+    "size": [ "100% - 6px", 22 ],
+    "offset": [ 0, -3 ],
+    "layer": 100
+  },
+
+
+  "modal_dialog_popup/modal_input/black_background": {
+    "ignored": true
+  },
+
+  /*"modal_dialog_popup/modal_input": {
+    "modifications": [
+      {
+        "array_name": "controls",
+        "operation": "insert_front",
+        "value": [
+          {
+            "background_blur": {
+              "type": "panel",
+              "controls": [
+                {
+                  "background_5": {
+                    "type": "panel",
+                    "ignored": "(not $is_pregame)",
+                    "clips_children": true,
+                    "size": ["100%", "100%"],
+                    "offset": [ 0, "-50% - 60px" ],
+                    "layer": 50,
+                    "controls": [
+                      {
+                        "image": {
+                          "type": "image",
+                          "fill": true,
+                          "size": ["100%", "100%"],
+                          "offset": [ 0, "50% + 60px" ],
+                          "texture": "$background_texture"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "background_4": {
+                    "type": "panel",
+                    "ignored": "(not $is_pregame)",
+                    "clips_children": true,
+                    "size": ["100%", "100%"],
+                    "offset": [ 0, "50% + 60px" ],
+                    "layer": 50,
+                    "controls": [
+                      {
+                        "image": {
+                          "type": "image",
+                          "fill": true,
+                          "size": ["100%", "100%"],
+                          "offset": [ 0, "-50% - 60px" ],
+                          "texture": "$background_texture"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "background_3": {
+                    "type": "panel",
+                    "ignored": "(not $is_pregame)",
+                    "clips_children": true,
+                    "size": ["100%", "100%"],
+                    "offset": [ "-50% - 100px", 0 ],
+                    "layer": 50,
+                    "controls": [
+                      {
+                        "image": {
+                          "type": "image",
+                          "fill": true,
+                          "size": ["100%", "100%"],
+                          "offset": [ "50% + 100px", 0 ],
+                          "texture": "$background_texture"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "background_2": {
+                    "type": "panel",
+                    "ignored": "(not $is_pregame)",
+                    "clips_children": true,
+                    "size": ["100%", "100%"],
+                    "offset": [ "50% + 100px", 0 ],
+                    "layer": 50,
+                    "controls": [
+                      {
+                        "image": {
+                          "type": "image",
+                          "fill": true,
+                          "size": ["100%", "100%"],
+                          "offset": [ "-50% - 100px", 0 ],
+                          "texture": "$background_texture"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "background_1": {
+                    "type": "image",
+                    "ignored": "(not $is_pregame)",
+                    "fill": true,
+                    "texture": "$background_blur_texture",
+                    "layer": 25
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },*/
+
+  "form_fit_screen_with_title_and_close/panel_content/header/header_content": {
+    "font_type": "$global_font_type",
+    "text_alignment": "center"
+  },
+
+  "form_fit_screen_with_title_and_close": {
+    "$window_type|default": "dialog_image.dialog_background_2"
+  },
+
+  "form_fit_modal_dialog_popup/background": {
+    "alpha": 0.45,
+    "controls": []
+  }
+}

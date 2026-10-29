@@ -1,0 +1,357 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "Xerox_common",
+
+  "screen_content_text": {
+    "type": "label",
+    "text": "$screen_content",
+    "shadow": true
+  },
+
+  "background": {
+    "type": "image",
+    "size": ["100%", "100%"],
+    "texture": "$background_texture",
+    "layer": -2500,
+    "fill": true,
+    "bilinear": true
+  },
+
+  "background_blur": {
+    "type": "image",
+    "layer": -2000,
+    "texture": "textures/ui/Xerox/image/background/background_blur",
+    "fill": true,
+    "bilinear": true
+  },
+
+  "client_logo": {
+    "type": "panel",
+    "size": ["100%c", "100%c"],
+    "anchor_from": "bottom_middle",
+    "anchor_to": "bottom_middle",
+    "clips_children": true,
+    "animation_reset_name": "screen_animation_reset",
+    "anims": [
+      "@container_animation.logo_exit_animation_push",
+      "@container_animation.logo_exit_animation_pop",
+      "@container_animation.logo_entrance_animation_push",
+      "@container_animation.logo_entrance_animation_pop"
+    ],
+    "controls": [
+      {
+        "client_version@xc_common.luminous_text": {
+          "$text": "('Version ' + $ClientVersion - 'v')"
+        }
+      }
+    ]
+  }, //for container screen
+
+  "client_logo_text": {
+    "type": "label",
+    "size": ["default", 20],
+    "font_scale_factor": 2,
+    "text": "$ClientName",
+    "offset": [0, -5],
+    "font_type": "MinecraftTen",
+    "controls": [
+      {
+        "text_1": {
+          "type": "label",
+          "size": ["default", 10],
+          "text": "Made By Greninja.",
+          "font_type": "$global_font_type_2",
+          "anchor_from": "bottom_right",
+          "anchor_to": "bottom_right",
+          "offset": [0, 10]
+        }
+      }
+    ]
+  },
+
+  "common_header_no_background_blur@Xerox_common.common_header": {
+    "$show_header_background_blur": false
+  },
+
+  "common_header": {
+    "type": "panel",
+    "layer": 3,
+    "animation_reset_name": "screen_animation_reset",
+    "anims": "$header_animation",
+    "$header_extra_control|default": "common.empty_panel",
+    "$header_text_bindings|default": [],
+    "$header_background_blur_animation|default": [
+      "@Xerox_common.header_background_blur_out_animation",
+      "@Xerox_common.header_background_blur_out_animation_pop",
+      "@Xerox_common.header_background_blur_enter_animation",
+      "@Xerox_common.header_background_blur_enter_animation_pop"
+    ],
+    "$header_animation|default": [
+      "@Xerox_common.header_out_animation",
+      "@Xerox_common.header_out_animation_pop",
+      "@Xerox_common.header_enter_animation",
+      "@Xerox_common.header_enter_animation_pop"
+    ],
+    "$header_text|default": "null",
+    "$show_header_background_blur|default": true,
+    "controls": [
+      {
+        "background_blur_panel": {
+          "ignored": "(not $show_header_background_blur)",
+          "type": "panel",
+          "offset": [0, "-100% + 23px"],
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "clips_children": true,
+          "controls": [
+            {
+              "background_blur_image": {
+                "type": "image",
+                "fill": true,
+                "offset": [0, "100% - 23px"],
+                "texture": "$background_blur_texture",
+                "layer": 3,
+                "anchor_from": "top_middle",
+                "anchor_to": "top_middle",
+                "anims": "$header_background_blur_animation"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "header_background": {
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "type": "image",
+          "texture": "textures/ui/Xerox/Black",
+          "layer": 5,
+          "size": [ "100%", 23 ],
+          "alpha": 0.20
+        }
+      },
+      {
+        "title_panel": {
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "type": "panel",
+          "size": [ "100%", 23 ],
+          "controls": [
+            {
+              "back_button_content_panel": {
+               "type": "panel",
+               "size": ["100%c", "100%"],
+               "anchor_from": "left_middle",
+               "anchor_to": "left_middle",
+               "controls": [
+                  {
+                    "back_button@common.back_button": {
+                      "$button_text": "controller.buttonTip.back"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "title": {
+                "type": "label",
+                "size": ["default", 20],
+                "text": "$header_text",
+                "font_scale_factor": 1.8,
+                "layer": 11,
+                "offset": [-2, 0],
+                "font_type": "MinecraftTen",
+                "bindings": "$header_text_bindings"
+              }
+            },
+            {
+              "extra_controls_panel": {
+                "type": "panel",
+                "offset": [-2, 0],
+                "controls": [
+                  { "extra@$header_extra_control": {} }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+
+  "header_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.5,
+    "from": [ 0, 0 ],
+    "to": [ 0, "-23px" ],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "header_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.5,
+    "from": [ 0, 0 ],
+    "to": [ 0, "-23px" ],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "header_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.5,
+    "from": [ 0, "-23px" ],
+    "to": [ 0, 0 ],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "header_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.5,
+    "from": [ 0, "-23px" ],
+    "to": [ 0, 0 ],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "header_background_blur_out_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.5,
+    "from": [0, "100% - 23px"],
+    "to": [0, "100%"],
+    "play_event": "screen.exit_push",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "header_background_blur_out_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.5,
+    "from": [0, "100% - 23px"],
+    "to": [0, "100%"],
+    "play_event": "screen.exit_pop",
+    "reset_event": "screen_animation_reset"
+  },
+
+  "header_background_blur_enter_animation": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.5,
+    "to": [0, "100% - 23px"],
+    "from": [0, "100%"],
+    "play_event": "screen.entrance_push",
+    "resettable": true
+  },
+
+  "header_background_blur_enter_animation_pop": {
+    "anim_type": "offset",
+    "easing": "out_cubic",
+    "duration": 0.5,
+    "to": [0, "100% - 23px"],
+    "from": [0, "100%"],
+    "play_event": "screen.entrance_pop",
+    "resettable": true
+  },
+
+  "inv_common_panel": {
+    "type": "stack_panel",
+    "size": ["100%", "100%"],
+    "orientation": "vertical",
+    "$inv_top_visible|default": true,
+    "$show_container_type|default": true,
+    "$show_container_name|default": true,
+    "$show_close_button|default": true,
+    "$child_control|default": "common.empty_panel",
+    "$bindings|default": [],
+    "controls": [
+      {
+        "container_top_bar_bg": {
+          "size": ["100%", 14],
+          "layer": 1,
+          "type": "image",
+          "texture": "textures/ui/Xerox/image/BlackToTransparent2",
+          "alpha": 0.55,
+          "anchor_from": "top_middle",
+          "anchor_to": "top_middle",
+          "offset": [0, -15],
+          "ignored": "(not $inv_top_visible)",
+          "controls": [
+            {
+              "container_type": {
+                "type": "image",
+                "size": "$type_image_size",
+                "$type_image_size|default": [10, 10],
+                "offset": [2, 2],
+                "visible": "$show_container_type",
+                "anchor_from": "top_left",
+                "anchor_to": "top_left",
+                "texture": "('t' + 'e' + 'x' + 't' + 'u' + 'r' + 'e' + 's' + '/' + 'u' + 'i' + '/' + 'X' + 'e' + 'r' + 'o' + 'x' + '/' + 'i' + 'n' + 'v' + 'e' + 'n' + 't' + 'o' + 'r' + 'y' + '_' + 's' + 'c' + 'r' + 'e' + 'e' + 'n' + '_' + 'i' + 'c' + 'o' + 'n' + '/' + $container_texture)",
+                "$container_texture|default": ""
+              }
+            },
+            {
+              "container_name": {
+                "type": "label",
+                "size": ["default", 10],
+                "offset": "$type_name_offset",
+                "visible": "$show_container_name",
+                "$type_name_offset|default": [14, 2],
+                "anchor_from": "top_left",
+                "anchor_to": "top_left",
+                "font_type": "$global_font_type",
+                "text": "$container_name",
+                "$container_name|default": "",
+                "bindings": "$bindings"
+              }
+            },
+            {
+              "close@common_buttons.light_text_button": {
+                "size": [20, 20],
+                "offset": [1, -0.5],
+                "$button_text": "X",
+                "visible": "$show_close_button",
+                "$pressed_button_name": "button.menu_exit",
+                "anchor_from": "top_right",
+                "anchor_to": "top_left",
+                "$xeroxclient_button_alpha_default": 0.2,
+                "$xeroxclient_button_alpha_hover": 0.2,
+                "$xeroxclient_button_alpha_pressed": 0.3,
+                "$xeroxclient_button_color_default": [ 0.85098, 0.301961, 0.301961 ],
+                "$xeroxclient_button_color_hover": [ 0.85098, 0.301961, 0.301961 ],
+                "$xeroxclient_button_color_pressed": [ 0.85098, 0.301961, 0.301961 ]
+              }
+            },
+            {
+              "child_control@$child_control": {}
+            }
+          ]            
+        }
+      },
+      {
+        "padding": {
+          "size": [0, 1],
+          "ignored": "(not $inv_top_visible)",
+          "type": "panel"
+        }
+      },
+      {
+        "bg@dialog_image.dialog_background": {
+          "texture": "textures/ui/Xerox/image/BlackToTransparent1",
+          "size": ["100%", "fill"],
+          "alpha": 0.4
+        }
+      }
+    ]
+  }
+}

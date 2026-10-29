@@ -1,0 +1,7 @@
+// 文件由@Greninja.修改.
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File modified by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{"format_version":"1.10.0","minecraft:client_entity":{"description":{"identifier":"minecraft:snowball","materials":{"default":"snowball"},"textures":{"default":"textures/items/snowball"},"geometry":{"default":"geometry.throwing_object"},"render_controllers":["controller.render.throwing_object"],"animations":{"flying":"animation.throwing_object","trail":"controller.animation.throwing_project_trail"},"particle_effects":{"trail":"minecraft:basic_crit_particle"},"scripts":{"initialize":["v.life_time = 0.0;"],"animate":["flying",{"trail":"q.life_time>=0.05"}]}}}}

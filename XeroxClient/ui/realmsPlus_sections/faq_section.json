@@ -1,0 +1,24 @@
+// 由@Greninja.制作的文件. 
+// 未经允许不要使用任何文件. 请阅读LICENSE.txt
+
+// File made by @Greninja.
+// Don't use any file without permission. Read LICENSE.txt
+
+{
+  "namespace": "realmsPlus_faq",
+  "faq_text_question": {
+    "font_type": "$global_font_type"
+  },
+
+  "faq_text_section/faq_text_answer": {
+    "font_type": "$global_font_type"
+  },
+
+  "faq_price_bound_text_section/faq_text_answer": {
+    "font_type": "$global_font_type"
+  },
+
+  "faq_content_section/faq_header": {
+    "font_type": "$global_font_type"
+  }
+}
