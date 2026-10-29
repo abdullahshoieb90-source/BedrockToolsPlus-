@@ -163,4 +163,11 @@ inline float clampedOpacity(float opacity, float multiplier = 1.0f) {
     return std::clamp(opacity, 0.0f, 1.0f) * std::clamp(multiplier, 0.0f, 1.0f);
 }
 
+// True when a pass can ever render below full alpha. A pulsing pass modulates
+// its opacity, so it always needs the blending material even at opacity 1.0
+// (otherwise the box would flicker between blended and opaque rendering).
+inline bool needsBlending(float opacity, bool pulse) {
+    return pulse || opacity < 0.999f;
+}
+
 } // namespace blockoutline

@@ -51,6 +51,14 @@ for source in "${root}"/tests/*_test.cpp; do
                 skip="preloader/nlohmann_json headers (set PRE_LOADER_INCLUDE and JSON_INCLUDE)"
             fi
             ;;
+        commentkey_test)
+            if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
+               [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
+                extra+=(-I "${preloader_inc}" -I "${json_inc}")
+            else
+                skip="preloader/nlohmann_json headers (set PRE_LOADER_INCLUDE and JSON_INCLUDE)"
+            fi
+            ;;
         crosshair_test)
             # This test owns its pl::modmenu / pl::memory stubs, so it only
             # needs the API type declarations plus the host JSON/JNI fakes; a

@@ -5,6 +5,7 @@
 
 #include "core/GameHooks.hpp"
 #include "modules/ModuleRegistry.hpp"
+#include "overlay_button_style.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -173,13 +174,19 @@ void CommentKey::unregisterOverlayButtons() {
 void CommentKey::syncOverlayButtons() {
     std::vector<Comment> comments;
     float buttonScale;
+    float buttonOpacity;
     {
         std::lock_guard<std::mutex> lock(mMutex);
         comments = mComments;
         buttonScale = mButtonScale;
+        // The launcher hosts these buttons, so the opacity travels inside the
+        // definition: it is baked into the SVG frame and the label colors.
+        buttonOpacity = mButtonOpacity;
     }
 
     unregisterOverlayButtons();
+    const std::string frame = overlaystyle::opacitySvg(commentButtonSvg, buttonOpacity);
+    const std::string activeFrame = overlaystyle::opacitySvg(commentButtonActiveSvg, buttonOpacity);
     for (std::size_t i = 0; i < comments.size(); ++i) {
         const auto& comment = comments[i];
         if (!comment.enabled)
@@ -196,10 +203,11 @@ void CommentKey::syncOverlayButtons() {
             // Hotkey. The comment text remains visible on top of the frame.
             .stylePreset(pl::modmenu::ButtonStylePreset::Accent)
             .styleColors(0x00000001, 0x00000001, 0x00000001)
-            .svgIcon(commentButtonSvg, false)
-            .activeSvgIcon(commentButtonActiveSvg)
-            .textColor(0xFF000000u | (comment.textColor & 0x00FFFFFFu))
-            .activeTextColor(0xFF1F1F1Fu)
+            .svgIcon(frame.c_str(), false)
+            .activeSvgIcon(activeFrame.c_str())
+            .textColor(overlaystyle::alphaColor(
+                0xFF000000u | (comment.textColor & 0x00FFFFFFu), buttonOpacity))
+            .activeTextColor(overlaystyle::alphaColor(0xFF1F1F1Fu, buttonOpacity))
             .sizeScale((comment.width / kLauncherButtonBaseSize) * buttonScale,
                        (comment.height / kLauncherButtonBaseSize) * buttonScale)
             .onEvent([this, i](std::string_view, pl::modmenu::ButtonEvent event, float) {
@@ -274,10 +282,12 @@ void CommentKey::loadConfig(const nlohmann::json& j) {
     // while the comment text field is being typed.
     std::vector<Comment> previousComments;
     float previousButtonScale;
+    float previousButtonOpacity;
     {
         std::lock_guard<std::mutex> lock(mMutex);
         previousComments = mComments;
         previousButtonScale = mButtonScale;
+        previousButtonOpacity = mButtonOpacity;
     }
     Module::loadConfig(j);
 
@@ -385,7 +395,16 @@ void CommentKey::loadConfig(const nlohmann::json& j) {
         normalizeComments();
     }
 
-    bool overlayChanged = previousButtonScale != mButtonScale;
+    // Rebuild only when something shown on a button changed (comment text,
+    // width/height, text color, slot enable state, the scale multiplier, or
+    // the opacity baked into the frame/label colors):
+    // the launcher keeps a snapshot of each button definition, and
+    // ExternalButtonRefresh re-applies the new text/size/colors in place once
+    // the native definitions are refreshed. Updates that cannot affect a
+    // button (for example the cooldown) skip the rebuild so unrelated edits
+    // do not churn the launcher's button registry.
+    bool overlayChanged = previousButtonScale != mButtonScale ||
+                          previousButtonOpacity != mButtonOpacity;
     if (!overlayChanged && previousComments.size() == mComments.size()) {
         for (std::size_t i = 0; i < mComments.size(); ++i) {
             const auto& oldComment = previousComments[i];
@@ -402,13 +421,9 @@ void CommentKey::loadConfig(const nlohmann::json& j) {
             }
         }
     }
-    // Rebuild only when something shown on a button changed (comment text,
-    // width/height, text color, slot enable state, or the scale multiplier):
-    // the launcher keeps a snapshot of each button definition, and
-    // ExternalButtonRefresh re-applies the new text/size/colors in place once
-    // the native definitions are refreshed. Updates that cannot affect a
-    // button (for example the cooldown) skip the rebuild so unrelated edits
-    // do not churn the launcher's button registry.
+    // The launcher keeps a snapshot of each registered definition, so the
+    // rebuild must happen before refreshExternalButtonsForModule re-applies
+    // the new look in place.
     if (overlayChanged) syncOverlayButtons();
 }
 

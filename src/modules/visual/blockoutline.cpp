@@ -93,6 +93,8 @@ RenderLevelFn s_renderLevelOriginal = nullptr;
 std::uintptr_t s_renderMaterialGroup = 0;
 MaterialPtr s_selectionMaterial;
 MaterialPtr s_throughWallsMaterial;
+// Blending, still depth-tested (see ensureMaterials).
+MaterialPtr s_translucentMaterial;
 
 std::mutex s_targetMutex;
 TargetSnapshot s_target;
@@ -155,6 +157,14 @@ MaterialPtr getMaterial(const char* name) {
 void ensureMaterials() {
     if (!s_renderMaterialGroup) return;
     if (!s_selectionMaterial) s_selectionMaterial = getMaterial("selection_box");
+
+    // selection_box has no Blending render state in the vanilla material
+    // definitions, so the game discards the tessellator's alpha channel and
+    // the Opacity/Pulse sliders have no visible effect on it. When a pass
+    // needs real translucency it swaps to name_tag_depth_tested instead:
+    // same material group, alpha blending enabled, and it still depth-tests
+    // against terrain (depthFunc LessEqual) with no depth writes.
+    if (!s_translucentMaterial) s_translucentMaterial = getMaterial("name_tag_depth_tested");
 
     // ui_fill_color has no terrain-depth test in current Bedrock builds and is
     // therefore suitable for the explicit Through Walls option. If a future
@@ -406,6 +416,23 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
         playerRenderer + bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos);
 
     ensureMaterials();
+
+    const double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
+    const float pulse = blockoutline::pulseMultiplier(
+        g_blockOutline->pulse, seconds, g_blockOutline->pulseSpeed);
+    const std::uint32_t outlineRgb = blockoutline::animatedRgb(
+        g_blockOutline->outlineColor,
+        g_blockOutline->rainbow,
+        seconds,
+        g_blockOutline->rainbowSpeed);
+    const std::uint32_t fillRgb = blockoutline::animatedRgb(
+        g_blockOutline->fillColor,
+        g_blockOutline->rainbow,
+        seconds,
+        g_blockOutline->rainbowSpeed);
+    const float outlineAlpha = blockoutline::clampedOpacity(g_blockOutline->outlineOpacity, pulse);
+    const float fillAlpha = blockoutline::clampedOpacity(g_blockOutline->fillOpacity, pulse);
+
     void* normalOutlineMaterial = s_selectionMaterial
         ? static_cast<void*>(&s_selectionMaterial)
         : nullptr;
@@ -429,6 +456,18 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
     void* normalFillMaterial = normalOutlineMaterial ? normalOutlineMaterial : embeddedSelectionOverlay;
     void* outlineMaterial = normalOutlineMaterial;
     void* fillMaterial = normalFillMaterial;
+
+    // Passes that can render below full alpha need the blending material; the
+    // vanilla selection_box material ignores the alpha channel entirely.
+    if (s_translucentMaterial) {
+        void* translucent = static_cast<void*>(&s_translucentMaterial);
+        if (blockoutline::needsBlending(g_blockOutline->outlineOpacity, g_blockOutline->pulse)) {
+            outlineMaterial = translucent;
+        }
+        if (blockoutline::needsBlending(g_blockOutline->fillOpacity, g_blockOutline->pulse)) {
+            fillMaterial = translucent;
+        }
+    }
     if (g_blockOutline->throughWalls && s_throughWallsMaterial) {
         outlineMaterial = static_cast<void*>(&s_throughWallsMaterial);
         fillMaterial = static_cast<void*>(&s_throughWallsMaterial);
@@ -447,20 +486,6 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
     colorHolder[2] = 1.0f;
     colorHolder[3] = 1.0f;
 
-    const double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
-    const float pulse = blockoutline::pulseMultiplier(
-        g_blockOutline->pulse, seconds, g_blockOutline->pulseSpeed);
-    const std::uint32_t outlineRgb = blockoutline::animatedRgb(
-        g_blockOutline->outlineColor,
-        g_blockOutline->rainbow,
-        seconds,
-        g_blockOutline->rainbowSpeed);
-    const std::uint32_t fillRgb = blockoutline::animatedRgb(
-        g_blockOutline->fillColor,
-        g_blockOutline->rainbow,
-        seconds,
-        g_blockOutline->rainbowSpeed);
-
     const blockoutline::Box box = blockoutline::makeBlockBox(target.position, kBoxExpansion);
     if (g_blockOutline->fill) {
         drawFill(screenContext,
@@ -471,7 +496,7 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
                  g_blockOutline->fillFaceOnly,
                  camera,
                  fillRgb,
-                 blockoutline::clampedOpacity(g_blockOutline->fillOpacity, pulse));
+                 fillAlpha);
     }
     if (g_blockOutline->outline) {
         drawOutline(screenContext,
@@ -480,7 +505,7 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
                     box,
                     camera,
                     outlineRgb,
-                    blockoutline::clampedOpacity(g_blockOutline->outlineOpacity, pulse),
+                    outlineAlpha,
                     g_blockOutline->lineThickness);
     }
 

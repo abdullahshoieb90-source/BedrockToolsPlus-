@@ -26,6 +26,7 @@ struct Batch {
     int mode = -1;
     int reservedVertices = 0;
     int emittedVertices = 0;
+    void* material = nullptr;
 };
 
 std::vector<Batch> g_batches;
@@ -34,13 +35,14 @@ void* g_hitResult = nullptr;
 
 void fakeRenderLevel(void*, void*, void*) {}
 void fakeTessBegin(void*, void*, int mode, int vertexCount, int) {
-    g_currentBatch = {mode, vertexCount, 0};
+    g_currentBatch = {mode, vertexCount, 0, nullptr};
 }
 void fakeTessColor(void*, float, float, float, float) {}
 void fakeTessVertex(void*, float, float, float) {
     ++g_currentBatch.emittedVertices;
 }
-void fakeRenderMesh(void*, void*, void*, char*) {
+void fakeRenderMesh(void*, void*, void* material, char*) {
+    g_currentBatch.material = material;
     g_batches.push_back(g_currentBatch);
 }
 void* fakeGetHitResult(void*) {
@@ -201,6 +203,94 @@ int main() {
         g_batches.clear();
         renderBlockOutline(levelRenderer.data(), screenContext.data());
         check(g_batches.empty(), "disabling the module clears its cached target");
+    }
+
+    std::printf("block outline blending material\n");
+    {
+        BlockOutlineModule module;
+        module.onInit();
+        module.setMasterEnabled(true);
+        updateTarget(player.data());
+
+        // Pretend the game's material group exposed both special materials.
+        // The production renderer only swaps materials; which names resolve is
+        // covered by the real material group on device.
+        s_translucentMaterial.data[0] = &s_translucentMaterial;
+        s_throughWallsMaterial.data[0] = &s_throughWallsMaterial;
+        // With no material group, the renderer falls back to the embedded
+        // selection-overlay material: the address of the member inside the
+        // player renderer (its look-like-a-pointer value gates the use).
+        const void* vanillaMaterial =
+            playerRenderer.data() + LevelRendererPlayer::mSelectionOverlayMaterial;
+
+        module.outline = true;
+        module.fill = false;
+
+        // A fully opaque outline keeps the vanilla selection material.
+        module.outlineOpacity = 1.0f;
+        module.pulse = false;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2 &&
+              g_batches[0].material == vanillaMaterial &&
+              g_batches[1].material == vanillaMaterial,
+              "opaque outline keeps the vanilla selection material");
+
+        // A translucent outline must not use selection_box: it has no
+        // Blending state, so the alpha (and with it the Opacity slider and
+        // Pulse) would be silently ignored.
+        module.outlineOpacity = 0.5f;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2 &&
+              g_batches[0].material == &s_translucentMaterial &&
+              g_batches[1].material == &s_translucentMaterial,
+              "translucent outline renders with the blending material");
+
+        // Pulse modulates opacity, so it needs blending even at opacity 1.
+        module.outlineOpacity = 1.0f;
+        module.pulse = true;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2 &&
+              g_batches[0].material == &s_translucentMaterial &&
+              g_batches[1].material == &s_translucentMaterial,
+              "pulsing outline always renders with the blending material");
+        module.pulse = false;
+
+        // Fill picks its material independently of the outline.
+        module.outline = false;
+        module.fill = true;
+        module.fillOpacity = 0.3f;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && g_batches[0].material == &s_translucentMaterial,
+              "translucent fill renders with the blending material");
+
+        // Through Walls keeps using the no-depth blending material.
+        module.throughWalls = true;
+        module.fillOpacity = 1.0f;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && g_batches[0].material == &s_throughWallsMaterial,
+              "through-walls fill keeps the no-depth material");
+        module.throughWalls = false;
+
+        // Without a blending material the renderer must fall back to the
+        // vanilla material instead of rendering nothing.
+        s_translucentMaterial = {};
+        module.outline = true;
+        module.fill = false;
+        module.outlineOpacity = 0.5f;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2 && g_batches[0].material == vanillaMaterial &&
+              g_batches[0].emittedVertices == 96,
+              "missing blending material falls back to the vanilla material");
+
+        s_translucentMaterial = {};
+        s_throughWallsMaterial = {};
+        module.setMasterEnabled(false);
     }
 
     std::printf("block outline config\n");
