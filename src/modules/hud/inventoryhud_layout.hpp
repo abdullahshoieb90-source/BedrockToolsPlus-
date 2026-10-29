@@ -82,6 +82,7 @@ inline float gridHeight(const GridLayout& layout) {
 using slotdecor::DurabilityBar;
 using slotdecor::TextAnchor;
 using slotdecor::countTextAnchor;
+using slotdecor::countTextSize;
 using slotdecor::durabilityBar;
 using slotdecor::durabilityColor;
 using slotdecor::durabilityRatio;

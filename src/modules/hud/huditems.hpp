@@ -26,7 +26,7 @@
 
 namespace bedrocktools::huditems {
 
-// Resolves the ItemRenderer / ItemStackBase / BaseActorRenderContext
+// Resolves the ItemRenderer / ItemStackBase / NBT / BaseActorRenderContext
 // functions from the signature table. Idempotent; call it from onInit().
 void initialize();
 
@@ -71,7 +71,7 @@ EquipmentStacks getEquipmentStacks(void* player);
 
 void* stackItem(void* stack);         // Item*, nullptr for an empty slot
 std::uint8_t stackCount(void* stack); // ItemStackBase::mCount
-int stackDamage(void* stack);         // ItemStackBase::getDamageValue, >= 0
+int stackDamage(void* stack);         // NBT Damage for player stacks, >= 0
 int itemMaxDamage(void* item);        // Item::getMaxDamage, 0 when unbreakable
 // Items whose icon needs the HUD-opacity pass (dyed leather etc., see
 // IconPainter::beginOpacityFixPass).

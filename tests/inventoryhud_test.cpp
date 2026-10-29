@@ -11,6 +11,8 @@
 #include <new>
 #include <vector>
 
+#include "fake_damage_nbt.hpp"
+
 // Include the implementations to let the fake engine use the exact render
 // signatures, and to simulate an unavailable / later-resolved offhand accessor.
 #include "modules/hud/huditems.cpp"
@@ -65,7 +67,10 @@ void setStack(void* stack, void* counter, std::uint8_t count, int damage = 0) {
     put(stack, offsets::Inventory::ItemStackItemCounter, counter);
     put(stack, offsets::Inventory::ItemStackCount, count);
     put(stack, offsets::Inventory::ItemStackValid, static_cast<std::uint8_t>(counter != nullptr));
-    put(stack, FakeDamageOffset, damage);
+    // The game's auxiliary damage accessor may report 0 even when the
+    // player's ItemStack has a Damage tag. Model those as distinct fields.
+    put(stack, FakeDamageOffset, std::int16_t{0});
+    fake_damage_nbt::setDamage(stack, damage);
 }
 
 struct PaintedIcon {
@@ -100,10 +105,13 @@ const void* fakeOffhand(const void* actor) {
     return offhand;
 }
 short fakeMaxDamage(void* item) { return static_cast<FakeItem*>(item)->maxDamage; }
-int fakeDamage(void* stack) {
-    int result;
+short fakeDamage(void* stack) {
+    short result;
     std::memcpy(&result, static_cast<std::byte*>(stack) + FakeDamageOffset, sizeof(result));
     return result;
+}
+void* fakeNbtTreeFind(void* root, const hud::NbtTreeKey* key) {
+    return fake_damage_nbt::find(root, key->data, key->len);
 }
 
 hud::RectangleArea fakeClip(void*) { return {0.0f, 1000.0f, 0.0f, 1000.0f}; }
@@ -162,6 +170,8 @@ std::uintptr_t resolve(SignatureId id) {
     switch (id) {
         case SignatureId::ActorGetOffhandSlot:
             return offhandAvailable ? reinterpret_cast<std::uintptr_t>(fakeOffhand) : 0;
+        case SignatureId::NbtTreeFind:
+            return reinterpret_cast<std::uintptr_t>(fakeNbtTreeFind);
         case SignatureId::ItemStackBaseGetDamageValue:
             return reinterpret_cast<std::uintptr_t>(fakeDamage);
         case SignatureId::BaseActorRenderContextCtor:
@@ -351,6 +361,17 @@ int main() {
     check(near(fills[0].color.r, 0.0f) && near(fills[0].color.g, 0.0f) && near(fills[0].color.b, 1.0f) &&
               static_cast<int>(fills[0].alpha * 255.0f + 0.5f) == 204,
           "background color and opacity are applied");
+
+    setStack(inventory.stack(10), &counters[4], 255);
+    config["m_slotSize"] = 8.0f;
+    config["m_slotGap"] = 0.0f;
+    config["m_countTextSize"] = 40.0f;
+    module.loadConfig(config);
+    frame();
+    const auto* smallCount = findText("255");
+    check(smallCount && smallCount->w == -1.0f && smallCount->size <= 7.0f / 2.1f + 0.001f &&
+              smallCount->y > 300.0f && smallCount->y < 308.0f,
+          "three-digit inventory counts fit inside small slots");
 
     module.onMenuRegistered();
     check(schemaJson.find("m_showStackCount") != std::string::npos &&

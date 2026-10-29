@@ -68,18 +68,32 @@ inline std::uint32_t durabilityColor(float remainingRatio) {
     return 0xFF000000u | (red << 16) | (green << 8);
 }
 
-// Baseline anchor of the right-aligned stack count in a slot's bottom-right
-// corner.
+// Size and baseline for the right-aligned stack count. The launcher text size
+// is in HUD pixels, not slot pixels: cap it for small slots and reserve room
+// for up to three digits (ItemStack count is a byte). Otherwise a large Number
+// Text setting can place the count entirely outside the icon.
+inline float countTextSize(const SlotRect& slot, float requestedSize, unsigned count) {
+    const float inset = slot.size / 16.0f;
+    const float available = std::max(0.0f, slot.size - 2.0f * inset);
+    const unsigned digits = count >= 100 ? 3 : (count >= 10 ? 2 : 1);
+    // The launcher's default font's digits are narrower than 0.7 em; keep a
+    // small margin without requiring a platform-specific font measurement.
+    const float widthLimit = available / (0.7f * static_cast<float>(digits));
+    return std::max(0.0f, std::min({requestedSize, available, widthLimit}));
+}
+
 struct TextAnchor {
     float x = 0.0f;
     float y = 0.0f;
 };
 
-inline TextAnchor countTextAnchor(const SlotRect& slot) {
+inline TextAnchor countTextAnchor(const SlotRect& slot, float textSize) {
     const float unit = slot.size / 16.0f;
     TextAnchor anchor;
     anchor.x = slot.x + slot.size - unit;
-    anchor.y = slot.y + slot.size - unit;
+    // Android Canvas positions text by its baseline. Leave room for the
+    // font's descent below it so the count doesn't slip below the icon.
+    anchor.y = slot.y + slot.size - unit - std::max(0.0f, textSize) * 0.25f;
     return anchor;
 }
 

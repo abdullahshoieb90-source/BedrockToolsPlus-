@@ -471,23 +471,25 @@ void ArmorModule::onFrame() {
 
             const std::uint8_t count = runtime.count.load(std::memory_order_acquire);
             if (config.stackCount && count > 1) {
-                const decor::TextAnchor anchor = decor::countTextAnchor(rect);
+                const float size = decor::countTextSize(rect, config.countTextSize, count);
+                const decor::TextAnchor anchor = decor::countTextAnchor(rect, size);
                 pl::modmenu::DrawCommand text;
                 text.type = pl::modmenu::DrawCommandType::Text;
                 text.x = anchor.x;
                 text.y = anchor.y;
                 text.w = -1.0f; // right-aligned at x
                 text.color = config.countColor;
-                text.size = config.countTextSize;
+                text.size = size;
                 text.text = std::to_string(static_cast<unsigned>(count));
                 commands.push_back(std::move(text));
             }
         };
 
         for (std::size_t i = 0; i < SlotCount; ++i) {
+            if (i == layout::OffhandIndex && !config.showOffhand) continue;
             decorate(m_slots[i], layout::slotRect(config.layout, i), i < layout::OffhandIndex);
         }
-        decorate(m_mainhandRuntime, mainhandRect(config.layout), false);
+        if (config.showMainhand) decorate(m_mainhandRuntime, mainhandRect(config.layout), false);
     }
     pl::modmenu::submitDrawCommands(moduleId, commands);
 }
@@ -549,7 +551,7 @@ void ArmorModule::onMenuRegistered() {
         auto features = node("slot_features", "Show", "details", ConfigControlTypeV2::ToggleGroup);
         features.key.clear();
         features.section = "slot_details";
-        features.description = "This module is independent of Inventory HUD: enable only what you want to see.";
+        features.description = "Counts appear on visible stacks larger than one; enable Right Hand to see the carried stack. Bars appear on damaged items.";
         features.choiceStyle = ConfigChoiceStyleV2::Checklist;
         features.options = {
             {"offhand", "Offhand Slot", {}, "m_showOffhand"},
