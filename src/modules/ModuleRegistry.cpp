@@ -11,6 +11,8 @@
 #include "hud/hotbarslots.hpp"
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
+#include "visual/esp.hpp"
+#include "combat/killaura.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -78,4 +80,6 @@ void registerAllModules() {
     registry.emplace<HotbarSlotsModule>();
     registry.emplace<InventoryHudModule>();
     registry.emplace<ArmorModule>();
+    registry.emplace<ESPModule>();
+    registry.emplace<KillAuraModule>();
 }

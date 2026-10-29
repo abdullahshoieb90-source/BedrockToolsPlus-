@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 12 configurable modules
+- 14 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -23,7 +23,9 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Hitbox, Block Outline, Wings
+**Visual:** Hitbox, ESP, Block Outline, Wings
+
+**Combat:** Kill Aura
 
 **HUD:** Effect Display, Crosshair, Hotbar Slots, Inventory HUD, Armor
 
@@ -40,6 +42,27 @@ The source is public so people can study how a real LeviLauncher mod is structur
 - There is no Range setting any more: the module scans a fixed ~128-block radius around you (far beyond the ~50-block sight the overlay is used at) and draws everything the game fetches there. **Show Entities**, **Show Players** and **Show Items** decide which groups are drawn — turn **Show Items** off if a mob/item farm floods the screen.
 - **Show 3rd Person** adds your own box while the camera is behind you, **Show Eye Line** and **Show Look Line** annotate every box, and **Hitbox Indicator** recolors the box under your crosshair with **Indicator Active Color** / **Indicator Default Color**. The highlight follows the game's own crosshair verdict, so an entity lights up only when the game itself says it is within your allowed attack distance (3 blocks in survival, 5 in creative); when that verdict is unavailable the indicator falls back to a 3-block reach measured from your own box.
 - Boxes hidden behind solid blocks are culled, so a wall stops an entity's box from showing through it.
+
+## ESP
+
+**ESP** is the through-walls counterpart of Hitbox: it draws nearby players, mobs and items as world-space boxes that stay visible through terrain, so nothing around you stays hidden.
+
+- **Players**, **Mobs** and **Items** each have their own toggle and color. Items are off by default (farms get noisy fast).
+- Three combinable passes share the group color: **Box** (the 12 edges of the collision box, with **Line Thickness** drawn as real geometry like Hitbox), **Fill** (a translucent shell with **Fill Opacity**) and **Tracers** (a line from the camera to the center of each box).
+- **Through Walls** is on by default and uses a no-depth-test material when the game build provides one; turn it off and terrain occludes the overlay again. Unlike Hitbox there is no voxel culling — seeing everything is the point.
+- **Show Invisible** (on by default) keeps actors with invisibility effects on the overlay. **Esp Range** sets the actor scan radius (8–128 blocks), and **Smooth Boxes** draws at the interpolated render position so boxes do not snap a tick ahead of moving entities.
+
+## Kill Aura
+
+**Kill Aura** automatically attacks the players and mobs around you. It calls the game's own melee attack path (the same `GameMode::attack` the vanilla attack input uses), so damage, cooldowns, knockback and the server transaction are all produced by the game itself — nothing is forged at the packet level, and modules like Hit Sound keep working.
+
+- **Attack Range** (1–8 blocks, default 3 — the vanilla survival reach) is measured the way the game measures it: from your eyes to the *closest point* of the target's collision box, which is also the hit position of the attack. Servers still enforce their own reach limit, so values past ~3 are mostly useful in singleplayer/creative or on lenient servers.
+- **Cps** sets the attack rate (1–30). Attacks run on the game tick, so anything above 20 simply attacks every tick. The timer only advances when an attack actually fires, so a target stepping into range is hit on the next tick.
+- **Attack Players** / **Attack Mobs** pick the target groups, **Attack Invisible** also strikes actors you cannot see, and **Multi Attack** hits every valid target in range each interval instead of only the nearest one.
+- **Rotate To Target** snaps your view onto the target before attacking (visible, client-side rotation — off by default, since the attack itself does not need it), and **Swing** plays the arm animation with each attack.
+- **Only Visible Targets** skips actors that are fully behind solid blocks (the same voxel visibility check Hitbox uses). Kill Aura always pauses while a container or chat screen is open.
+
+One implementation note for developers: there is no signature for the local player's `GameMode` object. The module derives its slot in `Player` from the verified `mSkin` offset (the layout keeps `mGameMode`, `mSpawnRandomizer`, `mSkin` as three consecutive pointers) and *validates* the object against the resolved attack functions (vtable slot 16) before every use. If a future game build moves the member, validation fails and the module falls back to the GameMode pointer captured from the game's own action events — any manual attack, block place or item use refreshes it — instead of calling through a wrong pointer.
 
 ## Block Outline
 

@@ -1,20 +1,21 @@
 {
   "schema_version": 1,
   "id": "bedrocktoolsplus",
-  "version": "1.5.7",
+  "version": "1.6.0",
   "minecraft_versions": [
     "1.26.60.X"
   ],
   "info": {
     "name": "BedrockToolsPlus",
     "author": "VENOM P2 GM",
-    "description": "A collection of utility, HUD, player, and visual modules for Minecraft Bedrock.",
+    "description": "A collection of combat, HUD, player, utility, and visual modules for Minecraft Bedrock.",
     "homepage_url": "https://github.com/abdullahshoieb90-source/BedrockToolsPlus-",
     "icon": "assets/bedrocktoolsplus.png",
     "tags": [
       "Utility",
       "HUD",
-      "Visual"
+      "Visual",
+      "Combat"
     ]
   },
   "release_assets": {

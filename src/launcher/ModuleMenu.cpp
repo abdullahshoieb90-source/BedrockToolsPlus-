@@ -283,6 +283,14 @@ void registerModulesWithLauncher() {
                     // hitbox lines (Hitbox module).
                     minVal = 1.0f;
                     maxVal = 10.0f;
+                } else if (kLower == "attackrange") {
+                    // Kill Aura reach in blocks; vanilla melee reach is ~3.
+                    minVal = 1.0f;
+                    maxVal = 8.0f;
+                } else if (kLower == "esprange") {
+                    // ESP actor scan radius in blocks.
+                    minVal = 8.0f;
+                    maxVal = 128.0f;
                 } else if (kLower.find("thick") != std::string::npos) {
                     maxVal = 20.0f;
                 }
