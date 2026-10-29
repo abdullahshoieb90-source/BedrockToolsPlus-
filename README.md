@@ -100,12 +100,20 @@ The **Wings** module renders animated 3D wings on your back that flap, idle and 
 
 The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. They are drawn with a depth-tested game material, so your body correctly occludes them when the camera swings in front of you, and the side facing the camera is auto-selected: the bright membrane from behind, a darker shadowed underside from the front. Every style is one continuous membrane instead of a chain of boxes: an articulated arm (shoulder, elbow, wrist) is bent into a smooth leading edge, and a cambered sail hangs off it with a swept, scalloped trailing edge, finger struts, a spar and wing-tip claw, a shoulder fairing and — on the feathered styles — three overlapping rows of quills. The sheet ripples while you flap and goes taut while you glide, and it is shaded per face with a headlight plus a sky lift so it keeps its volume from every angle.
 
+The wings also carry **secondary motion**, because they are attached to your back rather than welded to it: they drag behind you while you run and swing back into place when you stop, they drop and rock when you jump, and they float up over your back while you fall. The lag scales with your speed and is capped, so a sprint never leaves them detached; the jump rock is a damped spring that settles in about half a second and is deliberately slowed so a 20 Hz tick can draw it smoothly instead of aliasing it into jitter. The whole layer is one rigid offset plus one roll about the spine, so it applies to every style without distorting the membrane.
+
 ![Wings before and after](docs/wings-before-after.png)
 
 *Top row: the old per-bone box renderer. Bottom row: the membrane wing
 (Dragon, Angel, Demon).*
 
-Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
+![Wings secondary motion](docs/wings-secondary-motion.png)
+
+*One jump, sampled every tick. Top: the wings welded rigidly to the player.
+Bottom: with secondary motion - they sink and rock as the player rises, then
+float up over the back on the way down.*
+
+Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), and the secondary motion is a pure spring system (`wings_trail.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
 
 ## Custom Capes
 

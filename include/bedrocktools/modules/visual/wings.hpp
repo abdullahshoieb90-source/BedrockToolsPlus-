@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/Module.hpp"
+#include "modules/visual/wings_trail.hpp"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -33,6 +34,8 @@
 //                      of a single continuous membrane (leading edge, sail,
 //                      finger struts, spar, claw, feathers)
 //   wings_shape.hpp    pure math + the shading model
+//   wings_trail.hpp    the secondary motion: the springs that make the wings lag
+//                      behind the player and shudder on a jump
 //
 // The overlay used to draw seven disjoint prism boxes per wing, which read as a
 // comb of planks. The membrane is one sheet hanging off a Catmull-Rom arm: it
@@ -57,6 +60,12 @@
 //   target   = moveT * (1 - glideT)
 //   intensity smoothly lerps to target; glide lerps to glideT.
 //
+// On top of that pose the wings carry secondary motion (wings_trail.hpp): they
+// are not welded to the player, so they drag behind while running, drop and rock
+// when the player jumps, and float up while falling. That layer is a rigid move
+// of the whole pair - one offset plus one roll about the spine - so it costs
+// nothing to add to any style and cannot distort the membrane.
+//
 // flapSpeed is exposed as "Flap Speed" in the launcher menu in [0.1, 10.0].
 // On init the module writes the embedded geometry/animation/controller JSON
 // and texture into <config dir>/wings (if missing) so the same assets can be
@@ -74,6 +83,10 @@ struct WingBoneAngles {
     float flapPhase = 0.0f;                   // radians
     float intensity = 0.0f;                   // 0 = idle .. 1 = flight
     float glide = 0.0f;                       // 0 = folded pose .. 1 = glide
+    // Secondary motion published alongside the angles (see wings_trail.hpp).
+    // Copied by value so the render thread never reads the live springs.
+    bedrocktools::modules::wings::Vec3 trailPx{};  // model px the pair is displaced by
+    float trailRollDeg = 0.0f;                // shudder roll about the spine
 };
 
 class WingsModule : public Module {
@@ -213,6 +226,12 @@ private:
     float m_airTime = 0.0f;     // sustained descent time used for glide
     bool m_flapClockStarted = false;
     std::chrono::steady_clock::time_point m_lastFlapTick;
+
+    // Secondary motion: the wings lag behind the player and shudder on a jump.
+    // Stepped on the tick thread (it needs the measured velocity) and copied into
+    // the published snapshot for the render thread.
+    bedrocktools::modules::wings::WingTrail m_trail;
+    void stepTrail(float dtSeconds, float vx, float vy, float vz, float bodyYawDeg);
 
     // Player speed estimation from consecutive AABBs.
     bool m_hasPrevCenter = false;
