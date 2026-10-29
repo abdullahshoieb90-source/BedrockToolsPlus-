@@ -116,9 +116,11 @@ struct FakeActor {
         writeAt(bytes, bedrocktools::sdk::offsets::Actor::mCategories, categories);
     }
 
+    // Sized so every offset the render hook reads (including
+    // Actor::mActorRotationComponent, read by the hitbox indicator's
+    // getActorRotation) stays inside the zero-initialized allocation.
     alignas(16) std::array<std::byte,
-        bedrocktools::sdk::offsets::Actor::mStateVectorComponent +
-        bedrocktools::sdk::offsets::BuiltInActorComponents::mAABBShapeComponent +
+        bedrocktools::sdk::offsets::Actor::mActorRotationComponent +
         sizeof(std::uintptr_t)> bytes{};
     StateVector state{};
     Shape shape{};
@@ -129,12 +131,19 @@ struct FakeActor {
 std::vector<bedrocktools::sdk::Vec3> g_vertices;
 int g_beginCalls = 0;
 
+// Color capture: each drawn pass sets its color first, so recording the
+// color at the current vertex count maps boxes to the color they used.
+struct ColorMark { float r, g, b; std::size_t vertex; };
+std::vector<ColorMark> g_colorMarks;
+
 void fakeTessBegin(void*, void*, int, int, int) {
     // One begin call per drawn pass; the module's hairline pass is one call
     // per box, so this doubles as the box counter.
     ++g_beginCalls;
 }
-void fakeTessColor(void*, float, float, float, float) {}
+void fakeTessColor(void*, float r, float g, float b, float) {
+    g_colorMarks.push_back(ColorMark{r, g, b, g_vertices.size()});
+}
 void fakeTessVertex(void*, float x, float y, float z) {
     g_vertices.emplace_back(bedrocktools::sdk::Vec3{x, y, z});
 }
@@ -203,6 +212,7 @@ FrameResult drawFrame(const std::vector<FetchEntry>& entries, FakeActor& localPl
 
     g_vertices.clear();
     g_beginCalls = 0;
+    g_colorMarks.clear();
     g_lastFetchExtent = 0.0f;
     g_fetchedList.clear();
     for (const auto& entry : entries) {
@@ -456,6 +466,73 @@ int main() {
         clamped.loadConfig(crazyRanges);
         check(near(clamped.range, kHitboxMaxRange), "an oversized range is clamped to the ceiling");
         check(near(clamped.itemsRange, 0.0f), "a negative range clamps to 0 (disabled)");
+    }
+
+    std::printf("hitbox indicator in third person\n");
+
+    // Regression: the indicator's selection ray was capped at 3 blocks from
+    // the CAMERA. In third person the camera sits several blocks behind the
+    // player, so an entity under the crosshair just past the player was out
+    // of reach and never received the Indicator Active Color. The ray now
+    // adds the camera-to-player distance, so the 3-block reach is measured
+    // beyond the player in every perspective.
+    {
+        // Fresh module instance: it becomes the hook's g_hitboxMod for this
+        // stage (the config stage above left the pointer nulled on destroy).
+        HitboxModule indicatorMod;
+        indicatorMod.enabled = true;
+
+        // Simulate a third-person camera at the origin looking down +Z
+        // (rotation 0): the local player's box sits ~2.8 blocks ahead, and a
+        // mob floats just beyond it under the crosshair, plus a second mob
+        // farther along the same ray.
+        localPlayer.shape.aabb = {{-0.3f, -0.3f, 2.5f}, {0.3f, 0.3f, 3.1f}};
+        localPlayer.state.pos = {0.0f, -0.3f, 2.5f};
+
+        actor.shape.aabb = {{-0.3f, -0.3f, 3.2f}, {0.3f, 0.3f, 3.8f}};
+        actor.state.pos = {0.0f, -0.3f, 3.2f};
+
+        FakeActor farActor;
+        farActor.shape.aabb = {{-0.3f, -0.3f, 4.5f}, {0.3f, 0.3f, 5.1f}};
+        farActor.state.pos = {0.0f, -0.3f, 4.5f};
+
+        indicatorMod.hitboxIndicator = true;
+        s_interpHistory.clear();
+
+        // Distance-sorted fetch: the near mob first, the far mob second.
+        // Default colors differ (active red vs default white), so the drawn
+        // colors identify which mob the indicator selected.
+        FrameResult indicatorFrame = drawFrame({{&actor, 3.2f}, {&farActor, 4.5f}}, localPlayer);
+        check(indicatorFrame.boxes >= 2, "both mobs on the crosshair ray are drawn");
+
+        check(g_colorMarks.size() >= 2, "each drawn box carries its own color");
+        if (g_colorMarks.size() >= 2) {
+            const auto& first = g_colorMarks[g_colorMarks.size() - 2];
+            const auto& second = g_colorMarks.back();
+            check(near(first.r, 1.0f) && near(first.g, 0.0f) && near(first.b, 0.0f),
+                  "the nearest mob under the crosshair gets the Indicator Active Color");
+            check(near(second.r, 1.0f) && near(second.g, 1.0f) && near(second.b, 1.0f),
+                  "the farther mob keeps the default indicator color");
+        }
+
+        // The old fixed 3.0 camera ray would have selected nothing here
+        // (nearest hit is 3.2 blocks from the camera). Guard the geometry
+        // directly so a future refactor cannot silently shrink the ray.
+        {
+            AABB nearBox = getActorAABB(actor.handle());
+            float hitDist = 0.0f;
+            const bool hit = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, nearBox, 3.0f, hitDist);
+            check(!hit, "the old fixed 3.0 camera ray misses the mob past the player");
+            const bool extended = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, nearBox,
+                                              3.0f + 2.8f, hitDist);
+            check(extended && near(hitDist, 3.2f, 0.01f),
+                  "camera distance + 3.0 reach reaches it at the expected distance");
+        }
+
+        s_interpHistory.clear();
+        // Restore the boxes the earlier stages expect, should any follow.
+        localPlayer.setBoxX(0.0f);
+        actor.setBoxX(10.0f);
     }
 
     std::printf("\n");

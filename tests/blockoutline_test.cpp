@@ -157,8 +157,8 @@ int main() {
         renderBlockOutline(levelRenderer.data(), screenContext.data());
         check(g_batches.size() == 2, "default thick outline submits quad and crisp-line batches");
         check(g_batches.size() >= 1 && g_batches[0].mode == 1 &&
-              g_batches[0].reservedVertices == 96 && g_batches[0].emittedVertices == 96,
-              "12 thick edges emit 96 camera-facing quad vertices");
+              g_batches[0].reservedVertices == 160 && g_batches[0].emittedVertices == 160,
+              "12 thick edge quads + 8 corner joint dots emit 160 vertices");
         check(g_batches.size() >= 2 && g_batches[1].mode == 4 &&
               g_batches[1].reservedVertices == 24 && g_batches[1].emittedVertices == 24,
               "hairline pass emits all 12 block edges");
@@ -285,7 +285,7 @@ int main() {
         g_batches.clear();
         renderBlockOutline(levelRenderer.data(), screenContext.data());
         check(g_batches.size() == 2 && g_batches[0].material == vanillaMaterial &&
-              g_batches[0].emittedVertices == 96,
+              g_batches[0].emittedVertices == 160,
               "missing blending material falls back to the vanilla material");
 
         s_translucentMaterial = {};

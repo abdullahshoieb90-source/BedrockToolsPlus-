@@ -1,6 +1,7 @@
 #include "hitbox.hpp"
 #include "hitbox_camera.hpp"
 #include "hitbox_interp.hpp"
+#include "thick_lines.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/sdk/Memory.hpp>
@@ -536,67 +537,27 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         const float a = 1.0f;
 
         char pad[0x58];
+        const bedrocktools::sdk::Vec3 cam{camX, camY, camZ};
 
         // Thick pass: every segment becomes a camera-facing quad, so the
         // apparent width follows the thickness setting from any angle.
+        // Segment quads are cut square at their endpoints and joint dots
+        // close the shared corners, so boxes keep clean right angles at
+        // high thickness instead of growing spurs past the corners.
         if (thickLines) {
-            s_tessBegin(tessellator, nullptr, 1, static_cast<int>(lines.size() * 8), 0);
+            const auto joints = thicklines::collectJoints(lines);
+            s_tessBegin(tessellator, nullptr, 1,
+                        thicklines::thickVertexCount(lines.size(), joints.size()), 0);
             s_tessColor(tessellator, r, g, b, a);
 
+            auto emit = [&tessellator](const bedrocktools::sdk::Vec3& v) {
+                s_tessVertex(tessellator, v.x, v.y, v.z);
+            };
             for (const auto& line : lines) {
-                bedrocktools::sdk::Vec3 p1 = line.first;
-                bedrocktools::sdk::Vec3 p2 = line.second;
-                p1.x -= camX; p1.y -= camY; p1.z -= camZ;
-                p2.x -= camX; p2.y -= camY; p2.z -= camZ;
-
-                float dx = p2.x - p1.x;
-                float dy = p2.y - p1.y;
-                float dz = p2.z - p1.z;
-                float len = sqrtf(dx * dx + dy * dy + dz * dz);
-                if (len < 1e-5f) continue;
-                dx /= len; dy /= len; dz /= len;
-
-                // The camera sits at the origin of this relative space, so
-                // the vector to the segment midpoint is the view direction.
-                float mx = (p1.x + p2.x) * 0.5f;
-                float my = (p1.y + p2.y) * 0.5f;
-                float mz = (p1.z + p2.z) * 0.5f;
-
-                // side = dir x view, i.e. perpendicular to both the segment
-                // and the eye ray => the quad always faces the player.
-                float sx = dy * mz - dz * my;
-                float sy = dz * mx - dx * mz;
-                float sz = dx * my - dy * mx;
-                float sLen = sqrtf(sx * sx + sy * sy + sz * sz);
-                if (sLen < 1e-5f) {
-                    // Looking straight down the segment: pick any perpendicular.
-                    if (fabsf(dy) < 0.9f) { sx = -dz; sy = 0.0f; sz = dx; }
-                    else { sx = 1.0f; sy = 0.0f; sz = 0.0f; }
-                    sLen = sqrtf(sx * sx + sy * sy + sz * sz);
-                    if (sLen < 1e-5f) continue;
-                }
-                sx = sx / sLen * halfWidth;
-                sy = sy / sLen * halfWidth;
-                sz = sz / sLen * halfWidth;
-
-                // Overshoot both ends by half the width so corners stay solid.
-                float ex = dx * halfWidth;
-                float ey = dy * halfWidth;
-                float ez = dz * halfWidth;
-
-                bedrocktools::sdk::Vec3 quad[4] = {
-                    {p1.x - ex - sx, p1.y - ey - sy, p1.z - ez - sz},
-                    {p2.x + ex - sx, p2.y + ey - sy, p2.z + ez - sz},
-                    {p2.x + ex + sx, p2.y + ey + sy, p2.z + ez + sz},
-                    {p1.x - ex + sx, p1.y - ey + sy, p1.z - ez + sz}
-                };
-
-                // Emitted with both windings so back-face culling never
-                // eats a segment.
-                for (int i = 0; i < 4; ++i)
-                    s_tessVertex(tessellator, quad[i].x, quad[i].y, quad[i].z);
-                for (int i = 3; i >= 0; --i)
-                    s_tessVertex(tessellator, quad[i].x, quad[i].y, quad[i].z);
+                thicklines::emitSegment(line.first, line.second, cam, halfWidth, emit);
+            }
+            for (const auto& joint : joints) {
+                thicklines::emitJointDot(joint, cam, halfWidth, emit);
             }
 
             memset(pad, 0, sizeof(pad));
@@ -681,9 +642,25 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         const float lookY = -sinf(pitchR);
         const float lookZ = cosf(yawR) * cosf(pitchR);
 
-        // Pick the nearest actor along the look ray. No reach limit is
-        // applied: any fetched entity the crosshair touches gets selected.
-        constexpr float kSelectionRayLength = 3.0f;
+        // Pick the nearest actor along the look ray, with the same ~3 block
+        // reach the game uses, measured beyond the player.
+        constexpr float kSelectionReach = 3.0f;
+
+        // The ray starts at the camera, which in third person sits several
+        // blocks behind the player. A fixed 3-block ray could never reach an
+        // entity under the crosshair in front of the player - so the
+        // Indicator Active Color only ever worked in first person, and
+        // whatever stood between the camera and the player got highlighted
+        // instead. Add the camera-to-player distance so the reach stays
+        // "3 blocks past the player" in every perspective.
+        float selectionRayLength = kSelectionReach;
+        if (isDrawableBox(localAabb)) {
+            const bedrocktools::sdk::Vec3 anchor = boxCenter(localAabb);
+            const float dx = camX - anchor.x;
+            const float dy = camY - anchor.y;
+            const float dz = camZ - anchor.z;
+            selectionRayLength += sqrtf(dx * dx + dy * dy + dz * dz);
+        }
 
         float bestDist = 1e9f;
         for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
@@ -691,7 +668,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             if (!ent || ent == g_localPlayerPtr) continue;
             AABB aabb = getInterpolatedAABB(ent);
             float hitDist = 0.0f;
-            if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, kSelectionRayLength, hitDist)) continue;
+            if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, selectionRayLength, hitDist)) continue;
             if (hitDist < bestDist) {
                 bestDist = hitDist;
                 selectedEntity = ent;

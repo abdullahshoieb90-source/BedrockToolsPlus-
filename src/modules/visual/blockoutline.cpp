@@ -1,5 +1,6 @@
 #include "blockoutline.hpp"
 #include "blockoutline_geometry.hpp"
+#include "thick_lines.hpp"
 
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/events/EventBus.hpp>
@@ -303,76 +304,24 @@ void drawOutline(void* screenContext,
 
     // GLES drivers generally ignore glLineWidth. Above the hairline setting,
     // render each edge as a camera-facing quad so the menu slider has a real,
-    // consistent effect on Android.
+    // consistent effect on Android. Segment quads are cut square at the box
+    // corners and joint dots close the corners, so higher thickness values
+    // keep clean right angles instead of growing spurs past the corners.
     if (thick) {
         const float halfWidth = safeThickness * 0.005f;
-        s_tessBegin(tessellator, nullptr, 1, static_cast<int>(edges.size() * 8), 0);
+        const auto joints = thicklines::collectJoints(edges);
+        s_tessBegin(tessellator, nullptr, 1,
+                    thicklines::thickVertexCount(edges.size(), joints.size()), 0);
         setTessellatorColor(tessellator, rgb, alpha);
 
+        auto emit = [&tessellator](const bedrocktools::sdk::Vec3& v) {
+            s_tessVertex(tessellator, v.x, v.y, v.z);
+        };
         for (const auto& edge : edges) {
-            bedrocktools::sdk::Vec3 p1{
-                edge.from.x - camera.x,
-                edge.from.y - camera.y,
-                edge.from.z - camera.z,
-            };
-            bedrocktools::sdk::Vec3 p2{
-                edge.to.x - camera.x,
-                edge.to.y - camera.y,
-                edge.to.z - camera.z,
-            };
-
-            float dx = p2.x - p1.x;
-            float dy = p2.y - p1.y;
-            float dz = p2.z - p1.z;
-            const float length = std::sqrt(dx * dx + dy * dy + dz * dz);
-            if (length < 0.00001f) continue;
-            dx /= length;
-            dy /= length;
-            dz /= length;
-
-            // Camera is the origin in this coordinate space. dir x midpoint
-            // gives a vector perpendicular to both the edge and view ray.
-            const float mx = (p1.x + p2.x) * 0.5f;
-            const float my = (p1.y + p2.y) * 0.5f;
-            const float mz = (p1.z + p2.z) * 0.5f;
-            float sx = dy * mz - dz * my;
-            float sy = dz * mx - dx * mz;
-            float sz = dx * my - dy * mx;
-            float sideLength = std::sqrt(sx * sx + sy * sy + sz * sz);
-            if (sideLength < 0.00001f) {
-                // Looking directly along an edge: choose a stable arbitrary
-                // perpendicular instead of dropping that edge for one frame.
-                if (std::fabs(dy) < 0.9f) {
-                    sx = -dz; sy = 0.0f; sz = dx;
-                } else {
-                    sx = 1.0f; sy = 0.0f; sz = 0.0f;
-                }
-                sideLength = std::sqrt(sx * sx + sy * sy + sz * sz);
-                if (sideLength < 0.00001f) continue;
-            }
-            sx = sx / sideLength * halfWidth;
-            sy = sy / sideLength * halfWidth;
-            sz = sz / sideLength * halfWidth;
-
-            // Slightly overlap neighboring edge ends so all eight corners stay
-            // closed at high thickness values.
-            const float ex = dx * halfWidth;
-            const float ey = dy * halfWidth;
-            const float ez = dz * halfWidth;
-            const bedrocktools::sdk::Vec3 quad[4] = {
-                {p1.x - ex - sx, p1.y - ey - sy, p1.z - ez - sz},
-                {p2.x + ex - sx, p2.y + ey - sy, p2.z + ez - sz},
-                {p2.x + ex + sx, p2.y + ey + sy, p2.z + ez + sz},
-                {p1.x - ex + sx, p1.y - ey + sy, p1.z - ez + sz},
-            };
-            for (const auto& vertex : quad) {
-                s_tessVertex(tessellator, vertex.x, vertex.y, vertex.z);
-            }
-            // Both windings keep the strip visible with materials that enable
-            // back-face culling.
-            for (int i = 3; i >= 0; --i) {
-                s_tessVertex(tessellator, quad[i].x, quad[i].y, quad[i].z);
-            }
+            thicklines::emitSegment(edge.from, edge.to, camera, halfWidth, emit);
+        }
+        for (const auto& joint : joints) {
+            thicklines::emitJointDot(joint, camera, halfWidth, emit);
         }
         flushMesh(screenContext, tessellator, material);
     }
