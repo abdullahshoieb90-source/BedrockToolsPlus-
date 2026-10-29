@@ -249,17 +249,8 @@ static wings::WingQuad s_leftQuads[wings::kMaxWingQuads];
 // Maps the animated bone angles onto the surface builder's pose. The mapping
 // itself lives in wings_surface.hpp so the host tests cover it.
 static wings::WingPose poseFromAngles(const WingBoneAngles& a) {
-    wings::WingPose pose = wings::makeWingPose(a.shoulderDeg, a.upperDeg, a.tipDeg, a.flapPhase,
-                                               a.intensity, a.glide);
-    pose.trailPx = a.trailPx;
-    pose.trailRollDeg = a.trailRollDeg;
-    // While the wings are shuddering the sheet is being shaken too, so let the
-    // membrane ripple with it - a rigid rock over a dead-flat sail looks painted
-    // on, the ripple is what sells it as something with mass.
-    pose.flutter = wings::clamp01(pose.flutter +
-                                  0.30f * wings::clamp01(std::fabs(pose.trailRollDeg) /
-                                                         wings::kWingTrailFullRollDeg));
-    return pose;
+    return wings::makeWingPose(a.shoulderDeg, a.upperDeg, a.tipDeg, a.flapPhase,
+                               a.intensity, a.glide);
 }
 
 // Player body box in world space, used to hide the wings behind the body.
@@ -792,10 +783,7 @@ static WingBoneAngles computeWingPose(float flapTime, float flapSpeed, float int
 
 WingBoneAngles WingsModule::currentBoneAngles() const {
     std::lock_guard<std::mutex> animationLock(m_animationMutex);
-    WingBoneAngles angles = computeWingPose(m_flapTime, m_flapSpeed, m_intensity, m_glide);
-    angles.trailPx = m_trail.offsetPx;
-    angles.trailRollDeg = m_trail.rollDeg;
-    return angles;
+    return computeWingPose(m_flapTime, m_flapSpeed, m_intensity, m_glide);
 }
 
 WingBoneAngles WingsModule::currentBoneAnglesInterpolated() const {
@@ -815,34 +803,7 @@ WingBoneAngles WingsModule::currentBoneAnglesInterpolated() const {
         effectiveFlapTime += extra;
     }
 
-    WingBoneAngles angles = computeWingPose(effectiveFlapTime, m_flapSpeed, m_intensity, m_glide);
-    // The trail springs are stepped once per tick, so they are read as-is rather
-    // than extrapolated: extrapolating a damped spring by the partial-tick
-    // fraction would overshoot on exactly the frames where it matters.
-    angles.trailPx = m_trail.offsetPx;
-    angles.trailRollDeg = m_trail.rollDeg;
-    return angles;
-}
-
-// Secondary motion: convert the measured world velocity into the wing frame and
-// advance the springs. The yaw here is the same body yaw the render path uses,
-// so a trail computed on this thread points the right way on that one.
-void WingsModule::stepTrail(float dtSeconds, float vx, float vy, float vz, float bodyYawDeg) {
-    constexpr float kPi = 3.14159265358979323846f;
-    const float yawRad = bodyYawDeg * kPi / 180.0f;
-    const float cosYaw = std::cos(yawRad);
-    const float sinYaw = std::sin(yawRad);
-    const wings::Vec3 right{-cosYaw, 0.0f, -sinYaw};
-    const wings::Vec3 forward{-sinYaw, 0.0f, cosYaw};
-
-    const wings::Vec3 velocityPx = wings::velocityToModelPx(wings::Vec3{vx, vy, vz}, right, forward);
-    // The render thread reads the springs, so the step and the snapshot share the
-    // animation mutex. advanceWingAnimation() has already released it by now,
-    // so this does not nest.
-    std::lock_guard<std::mutex> animationLock(m_animationMutex);
-    const bool jumped = wings::wingTrailDetectsJump(m_trail, vy);
-    wings::stepWingTrail(m_trail, dtSeconds, velocityPx, jumped);
-    wings::wingTrailRememberSample(m_trail, vy);
+    return computeWingPose(effectiveFlapTime, m_flapSpeed, m_intensity, m_glide);
 }
 
 void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, float verticalSpeed) {
@@ -879,8 +840,6 @@ void WingsModule::advanceWingAnimation(float dtSeconds, float horizontalSpeed, f
         // computeWingPose() directly: m_animationMutex is already held here and
         // currentBoneAngles() takes it again.
         WingBoneAngles angles = computeWingPose(m_flapTime, m_flapSpeed, m_intensity, m_glide);
-        angles.trailPx = m_trail.offsetPx;
-        angles.trailRollDeg = m_trail.rollDeg;
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_boneAngles = angles;
     }
@@ -954,7 +913,6 @@ void WingsModule::onLocalPlayerTick(void* player) {
             }
         }
         advanceWingAnimation(dt, horizontalSpeed, verticalSpeed);
-        stepTrail(dt, velX, velY, velZ, rot.y);
     }
 
     m_prevCenterX = centerX;

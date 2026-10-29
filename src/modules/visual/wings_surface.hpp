@@ -51,13 +51,6 @@ struct WingPose {
     float wristDeg = 0.0f;
     float phaseRad = 0.0f;   // flap phase; drives the membrane flutter
     float flutter = 0.0f;    // 0 = still air, 1 = full flutter
-
-    // Secondary motion (see wings_trail.hpp). The trail is a rigid move of the
-    // whole wing in the wing frame: a translation plus a roll about the spine.
-    // Kept in the pose rather than applied by the caller so the builder stays
-    // the single place that turns a pose into quads, and the tests cover it.
-    Vec3 trailPx{};          // model px the pair is displaced by
-    float trailRollDeg = 0.0f;  // roll about the spine at kRootPivotY
 };
 
 // Maps the animation controller's angles onto the builder's pose. The flap
@@ -658,32 +651,6 @@ inline int buildWing(const WingDesign& d, const WingPose& pose, int side,
         for (int i = 0; i < sink.count; ++i) {
             for (int k = 0; k < 4; ++k) out[i].p[k].x = -out[i].p[k].x;
             out[i].n.x = -out[i].n.x;
-        }
-    }
-
-    // Secondary motion, applied after the mirror so both wings move the same way
-    // in the world. A roll about the spine plus a translation is a rigid move, so
-    // the sheet keeps its shape and the quad normals only need rotating.
-    const bool hasTrail = pose.trailPx.x != 0.0f || pose.trailPx.y != 0.0f ||
-                          pose.trailPx.z != 0.0f || pose.trailRollDeg != 0.0f;
-    if (hasTrail) {
-        const float rollRad = pose.trailRollDeg * kDegToRad;
-        const float cr = std::cos(rollRad);
-        const float sr = std::sin(rollRad);
-        for (int i = 0; i < sink.count; ++i) {
-            for (int k = 0; k < 4; ++k) {
-                Vec3& p = out[i].p[k];
-                const float dy = p.y - kRootPivotY;
-                const float rx = p.x * cr - dy * sr;
-                const float ry = p.x * sr + dy * cr;
-                p.x = rx + pose.trailPx.x;
-                p.y = ry + kRootPivotY + pose.trailPx.y;
-                p.z += pose.trailPx.z;
-            }
-            const float nx = out[i].n.x * cr - out[i].n.y * sr;
-            const float ny = out[i].n.x * sr + out[i].n.y * cr;
-            out[i].n.x = nx;
-            out[i].n.y = ny;
         }
     }
     return sink.count;
