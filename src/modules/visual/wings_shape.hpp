@@ -1,27 +1,24 @@
 #pragma once
 
-// Pure geometry + shading helpers for the Wings module.
+// Pure math + shading helpers for the Wings module.
 //
-// The world-space overlay draws every wing bone as a small prism with the
-// Bedrock tessellator. Everything that decides *where* those prisms sit and
-// *how bright* each of their faces is lives here, so it compiles and can be
-// unit-tested on the host without Minecraft (tests/wings_shape_test.cpp) and
-// so tools/wings_preview.cpp can render the exact same shapes offline.
+// Everything that has no Minecraft dependency lives here so it compiles and can
+// be unit-tested on the host (tests/wings_shape_test.cpp) and so
+// tools/wings_preview.cpp can render the exact same geometry the game draws.
 //
-//   Pose2D        2D transform of a bone inside the wing plane
-//   WingBone      one bone: parent, anchor, box, rest fan, sweep, taper
-//   buildWingBox  the 8 prism corners in Bedrock model pixels
-//   kFaceRings    ring-ordered corner indices of the six faces
-//   faceBrightness  flat per-face shading used by the overlay
+//   Vec3 / FaceColor   small value types
+//   colour helpers     lerp, channel clamping, shading
+//   WingLight          the cosmetic overlay lighting model
+//   model -> world     the player-yaw basis mapping the overlay uses
+//   ring helpers       quad validation used by the host tests
 //
 // Coordinate conventions (identical to Bedrock model space, 16 px = 1 block):
 //   +x  the player's left  (the right wing spans towards -x)
 //   +y  up
 //   +z  backwards - the back/cape side; the torso spans z in [-2, +2]
 //
-// A bone only ever rotates inside the wing plane (around the model z axis),
-// so the pose is a plain 2D rotation + translation and the box keeps a
-// constant z range.
+// The wing surface itself is built in wings_surface.hpp on top of these
+// primitives; the selectable styles live in wings_design.hpp.
 
 #include <cmath>
 #include <cstddef>
@@ -44,6 +41,10 @@ inline Vec3 operator*(const Vec3& a, float k) { return {a.x * k, a.y * k, a.z * 
 inline float dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 inline float length(const Vec3& a) { return std::sqrt(dot(a, a)); }
 
+inline Vec3 cross(const Vec3& a, const Vec3& b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
 // Returns the zero vector for a degenerate input so callers never divide by
 // zero while rendering.
 inline Vec3 normalized(const Vec3& a) {
@@ -52,175 +53,110 @@ inline Vec3 normalized(const Vec3& a) {
     return {a.x / len, a.y / len, a.z / len};
 }
 
-// ---------------------------------------------------------------------------
-// 2D pose inside the wing plane
-// ---------------------------------------------------------------------------
+inline float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+inline float lerpFloat(float a, float b, float t) { return a + (b - a) * t; }
 
-struct Pose2D {
-    float c = 1.0f;   // cos of the accumulated rotation
-    float s = 0.0f;   // sin of the accumulated rotation
-    float tx = 0.0f;  // pivot position in model px
-    float ty = 0.0f;
-};
-
-inline Pose2D makePose(float angleRad, float pivotX, float pivotY) {
-    return {std::cos(angleRad), std::sin(angleRad), pivotX, pivotY};
-}
-
-// Child pose: rotate around the parent frame, then offset by the anchor.
-inline Pose2D composePose(const Pose2D& parent, float anchorX, float anchorY, float angleRad) {
-    const float rc = std::cos(angleRad);
-    const float rs = std::sin(angleRad);
-    Pose2D out;
-    out.c = parent.c * rc - parent.s * rs;
-    out.s = parent.s * rc + parent.c * rs;
-    out.tx = parent.c * anchorX - parent.s * anchorY + parent.tx;
-    out.ty = parent.s * anchorX + parent.c * anchorY + parent.ty;
-    return out;
-}
-
-inline void transformPoint(const Pose2D& pose, float x, float y, float& outX, float& outY) {
-    outX = pose.c * x - pose.s * y + pose.tx;
-    outY = pose.s * x + pose.c * y + pose.ty;
+inline float smoothstep(float edge0, float edge1, float x) {
+    if (edge1 <= edge0) return x < edge0 ? 0.0f : 1.0f;
+    const float t = clamp01((x - edge0) / (edge1 - edge0));
+    return t * t * (3.0f - 2.0f * t);
 }
 
 // ---------------------------------------------------------------------------
-// Bone description
+// Colour
 // ---------------------------------------------------------------------------
 
-struct WingBone {
-    int parent = -1;                 // bone table index; -1 for the shoulder root
-    float anchorX = 0.0f;            // pivot offset from the parent pivot (px)
-    float anchorY = 0.0f;
-    float boxOX = 0.0f;              // box origin relative to the own pivot (px)
-    float boxOY = 0.0f;
-    float boxSX = 0.0f;              // box size on the wing plane (px)
-    float boxSY = 0.0f;
-    float zMin = 0.0f;               // absolute model z of the box (px)
-    float zMax = 0.0f;
-
-    // --- Shape detail added on top of the plain box layout ---
-    // restDeg: rest-pose angle (deg, "raise positive") added to the animated
-    //   angle. Used to fan the feathers open and curl the wing tip so the
-    //   silhouette reads as a wing instead of a straight plank.
-    float restDeg = 0.0f;
-    // sweepPx: extra backwards offset of this bone's box, so the wing curves
-    //   away from the back towards its tips instead of lying in one plane.
-    float sweepPx = 0.0f;
-    // taperPx: the edge far from the bone pivot is narrowed by this many px,
-    //   turning the box into a tapered feather. Clamped so the far edge can
-    //   never collapse or flip (see buildWingBox).
-    float taperPx = 0.0f;
-    // spanT: 0 at the shoulder .. 1 at the wing tip; drives the tip gradient.
-    float spanT = 0.0f;
-    // tint: per-bone brightness multiplier, used to alternate neighbouring
-    //   feathers so they stay readable as separate feathers.
-    float tint = 1.0f;
-
-    const unsigned char* colOuter = nullptr;   // zMax face (faces away from the body)
-    const unsigned char* colInner = nullptr;   // zMin face (faces the body)
-    const unsigned char* colEdge = nullptr;    // x faces and the top face
-    const unsigned char* colBottom = nullptr;  // yMin face (feather tips highlight)
-    int angleIndex = 0;                        // 0=shoulder, 1=upper, 2=tip, 3..6=feathers
+struct FaceColor {
+    unsigned char r = 0;
+    unsigned char g = 0;
+    unsigned char b = 0;
 };
 
-// ---------------------------------------------------------------------------
-// Prism mesh (model px)
-// ---------------------------------------------------------------------------
-
-constexpr int kCornerCount = 8;
-constexpr int kFaceCount = 6;
-
-// Corner index bits: bit0 = box x side, bit1 = box y side, bit2 = z side.
-//   0 (x0,y0,zMin)  1 (x1,y0,zMin)  2 (x0,y1,zMin)  3 (x1,y1,zMin)
-//   4 (x0,y0,zMax)  5 (x1,y0,zMax)  6 (x0,y1,zMax)  7 (x1,y1,zMax)
-struct WingBox {
-    float px[kCornerCount];
-    float py[kCornerCount];
-    float pz[kCornerCount];
-};
-
-enum FaceSlot {
-    kFaceInner = 0,    // zMin - faces the body
-    kFaceOuter = 1,    // zMax - faces away from the body
-    kFaceSpanMin = 2,  // box x-min side
-    kFaceSpanMax = 3,  // box x-max side
-    kFaceBottom = 4,   // box y-min (feather tips)
-    kFaceTop = 5,      // box y-max
-};
-
-// Ring-ordered corner indices. Bedrock's quad primitive fans each quad from
-// its first vertex, so the four corners MUST walk around the face: a
-// Z-ordered list draws only half of the face and a mixed list draws a
-// diagonal slice through the box. Both happened with the old flat wing
-// faces, which is why the wings used to render as broken half-boxes.
-constexpr int kFaceRings[kFaceCount][4] = {
-    {0, 1, 3, 2},  // zMin
-    {4, 5, 7, 6},  // zMax
-    {0, 2, 6, 4},  // x min
-    {1, 5, 7, 3},  // x max
-    {0, 1, 5, 4},  // y min (bottom)
-    {2, 3, 7, 6},  // y max (top)
-};
-
-// Builds the eight prism corners of a bone in model px.
-inline WingBox buildWingBox(const WingBone& bone, const Pose2D& pose) {
-    const float lx[2] = {bone.boxOX, bone.boxOX + bone.boxSX};
-    const float ly[2] = {bone.boxOY, bone.boxOY + bone.boxSY};
-
-    // Taper the edge far from the bone pivot (the feather/segment tip) so the
-    // wing reads as a set of tapered feathers instead of a comb of bricks.
-    const float sizeX = std::fabs(bone.boxSX);
-    const float sizeY = std::fabs(bone.boxSY);
-    const bool longAxisX = sizeX >= sizeY;
-    const float shortSide = longAxisX ? sizeY : sizeX;
-    float inset = bone.taperPx * 0.5f;
-    if (!(inset > 0.0f)) inset = 0.0f;
-    const float maxInset = shortSide * 0.45f;  // the far edge always keeps >= 10%
-    if (inset > maxInset) inset = maxInset;
-    const float keep = (shortSide > 1e-4f) ? (shortSide - 2.0f * inset) / shortSide : 1.0f;
-
-    // "Far" = the end of the long axis that is further from the bone pivot.
-    const int farX = (std::fabs(lx[0]) >= std::fabs(lx[1])) ? 0 : 1;
-    const int farY = (std::fabs(ly[0]) >= std::fabs(ly[1])) ? 0 : 1;
-    const float midX = (lx[0] + lx[1]) * 0.5f;
-    const float midY = (ly[0] + ly[1]) * 0.5f;
-
-    float quadX[4], quadY[4];
-    for (int i = 0; i < 4; ++i) {
-        float x = lx[i & 1];
-        float y = ly[(i >> 1) & 1];
-        if (longAxisX) {
-            if ((i & 1) == farX) y = midY + (y - midY) * keep;
-        } else if (((i >> 1) & 1) == farY) {
-            x = midX + (x - midX) * keep;
-        }
-        transformPoint(pose, x, y, quadX[i], quadY[i]);
-    }
-
-    WingBox out{};
-    const float zLo = bone.zMin + bone.sweepPx;
-    const float zHi = bone.zMax + bone.sweepPx;
-    for (int i = 0; i < kCornerCount; ++i) {
-        out.px[i] = quadX[i & 3];
-        out.py[i] = quadY[i & 3];
-        out.pz[i] = ((i >> 2) & 1) ? zHi : zLo;
-    }
-    return out;
+inline unsigned char shadeChannel(float channel, float factor) {
+    const float v = channel * factor;
+    if (!(v > 0.0f)) return 0;
+    if (v >= 255.0f) return 255;
+    return static_cast<unsigned char>(v + 0.5f);
 }
 
-// Outward normal of a face in model space. The four side faces rotate with
-// the bone; the two flat faces always point along z.
-inline Vec3 faceNormalModel(int face, const Pose2D& pose) {
-    switch (face) {
-        case kFaceInner: return {0.0f, 0.0f, -1.0f};
-        case kFaceOuter: return {0.0f, 0.0f, 1.0f};
-        case kFaceSpanMin: return {-pose.c, -pose.s, 0.0f};
-        case kFaceSpanMax: return {pose.c, pose.s, 0.0f};
-        case kFaceBottom: return {pose.s, -pose.c, 0.0f};
-        default: return {-pose.s, pose.c, 0.0f};  // kFaceTop
-    }
+inline float channelToFloat(unsigned char c) { return static_cast<float>(c); }
+
+inline FaceColor shadeFace(const FaceColor& base, float brightness) {
+    return {
+        shadeChannel(channelToFloat(base.r), brightness),
+        shadeChannel(channelToFloat(base.g), brightness),
+        shadeChannel(channelToFloat(base.b), brightness),
+    };
 }
+
+inline FaceColor lerpColor(const FaceColor& a, const FaceColor& b, float t) {
+    const float k = clamp01(t);
+    return {
+        shadeChannel(lerpFloat(channelToFloat(a.r), channelToFloat(b.r), k), 1.0f),
+        shadeChannel(lerpFloat(channelToFloat(a.g), channelToFloat(b.g), k), 1.0f),
+        shadeChannel(lerpFloat(channelToFloat(a.b), channelToFloat(b.b), k), 1.0f),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Lighting
+// ---------------------------------------------------------------------------
+
+// Cosmetic-overlay lighting: a soft headlight plus a sky lift. It is view
+// dependent on purpose - the wings are drawn after the world as an overlay, so
+// they have to stay readable from every angle and never collapse into a black
+// silhouette when the sun is behind the player. Range is
+// [ambient, ambient + head + sky].
+struct WingLight {
+    float ambient = 0.52f;
+    float head = 0.26f;
+    float sky = 0.20f;
+};
+
+// Peak = ambient + head + sky = 0.98. It deliberately stays just under 1.0: the
+// palette already encodes the target look, so lighting must shade it down, not
+// push it up. With a peak above 1.0 the light palettes (Angel, Fairy) clipped
+// to a flat white sheet and lost every gradient.
+constexpr WingLight kDefaultLight{0.52f, 0.26f, 0.20f};
+
+// How much brighter the wing tips are than the shoulder (spanT 0 -> 1).
+constexpr float kSpanGradient = 0.18f;
+
+inline float faceBrightness(const Vec3& normal, const Vec3& toCamera, const WingLight& light) {
+    const Vec3 n = normalized(normal);
+    const Vec3 v = normalized(toCamera);
+    const float headTerm = dot(n, v);
+    const float skyTerm = n.y;
+    return light.ambient
+         + light.head * (headTerm > 0.0f ? headTerm : 0.0f)
+         + light.sky * (skyTerm > 0.0f ? skyTerm : 0.0f);
+}
+
+// Brightness multiplier on top of the face shading: a gentle gradient from
+// the shoulder to the wing tips.
+inline float spanTint(float spanT, float boneTint = 1.0f) {
+    const float t = spanT < 0.0f ? 0.0f : (spanT > 1.0f ? 1.0f : spanT);
+    return boneTint * (1.0f + kSpanGradient * (t - 0.5f));
+}
+
+// Vector from a point on the surface to the camera, used by the overlay's
+// headlight term.
+//
+// This has to be measured between two positions in the SAME space. The overlay
+// builds its vertices camera-relative but computes the shading center in world
+// space, so negating the center there (as if it were already camera-relative)
+// pointed the headlight at the world origin: the wings then changed brightness
+// whenever the player walked somewhere else, which read as a washed-out sheet
+// from one angle and a dark one from another. Named helper + host test so the
+// two spaces cannot be mixed up again.
+inline Vec3 toCameraVector(const Vec3& camPos, const Vec3& surfaceCenter) {
+    return camPos - surfaceCenter;
+}
+
+// ---------------------------------------------------------------------------
+// Model -> world
+// ---------------------------------------------------------------------------
 
 // Maps a model-space direction into the world using the player's yaw basis
 // (model +x is the player's left, model +z is their back).
@@ -246,62 +182,265 @@ inline Vec3 modelPointToWorld(float px, float py, float pz, const Vec3& origin,
 }
 
 // ---------------------------------------------------------------------------
-// Shading
+// Body occlusion
 // ---------------------------------------------------------------------------
+//
+// The wings are mounted on the back, so when the camera is in front of the
+// player the body must hide them. Whether the fill material actually depth
+// tests is build dependent (ui_fill_color has no depth test on current Bedrock
+// builds - see blockoutline.cpp), so the overlay cannot rely on it: it culls
+// the wing quads that sit behind the player's own collision box instead. This
+// is the same "cull what the camera cannot see" approach the Hitbox module uses
+// for solid blocks, applied to the player's body.
 
-// Cosmetic-overlay lighting: a soft headlight plus a sky lift. It is view
-// dependent on purpose - the wings are drawn after the world as an overlay,
-// so they have to stay readable from every angle and never collapse into a
-// black silhouette when the sun is behind the player. Range is
-// [ambient, ambient + head + sky].
-struct WingLight {
-    float ambient = 0.56f;
-    float head = 0.30f;
-    float sky = 0.22f;
+// Slab test for the segment origin -> target against an axis-aligned box.
+// Returns the normalized entry/exit parameters along the segment.
+inline bool segmentHitsBox(const Vec3& origin, const Vec3& target, const Vec3& boxMin,
+                           const Vec3& boxMax, float& tEnter, float& tExit) {
+    const Vec3 d = target - origin;
+    const float o[3] = {origin.x, origin.y, origin.z};
+    const float dir[3] = {d.x, d.y, d.z};
+    const float mn[3] = {boxMin.x, boxMin.y, boxMin.z};
+    const float mx[3] = {boxMax.x, boxMax.y, boxMax.z};
+
+    float tmin = 0.0f;
+    float tmax = 1.0f;
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(dir[i]) < 1e-9f) {
+            // Parallel to this slab: the segment is inside it or misses.
+            if (o[i] < mn[i] || o[i] > mx[i]) return false;
+            continue;
+        }
+        const float inv = 1.0f / dir[i];
+        float t1 = (mn[i] - o[i]) * inv;
+        float t2 = (mx[i] - o[i]) * inv;
+        if (t1 > t2) {
+            const float tmp = t1;
+            t1 = t2;
+            t2 = tmp;
+        }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) return false;
+    }
+    tEnter = tmin;
+    tExit = tmax;
+    return true;
+}
+
+inline bool pointInsideBox(const Vec3& p, const Vec3& boxMin, const Vec3& boxMax, float margin) {
+    return p.x >= boxMin.x - margin && p.x <= boxMax.x + margin &&
+           p.y >= boxMin.y - margin && p.y <= boxMax.y + margin &&
+           p.z >= boxMin.z - margin && p.z <= boxMax.z + margin;
+}
+
+// Cosine between the player's BACK direction and the direction from the body
+// to the camera:
+//   +1 = camera directly behind the player (normal third-person view)
+//    0 = camera exactly side-on
+//   -1 = camera directly in front of the player
+// The wings are mounted on the back, so this is the value that decides whether
+// drawing them makes any sense at all.
+inline float cameraBackness(const Vec3& cam, const Vec3& bodyCenter, const Vec3& forward) {
+    const Vec3 toCam = cam - bodyCenter;
+    const float len = length(toCam);
+    if (!(len > 1e-6f)) return 0.0f;
+    const Vec3 back = forward * -1.0f;
+    return dot(back, toCam * (1.0f / len));
+}
+
+// ---------------------------------------------------------------------------
+// Exact occlusion: the body's shadow cone
+// ---------------------------------------------------------------------------
+//
+// Culling whole quads leaves a staircase along the body's silhouette, because a
+// membrane cell is a couple of model pixels across but a few dozen screen
+// pixels at third-person distance. Instead the wing polygons are clipped
+// against the volume the body actually hides from the camera.
+//
+// The hidden volume of a convex box seen from a point is the cone of rays that
+// pass through it. That cone is the intersection of every plane through the
+// camera that the box lies entirely on one side of (its supporting planes), so
+// clipping is a plain Sutherland-Hodgman pass - no projection, no screen-space
+// hull, and it stays exact at any angle.
+
+// A wing vertex while it is being clipped: world position plus the Gouraud
+// colour that travels with it, so cutting an edge also interpolates the shading
+// instead of leaving a hard colour seam at the cut.
+struct ClipVertex {
+    Vec3 p;
+    FaceColor c;
 };
 
-constexpr WingLight kDefaultLight{0.56f, 0.30f, 0.22f};
+constexpr int kMaxShadowPlanes = 12;
+constexpr int kMaxClipVerts = 16;
 
-// How much brighter the wing tips are than the shoulder (spanT 0 -> 1).
-constexpr float kSpanGradient = 0.18f;
-
-inline float faceBrightness(const Vec3& normal, const Vec3& toCamera, const WingLight& light) {
-    const Vec3 n = normalized(normal);
-    const Vec3 v = normalized(toCamera);
-    const float headTerm = dot(n, v);
-    const float skyTerm = n.y;
-    return light.ambient
-         + light.head * (headTerm > 0.0f ? headTerm : 0.0f)
-         + light.sky * (skyTerm > 0.0f ? skyTerm : 0.0f);
-}
-
-// Brightness multiplier on top of the face shading: a gentle gradient from
-// the shoulder to the wing tips plus the per-bone tint.
-inline float spanTint(float spanT, float boneTint) {
-    const float t = spanT < 0.0f ? 0.0f : (spanT > 1.0f ? 1.0f : spanT);
-    return boneTint * (1.0f + kSpanGradient * (t - 0.5f));
-}
-
-inline unsigned char shadeChannel(float channel, float factor) {
-    const float v = channel * factor;
-    if (!(v > 0.0f)) return 0;
-    if (v >= 255.0f) return 255;
-    return static_cast<unsigned char>(v + 0.5f);
-}
-
-struct FaceColor {
-    unsigned char r = 0;
-    unsigned char g = 0;
-    unsigned char b = 0;
+struct ShadowCone {
+    Vec3 plane[kMaxShadowPlanes];  // outward normals; the apex is the camera
+    int count = 0;
 };
 
-inline FaceColor shadeFace(const unsigned char* base, float brightness) {
-    if (base == nullptr) return {0, 0, 0};
-    return {
-        shadeChannel(static_cast<float>(base[0]), brightness),
-        shadeChannel(static_cast<float>(base[1]), brightness),
-        shadeChannel(static_cast<float>(base[2]), brightness),
-    };
+// Camera -> the eight corners of the body box, kept in one place so the cone and
+// the point tests agree.
+inline void bodyCorners(const Vec3& boxMin, const Vec3& boxMax, Vec3 out[8]) {
+    for (int i = 0; i < 8; ++i) {
+        out[i] = {(i & 1) ? boxMax.x : boxMin.x, (i & 2) ? boxMax.y : boxMin.y,
+                  (i & 4) ? boxMax.z : boxMin.z};
+    }
+}
+
+// Builds the half-spaces of the body's shadow cone. A point is inside the cone
+// (i.e. hidden behind the body) when it satisfies every plane.
+inline ShadowCone buildShadowCone(const Vec3& apex, const Vec3& boxMin, const Vec3& boxMax) {
+    static constexpr int kEdges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3},
+                                          {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+    Vec3 corner[8];
+    bodyCorners(boxMin, boxMax, corner);
+
+    ShadowCone cone;
+    for (const auto& e : kEdges) {
+        const Vec3 a = corner[e[0]] - apex;
+        const Vec3 b = corner[e[1]] - apex;
+        Vec3 n = cross(a, b);
+        const float len = length(n);
+        if (!(len > 1e-6f)) continue;  // edge runs straight at the camera
+        n = n * (1.0f / len);
+
+        // Keep only the planes the box lies entirely behind; the rest cut
+        // through it and are not part of the silhouette.
+        float dmax = -3.0e38f;
+        float dmin = 3.0e38f;
+        for (const Vec3& c : corner) {
+            const float d = dot(n, c - apex);
+            if (d > dmax) dmax = d;
+            if (d < dmin) dmin = d;
+        }
+        // Orient so the whole box sits on the negative side; the cone is then
+        // simply "behind every plane".
+        if (dmax <= 1e-4f) {
+            // box already on the negative side
+        } else if (dmin >= -1e-4f) {
+            n = n * -1.0f;
+        } else {
+            continue;  // plane cuts through the box: not part of the silhouette
+        }
+
+        bool duplicate = false;
+        for (int i = 0; i < cone.count; ++i) {
+            if (dot(cone.plane[i], n) > 0.9999f) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate && cone.count < kMaxShadowPlanes) cone.plane[cone.count++] = n;
+    }
+    return cone;
+}
+
+// A convex polygon on its way through the clipper.
+struct ClipPolygon {
+    ClipVertex v[kMaxClipVerts];
+    int count = 0;
+};
+
+// Sutherland-Hodgman against one plane through `apex`. `keepOutside` keeps the
+// half-space the plane normal points into.
+inline int clipToHalfSpace(const ClipVertex* in, int count, const Vec3& n, const Vec3& apex,
+                           bool keepOutside, ClipVertex* out) {
+    if (count < 3) return 0;
+    if (count > kMaxClipVerts) count = kMaxClipVerts;
+
+    int m = 0;
+    for (int i = 0; i < count; ++i) {
+        const ClipVertex& cur = in[i];
+        const ClipVertex& nxt = in[(i + 1) % count];
+        const float dc = dot(n, cur.p - apex);
+        const float dn = dot(n, nxt.p - apex);
+        const bool curIn = keepOutside ? (dc > 0.0f) : (dc <= 0.0f);
+        const bool nxtIn = keepOutside ? (dn > 0.0f) : (dn <= 0.0f);
+
+        if (curIn) out[m++] = cur;
+        if (curIn != nxtIn) {
+            const float denom = dc - dn;
+            const float t = (denom != 0.0f) ? dc / denom : 0.0f;
+            out[m].p = cur.p + (nxt.p - cur.p) * t;
+            out[m].c = lerpColor(cur.c, nxt.c, t);
+            ++m;
+        }
+    }
+    return m;
+}
+
+// Splits a polygon into the part the body hides and the part it does not,
+// keeping every visible piece.
+//
+// The visible region is the *complement* of a convex cone, which is not convex,
+// so a single clip pass cannot express it. It is written instead as a disjoint
+// union of convex pieces:
+//
+//   visible = (P minus H1) + (P n H1 minus H2) + (P n H1 n H2 minus H3) + ...
+//
+// where the Hk are the cone's half-spaces. The pieces tile the visible part
+// exactly - no gaps and no double-drawn overlap.
+inline int clipPolygonOutsideCone(const ClipVertex* in, int count, const ShadowCone& cone,
+                                  const Vec3& apex, ClipPolygon* pieces, int maxPieces) {
+    if (count < 3 || maxPieces <= 0) return 0;
+
+    ClipPolygon cur;
+    cur.count = (count > kMaxClipVerts) ? kMaxClipVerts : count;
+    for (int i = 0; i < cur.count; ++i) cur.v[i] = in[i];
+
+    int written = 0;
+    for (int k = 0; k < cone.count; ++k) {
+        // The piece poking out of this plane, on the visible side.
+        ClipPolygon visible;
+        visible.count = clipToHalfSpace(cur.v, cur.count, cone.plane[k], apex, true, visible.v);
+        if (visible.count >= 3) {
+            if (written < maxPieces) pieces[written++] = visible;
+        }
+
+        // Everything still inside every plane so far is hidden; stop once it is
+        // empty, because the remaining pieces would be empty too.
+        ClipPolygon remaining;
+        remaining.count = clipToHalfSpace(cur.v, cur.count, cone.plane[k], apex, false, remaining.v);
+        cur = remaining;
+        if (cur.count < 3) break;
+    }
+    return written;
+}
+
+// Box the body actually occupies, built from the collision AABB.
+//
+// The collision box is square in plan (0.6 x 0.6) but the rendered player is
+// thin: the model torso is only 4 px deep, i.e. z in [-0.125, +0.125] blocks.
+// Using the collision box as the occluder would swallow the wing mounts (they
+// sit 0.18 blocks behind the center), so the roots would be treated as "inside
+// the body" and painted over the torso - exactly the artefact this is meant to
+// remove. Shrink the z axis to the model depth and keep the collision box for
+// the x/y extents, which is what the arms and torso actually span.
+inline void bodyOccluderFromAabb(const Vec3& aabbMin, const Vec3& aabbMax, Vec3& outMin,
+                                 Vec3& outMax) {
+    constexpr float kModelHalfDepth = 0.125f;  // 2 model px, the torso's half depth
+    const float centerZ = (aabbMin.z + aabbMax.z) * 0.5f;
+    outMin = {aabbMin.x, aabbMin.y, centerZ - kModelHalfDepth};
+    outMax = {aabbMax.x, aabbMax.y, centerZ + kModelHalfDepth};
+}
+
+// True when the box (the player's body) sits between the camera and `target`,
+// i.e. that point of the wing is on the far side of the body and would be
+// hidden by it.
+//
+// Points inside the box are the wing roots mounted on the body, so they are
+// never culled - otherwise the wings would detach from the back.
+inline bool hiddenBehindBody(const Vec3& cam, const Vec3& target, const Vec3& boxMin,
+                            const Vec3& boxMax, float insideMargin = 0.02f) {
+    if (pointInsideBox(target, boxMin, boxMax, insideMargin)) return false;
+
+    float tEnter = 0.0f;
+    float tExit = 0.0f;
+    if (!segmentHitsBox(cam, target, boxMin, boxMax, tEnter, tExit)) return false;
+    // The body has to be crossed strictly before the wing point is reached.
+    return tEnter > 1e-4f && tEnter < 1.0f - 1e-4f;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,8 +465,7 @@ inline float ringArea(const float p[4][3]) {
 }
 
 // True when four points form a simple (non self-intersecting) convex quad.
-// A Z-ordered "bowtie" ring or a ring that cuts through the box fails this,
-// which is exactly what the old wing faces were.
+// A Z-ordered "bowtie" ring or a ring that cuts through the quad fails this.
 inline bool isConvexRing(const float p[4][3], float eps = 1e-3f) {
     const float ux = p[1][0] - p[0][0], uy = p[1][1] - p[0][1], uz = p[1][2] - p[0][2];
     const float vx = p[2][0] - p[0][0], vy = p[2][1] - p[0][1], vz = p[2][2] - p[0][2];

@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Renders the Wings module's overlay geometry offline into PNGs so a wing
-# style can be judged without launching Minecraft. The preview uses the exact
-# bone tables, rest-pose fan, taper, sweep and face shading the game runs
-# (src/modules/visual/wings_shape.hpp + wings_styles.hpp), and also emits the
-# legacy renderer for comparison.
+# Renders the Wings module's geometry offline into PNGs so a wing style can be
+# judged without launching Minecraft. The preview uses the exact design table,
+# membrane builder and shading the game runs (src/modules/visual/wings_design.hpp
+# + wings_surface.hpp + wings_shape.hpp).
 #
 #     ./scripts/gen_wings_preview.sh [outdir]
 #
 # Output (default build/wings-preview/): <style>.png (2x2 poses per style),
-# legacy_dragon.png and compare_dragon.png (legacy vs current).
+# <style>_hero.png (3/4 close-up) and showcase.png (every style at once).
 
 set -euo pipefail
 

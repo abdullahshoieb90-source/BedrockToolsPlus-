@@ -17,35 +17,34 @@
 //
 // This version draws the wings as a world-space overlay attached to the local
 // player via a RenderLevel hook + tessellator, instead of touching the skin at
-// all. The wings are fully 3D: the same articulated bone hierarchy that ships
-// in resources/wings/wings_geometry.json (and is embedded in the binary via
-// wings_default.hpp):
+// all. Each wing is one continuous membrane: an articulated arm (shoulder,
+// elbow, wrist) bent into a smooth Catmull-Rom leading edge, with a cambered
+// sail hanging off it. The sail's trailing edge is swept inboard and carved
+// into concave finger scallops, with struts along the fingers, a spar + claw
+// along the arm and a shoulder fairing at the root; the feathered styles lay
+// three overlapping rows of quills over it.
 //
-//   bone_wings
-//   +-- bone_wing_right      (shoulder joint box)
-//   |   +-- bone_wing_right_upper
-//   |   |   +-- bone_wing_right_feather_1
-//   |   |   +-- bone_wing_right_feather_2
-//   |   |   +-- bone_wing_right_tip
-//   |   |       +-- bone_wing_right_feather_3
-//   |   |       +-- bone_wing_right_feather_4
-//   +-- bone_wing_left       (mirrored)
+// The geometry lives in src/modules/visual/:
 //
-// Every box face is coloured with the same palette that the texture generator
-// paints into wings.png (dark outer membrane, lighter inner membrane, brown
-// frame/bone edges, highlighted feather tips) so the overlay matches the
-// texture-mapped geometry.
+//   wings_design.hpp   the style table - arm proportions, membrane shape
+//                      (chord, fan, scallops, fingers), feather layer and
+//                      palette, one entry per selectable style
+//   wings_surface.hpp  the builder: turns a WingDesign + a pose into the quads
+//                      of a single continuous membrane (leading edge, sail,
+//                      finger struts, spar, claw, feathers)
+//   wings_shape.hpp    pure math + the shading model
 //
-// The bone tables and the rendering details live in src/modules/visual/
-// wings_shape.hpp (prism building, face rings, shading) and wings_styles.hpp
-// (the seven selectable styles). On top of the plain box layout each bone
-// carries three shape details: a rest-pose fan (feathers splay open and the
-// tip curls), a backwards sweep (the wing curves away from the back instead
-// of lying in one plane) and a tapered far edge (feathers narrow to a tip).
-// Every face is shaded per-frame with a soft headlight plus a sky lift and a
-// shoulder-to-tip gradient, so the wings read as 3D volume instead of flat
-// cut-outs. tools/wings_preview.cpp renders the exact same shapes into PNGs
-// for offline checks.
+// The overlay used to draw seven disjoint prism boxes per wing, which read as a
+// comb of planks. The membrane is one sheet hanging off a Catmull-Rom arm: it
+// has a real silhouette, concave finger scallops, a cambered surface that
+// catches the light, a travelling flutter wave while flapping and, for the
+// feathered styles, three rows of overlapping quills over the sail.
+//
+// Both wings are built as double-sided quads in Bedrock model pixels and pushed
+// through the tessellator; the palette side is chosen from where the camera is
+// relative to the player, so the sheet never turns into a front/back patchwork.
+// tools/wings_preview.cpp rasterizes exactly the same quads into PNGs, so a
+// change can be judged without launching the game.
 //
 // Animation (mirrors resources/wings/wings_animation.json): a flap clock runs
 // at angle = amplitude * sin(flapTime * baseRate * flapSpeed), and the pose is
