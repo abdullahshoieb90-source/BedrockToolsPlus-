@@ -116,9 +116,11 @@ struct FakeActor {
         writeAt(bytes, bedrocktools::sdk::offsets::Actor::mCategories, categories);
     }
 
+    // Sized so every offset the render hook reads (including
+    // Actor::mActorRotationComponent, read by the hitbox indicator's
+    // getActorRotation) stays inside the zero-initialized allocation.
     alignas(16) std::array<std::byte,
-        bedrocktools::sdk::offsets::Actor::mStateVectorComponent +
-        bedrocktools::sdk::offsets::BuiltInActorComponents::mAABBShapeComponent +
+        bedrocktools::sdk::offsets::Actor::mActorRotationComponent +
         sizeof(std::uintptr_t)> bytes{};
     StateVector state{};
     Shape shape{};
@@ -129,12 +131,19 @@ struct FakeActor {
 std::vector<bedrocktools::sdk::Vec3> g_vertices;
 int g_beginCalls = 0;
 
+// Color capture: each drawn pass sets its color first, so recording the
+// color at the current vertex count maps boxes to the color they used.
+struct ColorMark { float r, g, b; std::size_t vertex; };
+std::vector<ColorMark> g_colorMarks;
+
 void fakeTessBegin(void*, void*, int, int, int) {
     // One begin call per drawn pass; the module's hairline pass is one call
     // per box, so this doubles as the box counter.
     ++g_beginCalls;
 }
-void fakeTessColor(void*, float, float, float, float) {}
+void fakeTessColor(void*, float r, float g, float b, float) {
+    g_colorMarks.push_back(ColorMark{r, g, b, g_vertices.size()});
+}
 void fakeTessVertex(void*, float x, float y, float z) {
     g_vertices.emplace_back(bedrocktools::sdk::Vec3{x, y, z});
 }
@@ -203,6 +212,7 @@ FrameResult drawFrame(const std::vector<FetchEntry>& entries, FakeActor& localPl
 
     g_vertices.clear();
     g_beginCalls = 0;
+    g_colorMarks.clear();
     g_lastFetchExtent = 0.0f;
     g_fetchedList.clear();
     for (const auto& entry : entries) {
@@ -222,6 +232,12 @@ FrameResult drawFrame(const std::vector<FetchEntry>& entries, FakeActor& localPl
     result.bounds = capturedBounds();
     result.boxes = g_beginCalls;
     return result;
+}
+
+// Storage backing the fake Level::getHitResult in the verdict stage.
+std::array<std::byte, 96>& verdictBuffer() {
+    static std::array<std::byte, 96> buffer{};
+    return buffer;
 }
 
 // Single-actor convenience wrapper for the interpolation checks.
@@ -366,48 +382,33 @@ int main() {
         nearMob.setCategories(ActorCategories::IsMob);
         midMob.setBoxX(60.0f);
         midMob.setCategories(ActorCategories::IsMob);
-        farMob.setBoxX(150.0f);
+        farMob.setBoxX(120.0f);
         farMob.setCategories(ActorCategories::IsMob);
 
-        check(near(ranged.range, 100.0f), "players and mobs default to a 100 block range");
-        check(near(ranged.itemsRange, 32.0f), "items keep a shorter 32 block range");
-
-        const std::vector<FetchEntry> mobs{{&nearMob, 10.0f}, {&midMob, 60.0f}, {&farMob, 150.0f}};
+        // The Range sliders are gone: one fixed scan radius fetches actors,
+        // and everything fetched is drawn regardless of its distance.
+        const std::vector<FetchEntry> mobs{{&nearMob, 10.0f}, {&midMob, 60.0f}, {&farMob, 120.0f}};
         FrameResult within = drawFrame(mobs, localPlayer);
-        check(within.boxes == 2, "a mob outside the 100 block range is not drawn");
-        check(near(within.bounds.maxX, 60.6f), "the farthest drawn mob is the one inside the range");
-        check(near(g_lastFetchExtent, 100.0f), "the actor fetch covers the configured range");
+        check(within.boxes == 3, "mobs near and far are all drawn (no distance filter)");
+        check(near(within.bounds.maxX, 120.6f), "the 120-block mob is drawn");
+        check(near(g_lastFetchExtent, kHitboxScanRadius),
+              "the actor fetch uses the fixed scan radius");
 
-        ranged.range = 200.0f;
-        check(drawFrame(mobs, localPlayer).boxes == 3, "raising the range brings the far mob back");
+        // Group toggles keep working (they replaced the range as the filter).
+        ranged.showEntities = false;
+        check(drawFrame(mobs, localPlayer).boxes == 0, "Show Entities off hides the mobs");
+        ranged.showEntities = true;
 
-        ranged.range = 40.0f;
-        check(drawFrame(mobs, localPlayer).boxes == 1, "lowering the range drops the mid mob");
-
-        ranged.range = 0.0f;
-        check(drawFrame(mobs, localPlayer).boxes == 0, "range 0 disables the group");
-        ranged.range = 100.0f;
-
-        // Items are their own group: same fetch, shorter range.
+        // Items share the same scan radius; only the toggle gates them.
         FakeActor itemActor;
         itemActor.setBoxX(40.0f);
         itemActor.setCategories(ActorCategories::IsItem);
         const std::vector<FetchEntry> items{{&itemActor, 40.0f}};
+        check(drawFrame(items, localPlayer).boxes == 1, "an item within the scan radius is drawn");
 
-        ranged.itemsRange = 32.0f;
-        check(drawFrame(items, localPlayer).boxes == 0, "an item outside its own range is not drawn");
-        ranged.itemsRange = 64.0f;
-        check(drawFrame(items, localPlayer).boxes == 1, "an item inside its own range is drawn");
-
-        // Ranges are clamped so a hand-edited config cannot scan the world.
-        ranged.range = 5000.0f;
-        ranged.itemsRange = -12.0f;
-        drawFrame(items, localPlayer);
-        check(near(g_lastFetchExtent, kHitboxMaxRange),
-              "the fetch extent is clamped to the module ceiling");
-
-        ranged.range = 100.0f;
-        ranged.itemsRange = 32.0f;
+        ranged.showItems = false;
+        check(drawFrame(items, localPlayer).boxes == 0, "Show Items off hides the item");
+        ranged.showItems = true;
     }
 
     // The ranged module is scoped to its own block; put the module the other
@@ -433,29 +434,257 @@ int main() {
         oldConfig["showPlayers"] = false;
         legacy.loadConfig(oldConfig);
         check(legacy.smoothBoxes, "config saved before the option existed keeps smoothing on");
-        check(near(legacy.range, 100.0f) && near(legacy.itemsRange, 32.0f),
-              "config saved before the ranges existed keeps the 100/32 defaults");
 
+        // The Range sliders are gone from the menu: saveConfig must not emit
+        // the keys (the menu is built from saveConfig output), and configs
+        // saved by older builds load harmlessly with the keys ignored.
         HitboxModule ranged;
         nlohmann::json savedRanges;
         ranged.saveConfig(savedRanges);
-        check(savedRanges.contains("range") && savedRanges.contains("itemsRange"),
-              "saveConfig persists both draw ranges");
+        check(!savedRanges.contains("range") && !savedRanges.contains("itemsRange"),
+              "saveConfig no longer emits the removed Range sliders");
 
-        nlohmann::json incomingRanges;
-        incomingRanges["range"] = 150.0f;
-        incomingRanges["itemsRange"] = 8.0f;
-        ranged.loadConfig(incomingRanges);
-        check(near(ranged.range, 150.0f) && near(ranged.itemsRange, 8.0f),
-              "loadConfig reads both draw ranges");
+        nlohmann::json oldRanges;
+        oldRanges["range"] = 12.0f;
+        oldRanges["itemsRange"] = 4.0f;
+        ranged.loadConfig(oldRanges);
+        check(near(g_lastFetchExtent, kHitboxScanRadius),
+              "a stale config cannot shrink the fixed scan radius");
+    }
 
-        nlohmann::json crazyRanges;
-        crazyRanges["range"] = 99999.0f;
-        crazyRanges["itemsRange"] = -40.0f;
-        HitboxModule clamped;
-        clamped.loadConfig(crazyRanges);
-        check(near(clamped.range, kHitboxMaxRange), "an oversized range is clamped to the ceiling");
-        check(near(clamped.itemsRange, 0.0f), "a negative range clamps to 0 (disabled)");
+    std::printf("hitbox indicator reach\n");
+
+    // Two regressions in one stage:
+    //   1. The selection ray was capped at 3 blocks from the CAMERA, so in
+    //      third person an entity under the crosshair just past the player
+    //      was never highlighted.
+    //   2. The first fix added the camera-to-player distance to the RAY
+    //      length instead of gating the hit, so the highlight stretched to
+    //      several blocks past the player - the indicator fired on entities
+    //      well beyond the game's 3-block interaction distance.
+    // The reach is now 3 blocks measured from the player's own box, with the
+    // ray merely starting at the camera for crosshair alignment.
+    {
+        // Fresh module instance: it becomes the hook's g_hitboxMod for this
+        // stage (the config stage above left the pointer nulled on destroy).
+        HitboxModule indicatorMod;
+        indicatorMod.enabled = true;
+
+        // Third-person camera at the origin looking down +Z (rotation 0).
+        // The player's box sits ~2.5 blocks ahead; a mob just beyond it under
+        // the crosshair (~0.1 blocks past the player, well within reach), and
+        // a second mob more than 3 blocks past the player on the same ray.
+        localPlayer.shape.aabb = {{-0.3f, -0.3f, 2.5f}, {0.3f, 0.3f, 3.1f}};
+        localPlayer.state.pos = {0.0f, -0.3f, 2.5f};
+
+        actor.shape.aabb = {{-0.3f, -0.3f, 3.2f}, {0.3f, 0.3f, 3.8f}};
+        actor.state.pos = {0.0f, -0.3f, 3.2f};
+
+        FakeActor farActor;
+        farActor.shape.aabb = {{-0.3f, -0.3f, 6.5f}, {0.3f, 0.3f, 7.1f}};
+        farActor.state.pos = {0.0f, -0.3f, 6.5f};
+
+        indicatorMod.hitboxIndicator = true;
+        s_interpHistory.clear();
+
+        // Distance-sorted fetch: the near mob first, the far mob second.
+        // Default colors differ (active red vs default white), so the drawn
+        // colors identify which mob the indicator selected.
+        FrameResult indicatorFrame = drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        check(indicatorFrame.boxes >= 2, "both mobs on the crosshair ray are drawn");
+
+        check(g_colorMarks.size() >= 2, "each drawn box carries its own color");
+        if (g_colorMarks.size() >= 2) {
+            const auto& first = g_colorMarks[g_colorMarks.size() - 2];
+            const auto& second = g_colorMarks.back();
+            check(near(first.r, 1.0f) && near(first.g, 0.0f) && near(first.b, 0.0f),
+                  "the mob within 3 blocks of the player gets the Indicator Active Color");
+            check(near(second.r, 1.0f) && near(second.g, 1.0f) && near(second.b, 1.0f),
+                  "a mob more than 3 blocks past the player keeps the default color");
+        }
+
+        // Guard the reach geometry directly so a future refactor cannot
+        // silently stretch or shrink it.
+        {
+            const AABB playerBox = getActorAABB(localPlayer.handle());
+            AABB nearBox = getActorAABB(actor.handle());
+            float hitDist = 0.0f;
+
+            // The old fixed 3.0 camera ray misses the mob past the player...
+            const bool fixedHit = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, nearBox, 3.0f, hitDist);
+            check(!fixedHit, "a fixed 3.0 camera ray misses the mob just past the player");
+            // ...but the camera-started ray crosses it (the ray is cast far
+            // enough; the reach gate below does the filtering).
+            const bool rayHit = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, nearBox, 8.0f, hitDist);
+            check(rayHit && near(hitDist, 3.2f, 0.01f), "the camera ray hits the near mob at 3.2");
+
+            // Hit point 0.1 blocks past the player's box: within reach.
+            check(near(hitbox::pointAabbDistance(0.0f, 0.0f, 3.2f,
+                                                 playerBox.min.x, playerBox.min.y, playerBox.min.z,
+                                                 playerBox.max.x, playerBox.max.y, playerBox.max.z),
+                       0.1f, 0.001f),
+                  "the near hit sits 0.1 blocks from the player's box");
+            check(hitbox::hitWithinPlayerReach(0.0f, 0.0f, 3.2f,
+                                               playerBox.min.x, playerBox.min.y, playerBox.min.z,
+                                               playerBox.max.x, playerBox.max.y, playerBox.max.z,
+                                               hitbox::kIndicatorReach),
+                  "the near mob is within the player-based reach");
+
+            // Hit point 3.4 blocks past the player's box: out of reach (this
+            // is the reported bug - it used to be highlighted).
+            const AABB farBox = getActorAABB(farActor.handle());
+            const bool farRayHit = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, farBox, 8.0f, hitDist);
+            check(farRayHit && near(hitDist, 6.5f, 0.01f), "the camera ray hits the far mob at 6.5");
+            check(near(hitbox::pointAabbDistance(0.0f, 0.0f, 6.5f,
+                                                 playerBox.min.x, playerBox.min.y, playerBox.min.z,
+                                                 playerBox.max.x, playerBox.max.y, playerBox.max.z),
+                       3.4f, 0.001f),
+                  "the far hit sits 3.4 blocks from the player's box");
+            check(!hitbox::hitWithinPlayerReach(0.0f, 0.0f, 6.5f,
+                                                playerBox.min.x, playerBox.min.y, playerBox.min.z,
+                                                playerBox.max.x, playerBox.max.y, playerBox.max.z,
+                                                hitbox::kIndicatorReach),
+                  "the far mob is beyond the player-based reach");
+        }
+
+        // First person: the camera sits at eye level inside/above the
+        // player's own box, so the reach stays ~3 blocks from the player -
+        // the old camera + 3 formula added ~0.7 on top.
+        {
+            check(near(hitbox::pointAabbDistance(0.0f, 0.0f, 0.0f,
+                                                 -0.3f, -0.3f, -0.1f,
+                                                 0.3f, 1.5f, 0.3f),
+                       0.0f, 0.001f),
+                  "a first-person camera at eye level is inside the player's box");
+            check(hitbox::hitWithinPlayerReach(0.0f, 0.0f, 2.9f,
+                                               -0.3f, -0.3f, -0.1f,
+                                               0.3f, 1.5f, 0.3f,
+                                               hitbox::kIndicatorReach),
+                  "a mob ~3 blocks ahead in first person is within reach");
+            check(!hitbox::hitWithinPlayerReach(0.0f, 0.0f, 3.6f,
+                                                -0.3f, -0.3f, -0.1f,
+                                                0.3f, 1.5f, 0.3f,
+                                                hitbox::kIndicatorReach),
+                  "a mob 3.6 blocks ahead in first person is out of reach");
+        }
+
+        s_interpHistory.clear();
+        // Restore the boxes the earlier stages expect, should any follow.
+        localPlayer.setBoxX(0.0f);
+        actor.setBoxX(10.0f);
+    }
+
+    std::printf("hitbox indicator follows the game's attack verdict\n");
+
+    // The indicator now defers to the game's own crosshair HitResult, whose
+    // HitType encodes the allowed attack distance exactly (TypeEntity =
+    // entity under the crosshair AND within the game's attack reach,
+    // TypeEntityOutOfRange = under the crosshair but too far). That keeps
+    // the highlight correct in every game mode without hardcoding a
+    // distance. The ray fallback above only runs when the verdict is
+    // unavailable.
+    {
+        HitboxModule verdictMod;
+        verdictMod.enabled = true;
+        verdictMod.hitboxIndicator = true;
+
+        // Same third-person scene as the fallback stage: player ~2.8 blocks
+        // ahead of the origin camera, near mob just past the player, far mob
+        // well beyond a survival reach.
+        localPlayer.shape.aabb = {{-0.3f, -0.3f, 2.5f}, {0.3f, 0.3f, 3.1f}};
+        localPlayer.state.pos = {0.0f, -0.3f, 2.5f};
+        actor.shape.aabb = {{-0.3f, -0.3f, 3.2f}, {0.3f, 0.3f, 3.8f}};
+        actor.state.pos = {0.0f, -0.3f, 3.2f};
+        FakeActor farActor;
+        farActor.shape.aabb = {{-0.3f, -0.3f, 6.5f}, {0.3f, 0.3f, 7.1f}};
+        farActor.state.pos = {0.0f, -0.3f, 6.5f};
+
+        // The hook reads the level from the player (Actor::mLevel) and hands
+        // it to Level::getHitResult; hand back crafted hit results.
+        void* fakeLevel = reinterpret_cast<void*>(0x9999);
+        writeAt(localPlayer.bytes, bedrocktools::sdk::offsets::Actor::mLevel, fakeLevel);
+
+        s_levelGetHitResult = [](void* level) -> void* {
+            return level == reinterpret_cast<void*>(0x9999) ? verdictBuffer().data() : nullptr;
+        };
+
+        // Writes the fake Level::getHitResult verdict the hook will read.
+        const auto setVerdict = [&](int type, void* entity) {
+            auto& buffer = verdictBuffer();
+            std::fill(buffer.begin(), buffer.end(), std::byte{0});
+            writeAt(buffer, bedrocktools::sdk::offsets::HitResult::mType, type);
+            if (entity) {
+                writeAt(buffer, bedrocktools::sdk::offsets::HitResult::mEntity, entity);
+            }
+        };
+
+        s_interpHistory.clear();
+
+        // In-range entity: the near mob gets the active color.
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeEntity, actor.handle());
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        check(g_colorMarks.size() >= 2, "verdict stage draws both boxes");
+        if (g_colorMarks.size() >= 2) {
+            const auto& first = g_colorMarks[g_colorMarks.size() - 2];
+            const auto& second = g_colorMarks.back();
+            check(near(first.r, 1.0f) && near(first.g, 0.0f) && near(first.b, 0.0f),
+                  "the game's in-range verdict highlights the near mob");
+            check(near(second.r, 1.0f) && near(second.g, 1.0f) && near(second.b, 1.0f),
+                  "the other mob keeps the default color");
+        }
+
+        // The game may allow a farther reach (creative): when its verdict
+        // picks the far mob, that mob gets the active color even though the
+        // ray fallback would never reach it.
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeEntity, farActor.handle());
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        check(g_colorMarks.size() >= 2, "far-verdict stage draws both boxes");
+        if (g_colorMarks.size() >= 2) {
+            const auto& first = g_colorMarks[g_colorMarks.size() - 2];
+            const auto& second = g_colorMarks.back();
+            check(near(first.r, 1.0f) && near(first.g, 1.0f) && near(first.b, 1.0f),
+                  "the mob the verdict did not pick keeps the default color");
+            check(near(second.r, 1.0f) && near(second.g, 0.0f) && near(second.b, 0.0f),
+                  "the game's far-reach verdict highlights the far mob");
+        }
+
+        // Under the crosshair but beyond the allowed attack distance:
+        // nothing is highlighted (this is the "allowed hit distance" rule).
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeEntityOutOfRange, actor.handle());
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        {
+            bool anyActive = false;
+            for (const auto& mark : g_colorMarks) {
+                if (near(mark.g, 0.0f) && near(mark.b, 0.0f)) anyActive = true;
+            }
+            check(!anyActive, "an out-of-reach verdict highlights nothing");
+        }
+
+        // Crosshair on a block or the sky: nothing is highlighted.
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeBlock, nullptr);
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        {
+            bool anyActive = false;
+            for (const auto& mark : g_colorMarks) {
+                if (near(mark.g, 0.0f) && near(mark.b, 0.0f)) anyActive = true;
+            }
+            check(!anyActive, "a block verdict highlights nothing");
+        }
+
+        // A verdict pointer outside the fetch degrades to the ray fallback:
+        // unknown entities cannot be highlighted, the known near mob stays
+        // reachable through the fallback... the pick below must stay empty
+        // because the fallback ALSO runs its own reach gate - the point is
+        // that nothing crashes and colors stay sane.
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeEntity,
+                   reinterpret_cast<void*>(0x7777));
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        check(g_colorMarks.size() >= 2, "unknown pick still draws both boxes");
+
+        s_levelGetHitResult = nullptr;
+        s_interpHistory.clear();
+        localPlayer.setBoxX(0.0f);
+        actor.setBoxX(10.0f);
     }
 
     std::printf("\n");

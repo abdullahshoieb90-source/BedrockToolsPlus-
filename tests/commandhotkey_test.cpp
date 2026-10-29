@@ -32,10 +32,12 @@
 // Launcher / SDK stubs
 // ---------------------------------------------------------------------------
 
-// Recorded overlay activity (buttonId -> last registered label).
+// Recorded overlay activity (buttonId -> last registered definition fields).
 static std::unordered_map<std::string, std::string> g_labelById;
 static std::unordered_map<std::string, int> g_registerCount;
 static std::unordered_map<std::string, int> g_unregisterCount;
+static std::unordered_map<std::string, unsigned int> g_textColorById;
+static std::unordered_map<std::string, std::string> g_iconById;
 
 namespace pl::modmenu {
     bool registerModule(const ModuleInfo&) { return true; }
@@ -46,6 +48,8 @@ namespace pl::modmenu {
     bool registerImage(std::string_view, std::span<const unsigned char>, int, int) { return true; }
     bool registerButton(const ButtonInfo& info) {
         g_labelById[info.buttonId] = info.label;
+        g_textColorById[info.buttonId] = info.textColor;
+        g_iconById[info.buttonId] = std::string(info.iconData.begin(), info.iconData.end());
         ++g_registerCount[info.buttonId];
         return true;
     }
@@ -142,6 +146,26 @@ int main() {
     const int regBeforeKey = g_registerCount[btn1];
     mod.loadConfig(j4);
     check(g_registerCount[btn1] == regBeforeKey, "keybind-only change does not rebuild");
+
+    // The Button Opacity slider must actually reach the registered button:
+    // baked into the label color alpha and the SVG frame's root opacity, and a
+    // change must rebuild the definition (the launcher keeps its own snapshot).
+    check((g_textColorById[btn1] >> 24) == 0xD9,
+          "default opacity (0.85) is baked into the label alpha");
+    check(g_iconById[btn1].find("opacity=\"0.850\"") != std::string::npos,
+          "default opacity is baked into the SVG frame");
+
+    nlohmann::json j5 = j3;
+    j5["m_buttonOpacity"] = 0.5f;
+    const int regBeforeOpacity = g_registerCount[btn1];
+    mod.loadConfig(j5);
+    check(g_registerCount[btn1] > regBeforeOpacity, "opacity-only change re-registers the button");
+    check((g_textColorById[btn1] >> 24) == 0x80,
+          "opacity 0.5 is baked into the label alpha");
+    check(g_iconById[btn1].find("opacity=\"0.500\"") != std::string::npos,
+          "opacity 0.5 is baked into the SVG frame");
+    check((g_textColorById[btn1] & 0xFFFFFFu) == 0x373737,
+          "label RGB survives the alpha bake");
 
     std::printf(g_failures == 0 ? "ALL TESTS PASSED\n" : "%d TEST(S) FAILED\n", g_failures);
     return g_failures == 0 ? 0 : 1;

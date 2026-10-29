@@ -2,6 +2,7 @@
 
 #include "../ModuleRegistry.hpp"
 #include "core/GameHooks.hpp"
+#include "overlay_button_style.hpp"
 
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
@@ -168,6 +169,10 @@ void CommandHotkeyModule::unregisterOverlayButtons() {
 
 void CommandHotkeyModule::syncOverlayButtons() {
     unregisterOverlayButtons();
+    // The launcher hosts these buttons, so the opacity travels inside the
+    // definition: it is baked into the SVG frame and the label colors.
+    const std::string frame = overlaystyle::opacitySvg(commandButtonSvg, m_buttonOpacity);
+    const std::string activeFrame = overlaystyle::opacitySvg(commandButtonActiveSvg, m_buttonOpacity);
     for (std::size_t i = 0; i < MaxCommands; ++i) {
         const auto& binding = m_commands[i];
         if (!binding.enabled)
@@ -184,10 +189,11 @@ void CommandHotkeyModule::syncOverlayButtons() {
             // label visible makes the individual command buttons distinct.
             .stylePreset(pl::modmenu::ButtonStylePreset::Accent)
             .styleColors(0x00000001, 0x00000001, 0x00000001)
-            .svgIcon(commandButtonSvg, false)
-            .activeSvgIcon(commandButtonActiveSvg)
-            .textColor(0xFF000000u | (binding.textColor & 0x00FFFFFFu))
-            .activeTextColor(0xFF1F1F1Fu)
+            .svgIcon(frame.c_str(), false)
+            .activeSvgIcon(activeFrame.c_str())
+            .textColor(overlaystyle::alphaColor(
+                0xFF000000u | (binding.textColor & 0x00FFFFFFu), m_buttonOpacity))
+            .activeTextColor(overlaystyle::alphaColor(0xFF1F1F1Fu, m_buttonOpacity))
             .sizeScale((binding.width / kLauncherButtonBaseSize) * m_buttonScale,
                        (binding.height / kLauncherButtonBaseSize) * m_buttonScale)
             .onEvent([this, i](std::string_view, pl::modmenu::ButtonEvent event, float) {
@@ -251,6 +257,7 @@ void CommandHotkeyModule::loadConfig(const nlohmann::json& j) {
     // while the command/label fields are being typed.
     const auto previousBindings = m_commands;
     const float previousScale = m_buttonScale;
+    const float previousOpacity = m_buttonOpacity;
     Module::loadConfig(j);
 
     // Start from the built-in defaults (all slots exist directly but are
@@ -326,8 +333,10 @@ void CommandHotkeyModule::loadConfig(const nlohmann::json& j) {
     // keeps its own snapshot of each ExternalButton, so the native definition
     // must be refreshed first, after which ExternalButtonRefresh re-applies the
     // new label in place. Registering a duplicate button id is rejected, so
-    // syncOverlayButtons unregisters before re-registering.
-    bool overlayChanged = previousScale != m_buttonScale;
+    // syncOverlayButtons unregisters before re-registering. The baked opacity
+    // also changes what is drawn, so it triggers a rebuild too.
+    bool overlayChanged = previousScale != m_buttonScale ||
+                          previousOpacity != m_buttonOpacity;
     for (std::size_t i = 0; i < MaxCommands && !overlayChanged; ++i) {
         const auto& oldBinding = previousBindings[i];
         const auto& newBinding = m_commands[i];
