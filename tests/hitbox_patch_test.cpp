@@ -468,24 +468,28 @@ int main() {
         check(near(clamped.itemsRange, 0.0f), "a negative range clamps to 0 (disabled)");
     }
 
-    std::printf("hitbox indicator in third person\n");
+    std::printf("hitbox indicator reach\n");
 
-    // Regression: the indicator's selection ray was capped at 3 blocks from
-    // the CAMERA. In third person the camera sits several blocks behind the
-    // player, so an entity under the crosshair just past the player was out
-    // of reach and never received the Indicator Active Color. The ray now
-    // adds the camera-to-player distance, so the 3-block reach is measured
-    // beyond the player in every perspective.
+    // Two regressions in one stage:
+    //   1. The selection ray was capped at 3 blocks from the CAMERA, so in
+    //      third person an entity under the crosshair just past the player
+    //      was never highlighted.
+    //   2. The first fix added the camera-to-player distance to the RAY
+    //      length instead of gating the hit, so the highlight stretched to
+    //      several blocks past the player - the indicator fired on entities
+    //      well beyond the game's 3-block interaction distance.
+    // The reach is now 3 blocks measured from the player's own box, with the
+    // ray merely starting at the camera for crosshair alignment.
     {
         // Fresh module instance: it becomes the hook's g_hitboxMod for this
         // stage (the config stage above left the pointer nulled on destroy).
         HitboxModule indicatorMod;
         indicatorMod.enabled = true;
 
-        // Simulate a third-person camera at the origin looking down +Z
-        // (rotation 0): the local player's box sits ~2.8 blocks ahead, and a
-        // mob floats just beyond it under the crosshair, plus a second mob
-        // farther along the same ray.
+        // Third-person camera at the origin looking down +Z (rotation 0).
+        // The player's box sits ~2.5 blocks ahead; a mob just beyond it under
+        // the crosshair (~0.1 blocks past the player, well within reach), and
+        // a second mob more than 3 blocks past the player on the same ray.
         localPlayer.shape.aabb = {{-0.3f, -0.3f, 2.5f}, {0.3f, 0.3f, 3.1f}};
         localPlayer.state.pos = {0.0f, -0.3f, 2.5f};
 
@@ -493,8 +497,8 @@ int main() {
         actor.state.pos = {0.0f, -0.3f, 3.2f};
 
         FakeActor farActor;
-        farActor.shape.aabb = {{-0.3f, -0.3f, 4.5f}, {0.3f, 0.3f, 5.1f}};
-        farActor.state.pos = {0.0f, -0.3f, 4.5f};
+        farActor.shape.aabb = {{-0.3f, -0.3f, 6.5f}, {0.3f, 0.3f, 7.1f}};
+        farActor.state.pos = {0.0f, -0.3f, 6.5f};
 
         indicatorMod.hitboxIndicator = true;
         s_interpHistory.clear();
@@ -502,7 +506,7 @@ int main() {
         // Distance-sorted fetch: the near mob first, the far mob second.
         // Default colors differ (active red vs default white), so the drawn
         // colors identify which mob the indicator selected.
-        FrameResult indicatorFrame = drawFrame({{&actor, 3.2f}, {&farActor, 4.5f}}, localPlayer);
+        FrameResult indicatorFrame = drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
         check(indicatorFrame.boxes >= 2, "both mobs on the crosshair ray are drawn");
 
         check(g_colorMarks.size() >= 2, "each drawn box carries its own color");
@@ -510,23 +514,74 @@ int main() {
             const auto& first = g_colorMarks[g_colorMarks.size() - 2];
             const auto& second = g_colorMarks.back();
             check(near(first.r, 1.0f) && near(first.g, 0.0f) && near(first.b, 0.0f),
-                  "the nearest mob under the crosshair gets the Indicator Active Color");
+                  "the mob within 3 blocks of the player gets the Indicator Active Color");
             check(near(second.r, 1.0f) && near(second.g, 1.0f) && near(second.b, 1.0f),
-                  "the farther mob keeps the default indicator color");
+                  "a mob more than 3 blocks past the player keeps the default color");
         }
 
-        // The old fixed 3.0 camera ray would have selected nothing here
-        // (nearest hit is 3.2 blocks from the camera). Guard the geometry
-        // directly so a future refactor cannot silently shrink the ray.
+        // Guard the reach geometry directly so a future refactor cannot
+        // silently stretch or shrink it.
         {
+            const AABB playerBox = getActorAABB(localPlayer.handle());
             AABB nearBox = getActorAABB(actor.handle());
             float hitDist = 0.0f;
-            const bool hit = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, nearBox, 3.0f, hitDist);
-            check(!hit, "the old fixed 3.0 camera ray misses the mob past the player");
-            const bool extended = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, nearBox,
-                                              3.0f + 2.8f, hitDist);
-            check(extended && near(hitDist, 3.2f, 0.01f),
-                  "camera distance + 3.0 reach reaches it at the expected distance");
+
+            // The old fixed 3.0 camera ray misses the mob past the player...
+            const bool fixedHit = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, nearBox, 3.0f, hitDist);
+            check(!fixedHit, "a fixed 3.0 camera ray misses the mob just past the player");
+            // ...but the camera-started ray crosses it (the ray is cast far
+            // enough; the reach gate below does the filtering).
+            const bool rayHit = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, nearBox, 8.0f, hitDist);
+            check(rayHit && near(hitDist, 3.2f, 0.01f), "the camera ray hits the near mob at 3.2");
+
+            // Hit point 0.1 blocks past the player's box: within reach.
+            check(near(hitbox::pointAabbDistance(0.0f, 0.0f, 3.2f,
+                                                 playerBox.min.x, playerBox.min.y, playerBox.min.z,
+                                                 playerBox.max.x, playerBox.max.y, playerBox.max.z),
+                       0.1f, 0.001f),
+                  "the near hit sits 0.1 blocks from the player's box");
+            check(hitbox::hitWithinPlayerReach(0.0f, 0.0f, 3.2f,
+                                               playerBox.min.x, playerBox.min.y, playerBox.min.z,
+                                               playerBox.max.x, playerBox.max.y, playerBox.max.z,
+                                               hitbox::kIndicatorReach),
+                  "the near mob is within the player-based reach");
+
+            // Hit point 3.4 blocks past the player's box: out of reach (this
+            // is the reported bug - it used to be highlighted).
+            const AABB farBox = getActorAABB(farActor.handle());
+            const bool farRayHit = rayHitsAABB(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, farBox, 8.0f, hitDist);
+            check(farRayHit && near(hitDist, 6.5f, 0.01f), "the camera ray hits the far mob at 6.5");
+            check(near(hitbox::pointAabbDistance(0.0f, 0.0f, 6.5f,
+                                                 playerBox.min.x, playerBox.min.y, playerBox.min.z,
+                                                 playerBox.max.x, playerBox.max.y, playerBox.max.z),
+                       3.4f, 0.001f),
+                  "the far hit sits 3.4 blocks from the player's box");
+            check(!hitbox::hitWithinPlayerReach(0.0f, 0.0f, 6.5f,
+                                                playerBox.min.x, playerBox.min.y, playerBox.min.z,
+                                                playerBox.max.x, playerBox.max.y, playerBox.max.z,
+                                                hitbox::kIndicatorReach),
+                  "the far mob is beyond the player-based reach");
+        }
+
+        // First person: the camera sits at eye level inside/above the
+        // player's own box, so the reach stays ~3 blocks from the player -
+        // the old camera + 3 formula added ~0.7 on top.
+        {
+            check(near(hitbox::pointAabbDistance(0.0f, 0.0f, 0.0f,
+                                                 -0.3f, -0.3f, -0.1f,
+                                                 0.3f, 1.5f, 0.3f),
+                       0.0f, 0.001f),
+                  "a first-person camera at eye level is inside the player's box");
+            check(hitbox::hitWithinPlayerReach(0.0f, 0.0f, 2.9f,
+                                               -0.3f, -0.3f, -0.1f,
+                                               0.3f, 1.5f, 0.3f,
+                                               hitbox::kIndicatorReach),
+                  "a mob ~3 blocks ahead in first person is within reach");
+            check(!hitbox::hitWithinPlayerReach(0.0f, 0.0f, 3.6f,
+                                                -0.3f, -0.3f, -0.1f,
+                                                0.3f, 1.5f, 0.3f,
+                                                hitbox::kIndicatorReach),
+                  "a mob 3.6 blocks ahead in first person is out of reach");
         }
 
         s_interpHistory.clear();

@@ -642,24 +642,29 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         const float lookY = -sinf(pitchR);
         const float lookZ = cosf(yawR) * cosf(pitchR);
 
-        // Pick the nearest actor along the look ray, with the same ~3 block
-        // reach the game uses, measured beyond the player.
-        constexpr float kSelectionReach = 3.0f;
-
-        // The ray starts at the camera, which in third person sits several
-        // blocks behind the player. A fixed 3-block ray could never reach an
-        // entity under the crosshair in front of the player - so the
-        // Indicator Active Color only ever worked in first person, and
-        // whatever stood between the camera and the player got highlighted
-        // instead. Add the camera-to-player distance so the reach stays
-        // "3 blocks past the player" in every perspective.
-        float selectionRayLength = kSelectionReach;
+        // Pick the nearest actor along the look ray with the game's ~3 block
+        // reach, measured from the PLAYER's own box.
+        //
+        // The crosshair ray still starts at the camera (that defines what is
+        // under the crosshair), but the reach must not grow with the camera
+        // offset: adding the camera-to-player distance to a camera-based ray
+        // made the highlight stretch several blocks past the player in third
+        // person (and ~0.7 blocks in first person), so entities well beyond
+        // the game's interaction distance got the Indicator Active Color.
+        // Instead the ray is cast far enough to cross the player, and every
+        // hit is gated: the hit point must land within 3 blocks of the
+        // player's own box.
+        float maxRayLength = hitbox::kIndicatorReach;
+        bool havePlayerBox = false;
         if (isDrawableBox(localAabb)) {
+            havePlayerBox = true;
             const bedrocktools::sdk::Vec3 anchor = boxCenter(localAabb);
             const float dx = camX - anchor.x;
             const float dy = camY - anchor.y;
             const float dz = camZ - anchor.z;
-            selectionRayLength += sqrtf(dx * dx + dy * dy + dz * dz);
+            maxRayLength = sqrtf(dx * dx + dy * dy + dz * dz) +
+                           hitbox::kIndicatorReach +
+                           hitbox::kIndicatorReachEpsilon + 0.5f;
         }
 
         float bestDist = 1e9f;
@@ -668,7 +673,19 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             if (!ent || ent == g_localPlayerPtr) continue;
             AABB aabb = getInterpolatedAABB(ent);
             float hitDist = 0.0f;
-            if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, selectionRayLength, hitDist)) continue;
+            if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, maxRayLength, hitDist)) continue;
+            if (havePlayerBox) {
+                const float hitX = camX + lookX * hitDist;
+                const float hitY = camY + lookY * hitDist;
+                const float hitZ = camZ + lookZ * hitDist;
+                if (!hitbox::hitWithinPlayerReach(
+                        hitX, hitY, hitZ,
+                        localAabb.min.x, localAabb.min.y, localAabb.min.z,
+                        localAabb.max.x, localAabb.max.y, localAabb.max.z,
+                        hitbox::kIndicatorReach)) {
+                    continue;
+                }
+            }
             if (hitDist < bestDist) {
                 bestDist = hitDist;
                 selectedEntity = ent;
