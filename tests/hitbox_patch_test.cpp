@@ -234,6 +234,12 @@ FrameResult drawFrame(const std::vector<FetchEntry>& entries, FakeActor& localPl
     return result;
 }
 
+// Storage backing the fake Level::getHitResult in the verdict stage.
+std::array<std::byte, 96>& verdictBuffer() {
+    static std::array<std::byte, 96> buffer{};
+    return buffer;
+}
+
 // Single-actor convenience wrapper for the interpolation checks.
 DrawBounds drawOneFrame(FakeActor& actor, FakeActor& localPlayer) {
     return drawFrame({{&actor, 1.0f}}, localPlayer).bounds;
@@ -564,6 +570,119 @@ int main() {
 
         s_interpHistory.clear();
         // Restore the boxes the earlier stages expect, should any follow.
+        localPlayer.setBoxX(0.0f);
+        actor.setBoxX(10.0f);
+    }
+
+    std::printf("hitbox indicator follows the game's attack verdict\n");
+
+    // The indicator now defers to the game's own crosshair HitResult, whose
+    // HitType encodes the allowed attack distance exactly (TypeEntity =
+    // entity under the crosshair AND within the game's attack reach,
+    // TypeEntityOutOfRange = under the crosshair but too far). That keeps
+    // the highlight correct in every game mode without hardcoding a
+    // distance. The ray fallback above only runs when the verdict is
+    // unavailable.
+    {
+        HitboxModule verdictMod;
+        verdictMod.enabled = true;
+        verdictMod.hitboxIndicator = true;
+
+        // Same third-person scene as the fallback stage: player ~2.8 blocks
+        // ahead of the origin camera, near mob just past the player, far mob
+        // well beyond a survival reach.
+        localPlayer.shape.aabb = {{-0.3f, -0.3f, 2.5f}, {0.3f, 0.3f, 3.1f}};
+        localPlayer.state.pos = {0.0f, -0.3f, 2.5f};
+        actor.shape.aabb = {{-0.3f, -0.3f, 3.2f}, {0.3f, 0.3f, 3.8f}};
+        actor.state.pos = {0.0f, -0.3f, 3.2f};
+        FakeActor farActor;
+        farActor.shape.aabb = {{-0.3f, -0.3f, 6.5f}, {0.3f, 0.3f, 7.1f}};
+        farActor.state.pos = {0.0f, -0.3f, 6.5f};
+
+        // The hook reads the level from the player (Actor::mLevel) and hands
+        // it to Level::getHitResult; hand back crafted hit results.
+        void* fakeLevel = reinterpret_cast<void*>(0x9999);
+        writeAt(localPlayer.bytes, bedrocktools::sdk::offsets::Actor::mLevel, fakeLevel);
+
+        s_levelGetHitResult = [](void* level) -> void* {
+            return level == reinterpret_cast<void*>(0x9999) ? verdictBuffer().data() : nullptr;
+        };
+
+        // Writes the fake Level::getHitResult verdict the hook will read.
+        const auto setVerdict = [&](int type, void* entity) {
+            auto& buffer = verdictBuffer();
+            std::fill(buffer.begin(), buffer.end(), std::byte{0});
+            writeAt(buffer, bedrocktools::sdk::offsets::HitResult::mType, type);
+            if (entity) {
+                writeAt(buffer, bedrocktools::sdk::offsets::HitResult::mEntity, entity);
+            }
+        };
+
+        s_interpHistory.clear();
+
+        // In-range entity: the near mob gets the active color.
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeEntity, actor.handle());
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        check(g_colorMarks.size() >= 2, "verdict stage draws both boxes");
+        if (g_colorMarks.size() >= 2) {
+            const auto& first = g_colorMarks[g_colorMarks.size() - 2];
+            const auto& second = g_colorMarks.back();
+            check(near(first.r, 1.0f) && near(first.g, 0.0f) && near(first.b, 0.0f),
+                  "the game's in-range verdict highlights the near mob");
+            check(near(second.r, 1.0f) && near(second.g, 1.0f) && near(second.b, 1.0f),
+                  "the other mob keeps the default color");
+        }
+
+        // The game may allow a farther reach (creative): when its verdict
+        // picks the far mob, that mob gets the active color even though the
+        // ray fallback would never reach it.
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeEntity, farActor.handle());
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        check(g_colorMarks.size() >= 2, "far-verdict stage draws both boxes");
+        if (g_colorMarks.size() >= 2) {
+            const auto& first = g_colorMarks[g_colorMarks.size() - 2];
+            const auto& second = g_colorMarks.back();
+            check(near(first.r, 1.0f) && near(first.g, 1.0f) && near(first.b, 1.0f),
+                  "the mob the verdict did not pick keeps the default color");
+            check(near(second.r, 1.0f) && near(second.g, 0.0f) && near(second.b, 0.0f),
+                  "the game's far-reach verdict highlights the far mob");
+        }
+
+        // Under the crosshair but beyond the allowed attack distance:
+        // nothing is highlighted (this is the "allowed hit distance" rule).
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeEntityOutOfRange, actor.handle());
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        {
+            bool anyActive = false;
+            for (const auto& mark : g_colorMarks) {
+                if (near(mark.g, 0.0f) && near(mark.b, 0.0f)) anyActive = true;
+            }
+            check(!anyActive, "an out-of-reach verdict highlights nothing");
+        }
+
+        // Crosshair on a block or the sky: nothing is highlighted.
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeBlock, nullptr);
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        {
+            bool anyActive = false;
+            for (const auto& mark : g_colorMarks) {
+                if (near(mark.g, 0.0f) && near(mark.b, 0.0f)) anyActive = true;
+            }
+            check(!anyActive, "a block verdict highlights nothing");
+        }
+
+        // A verdict pointer outside the fetch degrades to the ray fallback:
+        // unknown entities cannot be highlighted, the known near mob stays
+        // reachable through the fallback... the pick below must stay empty
+        // because the fallback ALSO runs its own reach gate - the point is
+        // that nothing crashes and colors stay sane.
+        setVerdict(bedrocktools::sdk::offsets::HitResult::TypeEntity,
+                   reinterpret_cast<void*>(0x7777));
+        drawFrame({{&actor, 3.2f}, {&farActor, 6.5f}}, localPlayer);
+        check(g_colorMarks.size() >= 2, "unknown pick still draws both boxes");
+
+        s_levelGetHitResult = nullptr;
+        s_interpHistory.clear();
         localPlayer.setBoxX(0.0f);
         actor.setBoxX(10.0f);
     }

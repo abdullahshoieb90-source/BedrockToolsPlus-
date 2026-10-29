@@ -23,6 +23,11 @@ typedef void (*MeshHelpers_renderMeshImmediately_t)(void* screenContext, void* t
 
 typedef bool (*Actor_isPlayer_t)(void* actor);
 typedef bool (*Actor_isInvisible_t)(void* actor);
+// Level::getHitResult(): the crosshair hit result the game itself uses for
+// picking. Its HitType already encodes the allowed attack/interaction
+// distance: TypeEntity means "entity under the crosshair AND within reach",
+// TypeEntityOutOfRange means "entity under the crosshair but too far".
+typedef void* (*Level_getHitResult_t)(void* level);
 struct DistanceSortedActor {
     void* mActor;
     float mDistance;
@@ -134,6 +139,8 @@ static Tessellator_begin_t                s_tessBegin = nullptr;
 static Tessellator_color_t                s_tessColor = nullptr;
 static Tessellator_vertex_t               s_tessVertex = nullptr;
 static MeshHelpers_renderMeshImmediately_t s_renderMesh = nullptr;
+
+static Level_getHitResult_t               s_levelGetHitResult = nullptr;
 
 static Actor_isPlayer_t                   s_actorIsPlayer = nullptr;
 static Actor_isInvisible_t                s_actorIsInvisible = nullptr;
@@ -632,8 +639,54 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         const float lookY = -sinf(pitchR);
         const float lookZ = cosf(yawR) * cosf(pitchR);
 
-        // Pick the nearest actor along the look ray with the game's ~3 block
-        // reach, measured from the PLAYER's own box.
+        // Primary: the game's own crosshair verdict. The game's HitResult
+        // already applies exactly the allowed attack/interaction distance
+        // (3 blocks in survival, 5 in creative, plus any item reach) and
+        // reports TypeEntity when the entity under the crosshair is within
+        // that reach vs TypeEntityOutOfRange when it is too far. Following
+        // that verdict means the Indicator Active Color lights up exactly
+        // what the player is allowed to hit - no hardcoded distance can
+        // drift from the game's rules.
+        bool verdictKnown = false;
+        if (s_levelGetHitResult) {
+            const uintptr_t level = *(const uintptr_t*)((uintptr_t)g_localPlayerPtr +
+                                                        bedrocktools::sdk::offsets::Actor::mLevel);
+            if (level >= 0x1000) {
+                void* rawHit = s_levelGetHitResult(reinterpret_cast<void*>(level));
+                if (rawHit && reinterpret_cast<std::uintptr_t>(rawHit) >= 0x1000) {
+                    const int hitType = *reinterpret_cast<const int*>(
+                        reinterpret_cast<std::uintptr_t>(rawHit) +
+                        bedrocktools::sdk::offsets::HitResult::mType);
+                    if (hitType == bedrocktools::sdk::offsets::HitResult::TypeEntity) {
+                        // Compare-only read of the picked actor: never
+                        // dereferenced, only matched against actor pointers
+                        // from the trusted fetch above. An offset mismatch
+                        // degrades to the ray fallback below.
+                        void* pick = *reinterpret_cast<void**>(
+                            reinterpret_cast<std::uintptr_t>(rawHit) +
+                            bedrocktools::sdk::offsets::HitResult::mEntity);
+                        if (pick && reinterpret_cast<std::uintptr_t>(pick) >= 0x1000) {
+                            for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
+                                if (it->mActor == pick) {
+                                    selectedEntity = pick;
+                                    verdictKnown = true;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        // Block / no hit / entity beyond the allowed reach:
+                        // nothing under the crosshair is attackable.
+                        verdictKnown = true;
+                    }
+                }
+            }
+        }
+
+        // Fallback (only when the game's verdict is unavailable, e.g. the
+        // signature did not resolve on this game build): pick the nearest
+        // actor along the look ray with the standard ~3 block attack reach,
+        // measured from the PLAYER's own box.
         //
         // The crosshair ray still starts at the camera (that defines what is
         // under the crosshair), but the reach must not grow with the camera
@@ -644,41 +697,43 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
         // Instead the ray is cast far enough to cross the player, and every
         // hit is gated: the hit point must land within 3 blocks of the
         // player's own box.
-        float maxRayLength = hitbox::kIndicatorReach;
-        bool havePlayerBox = false;
-        if (isDrawableBox(localAabb)) {
-            havePlayerBox = true;
-            const bedrocktools::sdk::Vec3 anchor = boxCenter(localAabb);
-            const float dx = camX - anchor.x;
-            const float dy = camY - anchor.y;
-            const float dz = camZ - anchor.z;
-            maxRayLength = sqrtf(dx * dx + dy * dy + dz * dz) +
-                           hitbox::kIndicatorReach +
-                           hitbox::kIndicatorReachEpsilon + 0.5f;
-        }
-
-        float bestDist = 1e9f;
-        for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
-            void* ent = it->mActor;
-            if (!ent || ent == g_localPlayerPtr) continue;
-            AABB aabb = getInterpolatedAABB(ent);
-            float hitDist = 0.0f;
-            if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, maxRayLength, hitDist)) continue;
-            if (havePlayerBox) {
-                const float hitX = camX + lookX * hitDist;
-                const float hitY = camY + lookY * hitDist;
-                const float hitZ = camZ + lookZ * hitDist;
-                if (!hitbox::hitWithinPlayerReach(
-                        hitX, hitY, hitZ,
-                        localAabb.min.x, localAabb.min.y, localAabb.min.z,
-                        localAabb.max.x, localAabb.max.y, localAabb.max.z,
-                        hitbox::kIndicatorReach)) {
-                    continue;
-                }
+        if (!verdictKnown) {
+            float maxRayLength = hitbox::kIndicatorReach;
+            bool havePlayerBox = false;
+            if (isDrawableBox(localAabb)) {
+                havePlayerBox = true;
+                const bedrocktools::sdk::Vec3 anchor = boxCenter(localAabb);
+                const float dx = camX - anchor.x;
+                const float dy = camY - anchor.y;
+                const float dz = camZ - anchor.z;
+                maxRayLength = sqrtf(dx * dx + dy * dy + dz * dz) +
+                               hitbox::kIndicatorReach +
+                               hitbox::kIndicatorReachEpsilon + 0.5f;
             }
-            if (hitDist < bestDist) {
-                bestDist = hitDist;
-                selectedEntity = ent;
+
+            float bestDist = 1e9f;
+            for (DistanceSortedActor* it = actors.begin; it < actors.end; ++it) {
+                void* ent = it->mActor;
+                if (!ent || ent == g_localPlayerPtr) continue;
+                AABB aabb = getInterpolatedAABB(ent);
+                float hitDist = 0.0f;
+                if (!rayHitsAABB(camX, camY, camZ, lookX, lookY, lookZ, aabb, maxRayLength, hitDist)) continue;
+                if (havePlayerBox) {
+                    const float hitX = camX + lookX * hitDist;
+                    const float hitY = camY + lookY * hitDist;
+                    const float hitZ = camZ + lookZ * hitDist;
+                    if (!hitbox::hitWithinPlayerReach(
+                            hitX, hitY, hitZ,
+                            localAabb.min.x, localAabb.min.y, localAabb.min.z,
+                            localAabb.max.x, localAabb.max.y, localAabb.max.z,
+                            hitbox::kIndicatorReach)) {
+                        continue;
+                    }
+                }
+                if (hitDist < bestDist) {
+                    bestDist = hitDist;
+                    selectedEntity = ent;
+                }
             }
         }
     }
@@ -842,6 +897,9 @@ void HitboxModule::onInit() {
             s_renderMaterialGroup = groupAddr + bedrocktools::sdk::offsets::MaterialGroup::mRenderMaterialGroupOffset;
         }
     }
+
+    uintptr_t lhr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::LevelGetHitResult);
+    if (lhr) s_levelGetHitResult = (Level_getHitResult_t)lhr;
 
     uintptr_t aip = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::ActorIsPlayer);
     if (aip) s_actorIsPlayer = (Actor_isPlayer_t)aip;

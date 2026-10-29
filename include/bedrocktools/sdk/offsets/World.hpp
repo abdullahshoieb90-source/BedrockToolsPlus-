@@ -119,6 +119,10 @@ inline constexpr std::size_t mType = 24;
 inline constexpr std::size_t mFacing = 28;
 inline constexpr std::size_t mBlockPos = 32;
 inline constexpr std::size_t mPos = 44;
+// The actor the entity hit refers to. Readers must never dereference this
+// blindly: use it only for equality comparison against actor pointers from a
+// trusted actor fetch (the layout after mPos is not pinned by a signature).
+inline constexpr std::size_t mEntity = 56;
 inline constexpr int TypeBlock = 0;
 inline constexpr int TypeEntity = 1;
 inline constexpr int TypeEntityOutOfRange = 2;
