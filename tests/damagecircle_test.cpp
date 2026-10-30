@@ -19,7 +19,7 @@ std::vector<std::array<float, 4>> colors;
 fake_render::GpuColor gpu;
 void fakeBegin(void*, void*, int mode, int count, int) {
     assert(mode == 1);
-    assert(count == jumpcircle::segments * jumpcircle::bands * 4);
+    assert(count == damagecircle::segments * damagecircle::bands * 4);
     ++begins;
 }
 void fakeColor(void*, float r, float g, float b, float a) { colors.push_back({r, g, b, a}); }
@@ -63,6 +63,24 @@ int main() {
     assert(std::abs(rings[0].center.y - 64.025f) < .001f);
     assert(std::abs(rings[0].center.z) < .001f);
 
+    const auto startState = damagecircle::animate(0.0f, 0.65f);
+    const auto middleState = damagecircle::animate(0.325f, 0.65f);
+    const auto endState = damagecircle::animate(0.65f, 0.65f);
+    assert(std::abs(startState.lift) < .001f && std::abs(startState.radius - 0.34f) < .001f);
+    assert(std::abs(middleState.lift - 0.91f) < .001f && middleState.radius > startState.radius);
+    assert(std::abs(endState.lift - 1.82f) < .001f && endState.radius > middleState.radius);
+    float minY = 100.0f, maxY = -100.0f, minRadius = 100.0f, maxRadius = 0.0f;
+    damagecircle::emitRisingRing({0.0f, 64.025f, 0.0f}, 0.325f, 0.65f,
+        [&](damagecircle::Point point, float) {
+            minY = std::min(minY, point.y);
+            maxY = std::max(maxY, point.y);
+            const float radius = std::sqrt(point.x * point.x + point.z * point.z);
+            minRadius = std::min(minRadius, radius);
+            maxRadius = std::max(maxRadius, radius);
+        });
+    assert(std::abs(minY - 64.935f) < .002f && std::abs(maxY - minY) < .002f);
+    assert(minRadius > 0.5f && maxRadius > 0.65f); // a raised, widening band—not a ground circle
+
     put(player, off::Actor::mHurtTime, 9);
     tick(player.data());
     assert(rings.size() == 1); // hurt-time countdown is not another hit
@@ -97,7 +115,7 @@ int main() {
     translucent.data[0] = &vertices;
     render(renderer.data(), screen.data());
     assert(begins == 2 && flushes == 2);
-    assert(vertices == 2 * jumpcircle::segments * jumpcircle::bands * 4);
+    assert(vertices == 2 * damagecircle::segments * damagecircle::bands * 4);
     assert(!colors.empty());
     for (const auto& colorValue : colors) {
         assert(colorValue[0] == 1.0f && colorValue[1] == 1.0f && colorValue[2] == 1.0f);

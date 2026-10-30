@@ -1,6 +1,5 @@
 #include "damagecircle.hpp"
 #include "damagecircle_geometry.hpp"
-#include "jumpcircle_geometry.hpp"
 #include "core/memory/Hooks.hpp"
 #include "core/RenderState.hpp"
 #include <bedrocktools/events/EventBus.hpp>
@@ -59,7 +58,7 @@ RenderMesh renderMesh = nullptr;
 RenderLevel originalRender = nullptr;
 std::uintptr_t materialGroup = 0;
 MaterialPtr translucent;
-struct Ring { jumpcircle::Point center; Clock::time_point start; };
+struct Ring { damagecircle::Point center; Clock::time_point start; };
 std::mutex stateMutex;
 std::vector<Ring> rings;
 void* trackedPlayer = nullptr;
@@ -124,8 +123,7 @@ void tick(void* rawPlayer) {
         rings.push_back({{feet.x, feet.y + 0.025f, feet.z}, now});
     }
     lastTick = now;
-    const float duration = std::isfinite(module->effectDuration)
-        ? std::clamp(module->effectDuration, 0.1f, 10.0f) : 0.65f;
+    const float duration = damagecircle::safeDuration(module->effectDuration);
     std::erase_if(rings, [now, duration](const Ring& ring) {
         return std::chrono::duration<float>(now - ring.start).count() >= duration;
     });
@@ -157,13 +155,12 @@ void render(void* renderer, void* screen) {
     const auto cam = *reinterpret_cast<const Vec3*>(lrp + LevelRendererPlayer::mCamPos);
     bedrocktools::core::ScopedShaderColor shaderColor(screen);
     if (!shaderColor) return;
-    const float duration = std::isfinite(module->effectDuration)
-        ? std::clamp(module->effectDuration, 0.1f, 10.0f) : 0.65f;
+    const float duration = damagecircle::safeDuration(module->effectDuration);
     for (const auto& ring : snapshot) {
         const float age = std::chrono::duration<float>(now - ring.start).count();
         if (age < 0 || age >= duration) continue;
-        tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, jumpcircle::segments * jumpcircle::bands * 4, 0);
-        jumpcircle::emitRing(ring.center, age, duration, false, jumpcircle::Style::Circle, [&](jumpcircle::Point point, float alpha) {
+        tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, damagecircle::segments * damagecircle::bands * 4, 0);
+        damagecircle::emitRisingRing(ring.center, age, duration, [&](damagecircle::Point point, float alpha) {
             tessColor(reinterpret_cast<void*>(tess), 1.0f, 1.0f, 1.0f, alpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
         });
@@ -179,7 +176,7 @@ void renderHook(void* renderer, void* screen, void* params) {
 } // namespace
 
 DamageCircleModule::DamageCircleModule()
-    : Module("Damage Circle", "Shows a brief white expanding ring when you take damage.") {
+    : Module("Damage Circle", "Shows a white ring that expands and rises from your feet to above your head when you take damage.") {
     module = this;
     hideInHudEditor = true;
 }
