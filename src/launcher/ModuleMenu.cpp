@@ -237,6 +237,12 @@ void registerModulesWithLauncher() {
                 if (kLower == "effectduration") {
                     minVal = 0.1f;
                     maxVal = 10.0f;
+                } else if (kLower == "effectspeed") {
+                    minVal = 0.25f;
+                    maxVal = 4.0f;
+                } else if (kLower == "effectsize") {
+                    minVal = 0.5f;
+                    maxVal = 2.5f;
                 } else if (kLower.find("opacity") != std::string::npos ||
                     kLower.find("color") != std::string::npos ||
                     kLower.find("alpha") != std::string::npos) {

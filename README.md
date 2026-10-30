@@ -23,7 +23,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Hitbox, Block Outline, Wings, Jump Circle
+**Visual:** Hitbox, Block Outline, Wings, Jump Circle, Damage Circle
 
 **HUD:** Effect Display, Crosshair, Hotbar Slots, Inventory HUD, Armor
 
@@ -58,7 +58,9 @@ The target is sampled on the client tick instead of resolving the hit result fro
 
 Enable **Jump Circle** to show a soft effect at takeoff and landing, including when walking off a block. **Effect Style** offers 13 shapes: Circle, Square, Star, Triangle, Diamond, Pentagon, Hexagon, Octagon, Four Point Star, Six Point Star, Heart, Flower and Gear; **Effect Duration** controls expansion and fade time (0.1–10 seconds); **Effect Color** sets the color and opacity, while **Rainbow** cycles through RGB colors at **Rainbow Speed** (using the selected opacity instead of the selected RGB color).
 
-Enable **Persistent** to keep effects visible after they expand instead of fading. For mobile performance, only the most recent 24 effects are retained; disabling the module or changing worlds clears them. Turning Persistent off allows older effects to expire. The effect is depth-tested and visible in third person.
+**Damage Circle** draws a ring slightly larger than Jump Circle's fully expanded ring by default. Choose from the same 13 **Effect Style** shapes, change **Effect Color** and opacity, or enable **Rainbow** and adjust **Rainbow Speed**. The ring follows the entity—even while moving—and travels from the feet to the top of the hitbox, then back down. **Effect Duration** (0.1–10 seconds) controls only how long the ring remains visible and fades. **Effect Speed** (0.25–4) independently controls how quickly it travels up and down, while **Effect Size** (0.5–2.5) adjusts its fixed diameter. **Show Players** and **Show Mobs** independently enable effects on players and mobs you successfully hit; your own damage effect remains enabled. Effects are local-only.
+
+In **Jump Circle**, enable **Persistent** to keep effects visible after they expand instead of fading. For mobile performance, only the most recent 24 effects are retained; disabling the module or changing worlds clears them. Turning Persistent off allows older effects to expire. The effect is depth-tested and visible in third person.
 
 Jump and landing are inferred from vertical movement, not a verified game-side ground event. Automatic jumps and walking off blocks do not depend on button input, but unusual movement, flight, water, bounce effects, jump boosts or partial-block steps may be missed or mistaken for jumps/landings. Rendering depends on the supported Bedrock version's native signatures and materials.
 
