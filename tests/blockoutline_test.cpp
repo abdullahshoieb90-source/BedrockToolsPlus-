@@ -19,6 +19,7 @@
 #include "bedrocktools/memory/Signatures.hpp"
 #include "bedrocktools/sdk/Offsets.hpp"
 #include "bedrocktools/sdk/Types.hpp"
+#include "fake_shader_color.hpp"
 
 namespace {
 
@@ -27,22 +28,35 @@ struct Batch {
     int reservedVertices = 0;
     int emittedVertices = 0;
     void* material = nullptr;
+    fake_render::Color vertexColor{};
+    fake_render::Color outputColor{};
+    bool legacyHolderUntouched = false;
 };
 
 std::vector<Batch> g_batches;
 Batch g_currentBatch;
 void* g_hitResult = nullptr;
+fake_render::GpuColor g_gpu;
+fake_render::ShaderColor* g_legacyHolder = nullptr;
+const fake_render::Color kLegacyColor{0.2f, 0.4f, 0.6f, 0.8f};
 
 void fakeRenderLevel(void*, void*, void*) {}
 void fakeTessBegin(void*, void*, int mode, int vertexCount, int) {
-    g_currentBatch = {mode, vertexCount, 0, nullptr};
+    g_currentBatch = {};
+    g_currentBatch.mode = mode;
+    g_currentBatch.reservedVertices = vertexCount;
 }
-void fakeTessColor(void*, float, float, float, float) {}
+void fakeTessColor(void*, float r, float g, float b, float a) {
+    g_currentBatch.vertexColor = {r, g, b, a};
+}
 void fakeTessVertex(void*, float, float, float) {
     ++g_currentBatch.emittedVertices;
 }
-void fakeRenderMesh(void*, void*, void* material, char*) {
+void fakeRenderMesh(void* screenContext, void*, void* material, char*) {
     g_currentBatch.material = material;
+    auto* holder = fake_render::colorHolder(screenContext);
+    if (holder) g_currentBatch.outputColor = g_gpu.draw(*holder, g_currentBatch.vertexColor);
+    g_currentBatch.legacyHolderUntouched = g_legacyHolder && g_legacyHolder->rgba == kLegacyColor;
     g_batches.push_back(g_currentBatch);
 }
 void* fakeGetHitResult(void*) {
@@ -105,6 +119,13 @@ bool near(float a, float b, float epsilon = 0.0001f) {
     return std::fabs(a - b) <= epsilon;
 }
 
+bool colorNear(const fake_render::Color& actual, const fake_render::Color& expected) {
+    for (std::size_t i = 0; i < actual.size(); ++i) {
+        if (!near(actual[i], expected[i])) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -119,7 +140,9 @@ int main() {
     alignas(std::max_align_t) std::array<std::byte, 256> screenContext{};
     alignas(std::max_align_t) std::array<std::byte, 0x500> levelRenderer{};
     alignas(std::max_align_t) std::array<std::byte, 0x1100> playerRenderer{};
-    alignas(std::max_align_t) std::array<float, 4> colorHolder{0.2f, 0.3f, 0.4f, 0.5f};
+    fake_render::ShaderColor colorHolder{{0.2f, 0.3f, 0.4f, 0.5f}, 0};
+    fake_render::ShaderColor legacyHolder{kLegacyColor, 0};
+    g_legacyHolder = &legacyHolder;
     std::uint64_t tessellator = 0;
 
     void* levelPointer = level.data();
@@ -134,9 +157,13 @@ int main() {
     g_hitResult = hit.data();
 
     void* tessellatorPointer = &tessellator;
-    void* colorHolderPointer = colorHolder.data();
+    void* colorHolderPointer = &colorHolder;
+    void* legacyHolderPointer = &legacyHolder;
     writeAt(screenContext, ScreenContext::mTessellator, tessellatorPointer);
-    writeAt(screenContext, ScreenContext::mColorHolder, colorHolderPointer);
+    writeAt(screenContext, fake_render::kColorHolderOffset, colorHolderPointer);
+    // The old slot contains a plausible, unrelated object, not the color
+    // holder. A renderer using the stale offset must not alter it.
+    writeAt(screenContext, fake_render::kOldColorHolderOffset, legacyHolderPointer);
 
     void* playerRendererPointer = playerRenderer.data();
     writeAt(levelRenderer, LevelRenderer::mLevelRendererPlayer, playerRendererPointer);
@@ -162,8 +189,8 @@ int main() {
         check(g_batches.size() >= 2 && g_batches[1].mode == 4 &&
               g_batches[1].reservedVertices == 24 && g_batches[1].emittedVertices == 24,
               "hairline pass emits all 12 block edges");
-        check(near(colorHolder[0], 0.2f) && near(colorHolder[1], 0.3f) &&
-              near(colorHolder[2], 0.4f) && near(colorHolder[3], 0.5f),
+        check(near(colorHolder.rgba[0], 0.2f) && near(colorHolder.rgba[1], 0.3f) &&
+              near(colorHolder.rgba[2], 0.4f) && near(colorHolder.rgba[3], 0.5f),
               "renderer restores ScreenContext color state");
 
         module.outline = false;
@@ -287,6 +314,112 @@ int main() {
         check(g_batches.size() == 2 && g_batches[0].material == vanillaMaterial &&
               g_batches[0].emittedVertices == 160,
               "missing blending material falls back to the vanilla material");
+
+        s_translucentMaterial = {};
+        s_throughWallsMaterial = {};
+        module.setMasterEnabled(false);
+    }
+
+    std::printf("block outline colors across camera modes\n");
+    {
+        check(ScreenContext::mColorHolder == fake_render::kColorHolderOffset,
+              "supported build uses the corrected shader-color pointer");
+        check(LevelRendererPlayer::mSelectionOverlayMaterial == 0x10A0,
+              "supported build uses the corrected selection-material fallback");
+
+        BlockOutlineModule module;
+        module.onInit();
+        module.setMasterEnabled(true);
+        updateTarget(player.data());
+        module.outlineColor = 0xFF3399CCu;
+        module.fillColor = 0xFFEF7C20u;
+        module.outlineOpacity = 1.0f;
+        module.fillOpacity = 0.3f;
+        const fake_render::Color outline{51.0f / 255.0f, 153.0f / 255.0f,
+                                         204.0f / 255.0f, 1.0f};
+        const fake_render::Color fill{239.0f / 255.0f, 124.0f / 255.0f,
+                                      32.0f / 255.0f, 0.3f};
+        const fake_render::Color white{1.0f, 1.0f, 1.0f, 1.0f};
+        const fake_render::Color black{0.0f, 0.0f, 0.0f, 1.0f};
+
+        // First-person: a hairline with the game's previously white tint.
+        writeAt(playerRenderer, LevelRendererPlayer::mCamPos, Vec3{10.5f, 65.5f, -1.0f});
+        module.lineThickness = 1.0f;
+        module.fill = false;
+        colorHolder = {white, 0};
+        g_gpu.rgba = white;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && colorNear(g_batches[0].outputColor, outline),
+              "first-person hairline uses the chosen outline color");
+        check(!g_batches.empty() && g_batches[0].legacyHolderUntouched,
+              "draw never overwrites the object at the old offset");
+
+        // Third-person player rendering may leave a black shader tint cached
+        // on the GPU. Both filled and thick/hairline passes need the selected
+        // vertex colors, even though the incoming holder is not white.
+        writeAt(playerRenderer, LevelRendererPlayer::mCamPos, Vec3{10.5f, 65.5f, 3.0f});
+        module.lineThickness = 3.0f;
+        module.fill = true;
+        s_translucentMaterial.data[0] = &s_translucentMaterial;
+        colorHolder = {black, 0};
+        g_gpu.rgba = black;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 3 && colorNear(g_batches[0].outputColor, fill),
+              "third-person translucent fill retains its RGB and opacity");
+        check(g_batches.size() == 3 && colorNear(g_batches[1].outputColor, outline) &&
+              colorNear(g_batches[2].outputColor, outline),
+              "third-person thick and hairline edges retain the selected RGB");
+        check(g_batches.size() == 3 && g_batches[0].legacyHolderUntouched &&
+              g_batches[1].legacyHolderUntouched && g_batches[2].legacyHolderUntouched,
+              "all block passes leave the old offset untouched");
+        check(colorNear(colorHolder.rgba, black) && colorHolder.dirty == 1,
+              "the game's prior tint is restored and scheduled for GPU upload");
+        g_gpu.upload(colorHolder);
+        check(colorNear(g_gpu.rgba, black) && colorHolder.dirty == 0,
+              "the next game draw receives its restored tint");
+
+        // Even if the holder already says white, its cached GPU value may be
+        // stale. Entering the overlay must still force a white upload.
+        module.fill = false;
+        module.lineThickness = 1.0f;
+        colorHolder = {white, 0};
+        g_gpu.rgba = black;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && colorNear(g_batches[0].outputColor, outline),
+              "a stale black GPU tint is refreshed even when the holder is already white");
+
+        // The same color state applies to the optional no-depth material.
+        module.throughWalls = true;
+        module.fill = true;
+        module.outline = false;
+        s_throughWallsMaterial.data[0] = &s_throughWallsMaterial;
+        colorHolder = {black, 0};
+        g_gpu.rgba = black;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && colorNear(g_batches[0].outputColor, fill) &&
+              g_batches[0].material == &s_throughWallsMaterial,
+              "through-walls fill also retains its selected color and opacity");
+
+        // Animated colors and alpha still come from the tessellator, not the
+        // previous black GPU tint, while using the depth-tested blend material.
+        module.throughWalls = false;
+        module.rainbow = true;
+        module.pulse = true;
+        colorHolder = {black, 0};
+        g_gpu.rgba = black;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 &&
+              colorNear(g_batches[0].outputColor, g_batches[0].vertexColor) &&
+              (g_batches[0].outputColor[0] + g_batches[0].outputColor[1] +
+               g_batches[0].outputColor[2]) > 0.9f &&
+              g_batches[0].outputColor[3] >= 0.125f &&
+              g_batches[0].outputColor[3] <= 0.301f,
+              "rainbow and pulsing fill keep their animated RGB and opacity");
 
         s_translucentMaterial = {};
         s_throughWallsMaterial = {};

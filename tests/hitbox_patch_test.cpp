@@ -31,6 +31,7 @@
 #include "bedrocktools/memory/Signatures.hpp"
 #include "bedrocktools/sdk/Offsets.hpp"
 #include "bedrocktools/sdk/Types.hpp"
+#include "fake_shader_color.hpp"
 
 // Host stubs. No signature resolves, so the module takes its null-safe
 // fallbacks (no materials, no occlusion, no drawing through the real game).
@@ -69,6 +70,18 @@ void check(bool condition, const char* message) {
 
 bool near(float a, float b, float epsilon = 0.0001f) {
     return std::fabs(a - b) <= epsilon;
+}
+
+bool colorNear(const fake_render::Color& actual, const fake_render::Color& expected) {
+    for (std::size_t i = 0; i < actual.size(); ++i) {
+        if (!near(actual[i], expected[i])) return false;
+    }
+    return true;
+}
+
+fake_render::Color rgb(std::uint32_t value) {
+    return {((value >> 16) & 0xFF) / 255.0f, ((value >> 8) & 0xFF) / 255.0f,
+            (value & 0xFF) / 255.0f, 1.0f};
 }
 
 void sleepMs(int ms) {
@@ -135,19 +148,30 @@ int g_beginCalls = 0;
 // color at the current vertex count maps boxes to the color they used.
 struct ColorMark { float r, g, b; std::size_t vertex; };
 std::vector<ColorMark> g_colorMarks;
+std::vector<fake_render::Color> g_visibleColors;
+fake_render::Color g_vertexColor{};
+fake_render::GpuColor g_gpu;
+fake_render::ShaderColor* g_legacyHolder = nullptr;
+const fake_render::Color kLegacyColor{0.2f, 0.4f, 0.6f, 0.8f};
+bool g_legacyUntouched = true;
 
 void fakeTessBegin(void*, void*, int, int, int) {
     // One begin call per drawn pass; the module's hairline pass is one call
     // per box, so this doubles as the box counter.
     ++g_beginCalls;
 }
-void fakeTessColor(void*, float r, float g, float b, float) {
+void fakeTessColor(void*, float r, float g, float b, float a) {
+    g_vertexColor = {r, g, b, a};
     g_colorMarks.push_back(ColorMark{r, g, b, g_vertices.size()});
 }
 void fakeTessVertex(void*, float x, float y, float z) {
     g_vertices.emplace_back(bedrocktools::sdk::Vec3{x, y, z});
 }
-void fakeRenderMesh(void*, void*, void*, char*) {}
+void fakeRenderMesh(void* screenContext, void*, void*, char*) {
+    auto* holder = fake_render::colorHolder(screenContext);
+    if (holder) g_visibleColors.push_back(g_gpu.draw(*holder, g_vertexColor));
+    g_legacyUntouched = g_legacyUntouched && g_legacyHolder && g_legacyHolder->rgba == kLegacyColor;
+}
 
 std::vector<DistanceSortedActor> g_fetchedList;
 float g_lastFetchExtent = 0.0f;
@@ -192,27 +216,37 @@ struct FetchEntry {
 struct FrameResult {
     DrawBounds bounds;
     int boxes = 0;
+    fake_render::Color holderAfter{};
+    fake_render::Color gpuAfterGameRestore{};
+    std::uint8_t dirtyAfter = 0;
+    bool legacyUntouched = false;
 };
 
-FrameResult drawFrame(const std::vector<FetchEntry>& entries, FakeActor& localPlayer) {
+FrameResult drawFrame(const std::vector<FetchEntry>& entries, FakeActor& localPlayer,
+                      bedrocktools::sdk::Vec3 camera = {0.0f, 0.0f, 0.0f},
+                      fake_render::Color priorTint = {0.0f, 0.0f, 0.0f, 1.0f}) {
     alignas(16) std::array<std::byte, 0xC0> screenContext{};
     alignas(16) std::array<std::byte, 0x1100> levelRenderer{};
-    alignas(16) std::array<std::byte, 0x1050> rendererPlayer{};
-    alignas(16) std::array<float, 4> colorHolder{0.0f, 0.0f, 0.0f, 0.0f};
+    alignas(16) std::array<std::byte, 0x1100> rendererPlayer{};
+    fake_render::ShaderColor colorHolder{priorTint, 0};
+    fake_render::ShaderColor legacyHolder{kLegacyColor, 0};
+    g_legacyHolder = &legacyHolder;
+    g_legacyUntouched = true;
+    g_gpu.rgba = priorTint;
 
     writeAt(screenContext, bedrocktools::sdk::offsets::ScreenContext::mTessellator,
             reinterpret_cast<void*>(0x1234));
-    writeAt(screenContext, bedrocktools::sdk::offsets::ScreenContext::mColorHolder,
-            static_cast<void*>(colorHolder.data()));
+    writeAt(screenContext, fake_render::kColorHolderOffset, static_cast<void*>(&colorHolder));
+    writeAt(screenContext, fake_render::kOldColorHolderOffset, static_cast<void*>(&legacyHolder));
     writeAt(levelRenderer, bedrocktools::sdk::offsets::LevelRenderer::mLevelRendererPlayer,
             static_cast<void*>(rendererPlayer.data()));
-    // Camera at the origin so captured vertices are world-space coordinates.
-    writeAt(rendererPlayer, bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos,
-            bedrocktools::sdk::Vec3{0.0f, 0.0f, 0.0f});
+    // Most callers leave the camera at the origin to read world coordinates.
+    writeAt(rendererPlayer, bedrocktools::sdk::offsets::LevelRendererPlayer::mCamPos, camera);
 
     g_vertices.clear();
     g_beginCalls = 0;
     g_colorMarks.clear();
+    g_visibleColors.clear();
     g_lastFetchExtent = 0.0f;
     g_fetchedList.clear();
     for (const auto& entry : entries) {
@@ -231,6 +265,13 @@ FrameResult drawFrame(const std::vector<FetchEntry>& entries, FakeActor& localPl
     FrameResult result;
     result.bounds = capturedBounds();
     result.boxes = g_beginCalls;
+    result.holderAfter = colorHolder.rgba;
+    result.dirtyAfter = colorHolder.dirty;
+    result.legacyUntouched = g_legacyUntouched;
+    // Simulate the next game draw after the overlay releases the holder.
+    g_gpu.upload(colorHolder);
+    result.gpuAfterGameRestore = g_gpu.rgba;
+    g_legacyHolder = nullptr;
     return result;
 }
 
@@ -685,6 +726,107 @@ int main() {
         s_interpHistory.clear();
         localPlayer.setBoxX(0.0f);
         actor.setBoxX(10.0f);
+    }
+
+    std::printf("hitbox colors across camera modes\n");
+    {
+        HitboxModule colorMod;
+        colorMod.enabled = true;
+        colorMod.smoothBoxes = false;
+        colorMod.show3rdPerson = true;
+        colorMod.showEyeLine = true;
+        colorMod.showLookLine = true;
+        colorMod.hitboxColor = 0xFF29AD37u;
+        colorMod.showItemsColor = 0xFF23A8E0u;
+        colorMod.eyeLineColor = 0xFFF19122u;
+        colorMod.lookLineColor = 0xFF9D47E8u;
+
+        FakeActor self;
+        self.shape.aabb = {{-0.3f, -0.3f, -0.3f}, {0.3f, 1.5f, 0.3f}};
+        FakeActor mob;
+        mob.shape.aabb = {{-0.3f, -0.3f, 3.2f}, {0.3f, 1.5f, 3.8f}};
+        mob.setCategories(ActorCategories::IsMob);
+        FakeActor item;
+        item.shape.aabb = {{2.0f, 0.0f, 2.0f}, {2.5f, 0.5f, 2.5f}};
+        item.setCategories(ActorCategories::IsItem);
+        const std::vector<FetchEntry> scene{{&mob, 3.2f}, {&item, 3.0f}};
+        const fake_render::Color white{1.0f, 1.0f, 1.0f, 1.0f};
+        const fake_render::Color black{0.0f, 0.0f, 0.0f, 1.0f};
+        const auto box = rgb(colorMod.hitboxColor);
+        const auto itemBox = rgb(colorMod.showItemsColor);
+        const auto eye = rgb(colorMod.eyeLineColor);
+        const auto look = rgb(colorMod.lookLineColor);
+
+        // In first person only the two nearby actors render, with hairlines.
+        s_perspectiveKnown = true;
+        s_perspective = 0;
+        colorMod.lineThickness = 1.0f;
+        const auto first = drawFrame(scene, self, {0.0f, 1.0f, 0.0f}, white);
+        check(first.boxes == 6 && g_visibleColors.size() == 6 &&
+              colorNear(g_visibleColors[0], box) && colorNear(g_visibleColors[1], eye) &&
+              colorNear(g_visibleColors[2], look) && colorNear(g_visibleColors[3], itemBox),
+              "first-person boxes, items, eye and look lines keep their colors");
+        check(first.legacyUntouched, "first-person draw does not touch the old holder slot");
+
+        // The third-person player render has left black in the GPU cache.
+        // Both thick geometry and the crisp line use the selected colors.
+        s_perspective = 1;
+        colorMod.lineThickness = 3.0f;
+        const auto third = drawFrame(scene, self, {0.0f, 1.0f, -4.0f}, black);
+        check(third.boxes == 18 && g_visibleColors.size() == 18 &&
+              colorNear(g_visibleColors[0], box) && colorNear(g_visibleColors[1], box) &&
+              colorNear(g_visibleColors[6], box) && colorNear(g_visibleColors[7], box) &&
+              colorNear(g_visibleColors[12], itemBox) && colorNear(g_visibleColors[13], itemBox),
+              "third-person self, mob and item boxes keep their colors at both thicknesses");
+        check(g_visibleColors.size() == 18 && colorNear(g_visibleColors[2], eye) &&
+              colorNear(g_visibleColors[3], eye) && colorNear(g_visibleColors[4], look) &&
+              colorNear(g_visibleColors[5], look),
+              "third-person eye and look lines retain their separate colors");
+        check(third.legacyUntouched, "third-person passes leave the old holder slot unchanged");
+        check(colorNear(third.holderAfter, black) && third.dirtyAfter == 1 &&
+              colorNear(third.gpuAfterGameRestore, black),
+              "after the overlay the next game draw receives the previous shader tint");
+
+        // Front-facing third person is a separate perspective and must obey
+        // the same color rules, including the active/default indicator.
+        s_perspective = 2;
+        colorMod.lineThickness = 1.0f;
+        colorMod.hitboxIndicator = true;
+        colorMod.indicatorDefaultColor = 0xFF4678ABu;
+        colorMod.indicatorActiveColor = 0xFFFF50A0u;
+        void* fakeLevel = reinterpret_cast<void*>(0x9999);
+        writeAt(self.bytes, Actor::mLevel, fakeLevel);
+        auto& verdict = verdictBuffer();
+        std::fill(verdict.begin(), verdict.end(), std::byte{0});
+        writeAt(verdict, HitResult::mType, HitResult::TypeEntity);
+        void* picked = mob.handle();
+        writeAt(verdict, HitResult::mEntity, picked);
+        s_levelGetHitResult = [](void* level) -> void* {
+            return level == reinterpret_cast<void*>(0x9999) ? verdictBuffer().data() : nullptr;
+        };
+        const auto front = drawFrame(scene, self, {0.0f, 1.0f, 4.0f}, black);
+        check(front.boxes == 9 && g_visibleColors.size() == 9 &&
+              colorNear(g_visibleColors[0], rgb(colorMod.indicatorDefaultColor)) &&
+              colorNear(g_visibleColors[3], rgb(colorMod.indicatorActiveColor)) &&
+              colorNear(g_visibleColors[6], rgb(colorMod.indicatorDefaultColor)),
+              "front third-person preserves default and active indicator colors");
+        check(front.dirtyAfter == 1 && front.legacyUntouched,
+              "front third-person restores render state without touching the old slot");
+
+        // Switching back must not leave either the tint or the self box from
+        // third person behind.
+        s_perspective = 0;
+        colorMod.hitboxIndicator = false;
+        const auto backToFirst = drawFrame(scene, self, {0.0f, 1.0f, 0.0f}, black);
+        check(backToFirst.boxes == 6 && g_visibleColors.size() == 6 &&
+              colorNear(g_visibleColors[0], box) && colorNear(g_visibleColors[3], itemBox),
+              "returning to first person restores the configured colors and hides the self box");
+        check(backToFirst.dirtyAfter == 1 && colorNear(backToFirst.gpuAfterGameRestore, black),
+              "returning to first person also restores the game's tint");
+
+        s_levelGetHitResult = nullptr;
+        s_perspectiveKnown = false;
+        s_interpHistory.clear();
     }
 
     std::printf("\n");
