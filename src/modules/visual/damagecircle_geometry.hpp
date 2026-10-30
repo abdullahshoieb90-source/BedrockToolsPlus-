@@ -12,6 +12,10 @@ constexpr float maxDuration = 10.0f;
 constexpr float minSize = 0.5f;
 constexpr float maxSize = 2.5f;
 constexpr float defaultSize = 1.0f;
+constexpr float minSpeed = 0.25f;
+constexpr float maxSpeed = 4.0f;
+constexpr float defaultSpeed = 1.0f;
+constexpr float defaultCycleDuration = 0.65f;
 constexpr int segments = 120;
 constexpr int bands = 4;
 constexpr float pi = 3.14159265358979323846f;
@@ -26,6 +30,10 @@ inline float safeDuration(float seconds) {
 
 inline float safeSize(float size) {
     return std::isfinite(size) ? std::clamp(size, minSize, maxSize) : defaultSize;
+}
+
+inline float safeSpeed(float speed) {
+    return std::isfinite(speed) ? std::clamp(speed, minSpeed, maxSpeed) : defaultSpeed;
 }
 
 // Actor hurt-time counts down; a fresh hit bumps it upward. The first sample
@@ -54,22 +62,25 @@ struct HurtTimeTracker {
 struct Point { float x, y, z; };
 struct RingState { float radius, lift, alpha; };
 
-// The damage ring stays at one fixed, user-adjustable radius slightly larger
-// than Jump Circle by default. Its vertical path travels up and then back down.
-inline RingState animate(float age, float duration, float playerHeight, float size = defaultSize) {
-    const float t = std::clamp(age / safeDuration(duration), 0.0f, 1.0f);
-    const float verticalPhase = t <= 0.5f ? t * 2.0f : (1.0f - t) * 2.0f;
+// Duration controls only how long the ring remains visible and fades. Speed
+// controls the repeated up/down cycle independently; size stays fixed mid-cycle.
+inline RingState animate(float age, float duration, float playerHeight,
+                         float size = defaultSize, float speed = defaultSpeed) {
+    const float life = std::clamp(age / safeDuration(duration), 0.0f, 1.0f);
+    const float cycleDuration = defaultCycleDuration / safeSpeed(speed);
+    const float cycle = std::fmod(std::max(0.0f, age), cycleDuration) / cycleDuration;
+    const float verticalPhase = cycle <= 0.5f ? cycle * 2.0f : (1.0f - cycle) * 2.0f;
     const float easedHeight = verticalPhase * verticalPhase * (3.0f - 2.0f * verticalPhase);
     return {fixedOuterRadius * safeSize(size) - outerBandOffset, playerHeight * easedHeight,
-            (1.0f - t) * (1.0f - t)};
+            (1.0f - life) * (1.0f - life)};
 }
 
-// Four shaded strips create a narrow white band. Its radius stays constant
-// during a cycle; Effect Size controls the fixed radius.
+// Four shaded strips create a narrow white band. Effect Size controls its
+// fixed radius; Effect Speed controls vertical cycles, not its visible lifetime.
 template <class Emit>
 void emitVerticalRing(Point feet, float playerHeight, float age, float duration,
-                    float size, Emit emit) {
-    const auto state = animate(age, duration, playerHeight, size);
+                      float size, float speed, Emit emit) {
+    const auto state = animate(age, duration, playerHeight, size, speed);
     constexpr std::array<float, bands + 1> offsets{-0.025f, -0.012f, 0.012f, 0.025f, outerBandOffset};
     constexpr std::array<float, bands + 1> strengths{0.0f, 0.65f, 1.0f, 0.65f, 0.0f};
     for (int i = 0; i < segments; ++i) {

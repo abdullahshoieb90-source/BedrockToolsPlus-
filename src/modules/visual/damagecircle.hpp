@@ -15,6 +15,7 @@ public:
 
     float effectDuration = 0.65f;
     float effectSize = 1.0f;
+    float effectSpeed = 1.0f;
     bool showPlayers = true;
     bool showMobs = true;
 

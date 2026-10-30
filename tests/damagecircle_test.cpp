@@ -84,12 +84,18 @@ int main() {
     assert(std::abs(peakState.lift - 1.8f) < .001f);
     assert(std::abs(threeQuarterState.lift - 0.9f) < .001f);
     assert(std::abs(endState.lift) < .001f);
+    const auto shortLife = damagecircle::animate(0.2f, 0.25f, 1.8f);
+    const auto longLife = damagecircle::animate(0.2f, 2.5f, 1.8f);
+    assert(std::abs(shortLife.lift - longLife.lift) < .001f);
+    assert(shortLife.alpha < longLife.alpha); // duration changes visibility/fade, not movement speed
+    const auto faster = damagecircle::animate(0.1625f, 2.0f, 1.8f, 1.0f, 2.0f);
+    assert(std::abs(faster.lift - 1.8f) < .001f); // speed independently advances the cycle
     assert(std::abs(peakState.radius - startState.radius) < .001f &&
            std::abs(endState.radius - startState.radius) < .001f); // never expands during the cycle
     assert(std::abs(damagecircle::animate(0.0f, 0.65f, 1.8f, 0.5f).radius - 0.54f) < .001f);
     assert(std::abs(damagecircle::animate(0.0f, 0.65f, 1.8f, 2.5f).radius - 2.84f) < .001f);
     float minY = 100.0f, maxY = -100.0f, minRadius = 100.0f, maxRadius = 0.0f;
-    damagecircle::emitVerticalRing({0.0f, 64.025f, 0.0f}, 1.8f, 0.1625f, 0.65f, 1.0f,
+    damagecircle::emitVerticalRing({0.0f, 64.025f, 0.0f}, 1.8f, 0.1625f, 0.65f, 1.0f, 1.0f,
         [&](damagecircle::Point point, float) {
             minY = std::min(minY, point.y);
             maxY = std::max(maxY, point.y);
@@ -117,24 +123,30 @@ int main() {
     nlohmann::json settings;
     settings["effectDuration"] = 2.5f;
     settings["effectSize"] = 1.4f;
+    settings["effectSpeed"] = 1.6f;
     settings["showPlayers"] = true;
     settings["showMobs"] = true;
     mod.loadConfig(settings);
     assert(std::abs(mod.effectDuration - 2.5f) < .001f);
     assert(std::abs(mod.effectSize - 1.4f) < .001f);
+    assert(std::abs(mod.effectSpeed - 1.6f) < .001f);
     assert(mod.showPlayers && mod.showMobs);
     nlohmann::json saved;
     mod.saveConfig(saved);
     assert(std::abs(saved["effectDuration"].get<float>() - 2.5f) < .001f);
     assert(std::abs(saved["effectSize"].get<float>() - 1.4f) < .001f);
+    assert(std::abs(saved["effectSpeed"].get<float>() - 1.6f) < .001f);
     assert(saved["showPlayers"].get<bool>() && saved["showMobs"].get<bool>());
     nlohmann::json invalid;
     invalid["effectDuration"] = 99.0f;
     invalid["effectSize"] = 99.0f;
+    invalid["effectSpeed"] = 99.0f;
     mod.loadConfig(invalid);
     assert(std::abs(mod.effectDuration - 10.0f) < .001f);
     assert(std::abs(mod.effectSize - 2.5f) < .001f);
+    assert(std::abs(mod.effectSpeed - 4.0f) < .001f);
     mod.effectSize = 1.0f; // draw with the default size below
+    mod.effectSpeed = 1.0f;
 
     std::uintptr_t tess = reinterpret_cast<std::uintptr_t>(&vertices);
     put(screen, off::ScreenContext::mTessellator, tess);

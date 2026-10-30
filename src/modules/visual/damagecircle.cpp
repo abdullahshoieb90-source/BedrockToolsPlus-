@@ -246,7 +246,8 @@ void render(void* renderer, void* screen) {
         if (age < 0 || age >= duration) continue;
         tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, damagecircle::segments * damagecircle::bands * 4, 0);
         damagecircle::emitVerticalRing(ring.feet, ring.height, age, duration,
-            damagecircle::safeSize(module->effectSize), [&](damagecircle::Point point, float alpha) {
+            damagecircle::safeSize(module->effectSize), damagecircle::safeSpeed(module->effectSpeed),
+            [&](damagecircle::Point point, float alpha) {
             tessColor(reinterpret_cast<void*>(tess), 1.0f, 1.0f, 1.0f, alpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
         });
@@ -262,7 +263,7 @@ void renderHook(void* renderer, void* screen, void* params) {
 } // namespace
 
 DamageCircleModule::DamageCircleModule()
-    : Module("Damage Circle", "Shows a white ring on you when damaged, and optionally on players or mobs you hit; the ring follows its entity and moves up and down.") {
+    : Module("Damage Circle", "Shows a white ring on you when damaged, and optionally on players or mobs you hit; set its visibility time separately from its up/down speed.") {
     module = this;
     hideInHudEditor = true;
 }
@@ -324,6 +325,12 @@ void DamageCircleModule::loadConfig(const nlohmann::json& j) {
             if (std::isfinite(value)) effectSize = damagecircle::safeSize(value);
         } catch (...) {}
     }
+    if (j.contains("effectSpeed")) {
+        try {
+            const float value = j["effectSpeed"].get<float>();
+            if (std::isfinite(value)) effectSpeed = damagecircle::safeSpeed(value);
+        } catch (...) {}
+    }
     if (j.contains("showPlayers")) { try { showPlayers = j["showPlayers"].get<bool>(); } catch (...) {} }
     if (j.contains("showMobs")) { try { showMobs = j["showMobs"].get<bool>(); } catch (...) {} }
 }
@@ -331,6 +338,7 @@ void DamageCircleModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
     j["effectDuration"] = damagecircle::safeDuration(effectDuration);
     j["effectSize"] = damagecircle::safeSize(effectSize);
+    j["effectSpeed"] = damagecircle::safeSpeed(effectSpeed);
     j["showPlayers"] = showPlayers;
     j["showMobs"] = showMobs;
 }
