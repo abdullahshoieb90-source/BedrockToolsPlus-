@@ -9,6 +9,9 @@ namespace damagecircle {
 constexpr float defaultDuration = 0.65f;
 constexpr float minDuration = 0.1f;
 constexpr float maxDuration = 10.0f;
+constexpr float minSize = 0.5f;
+constexpr float maxSize = 2.5f;
+constexpr float defaultSize = 1.0f;
 constexpr int segments = 120;
 constexpr int bands = 4;
 constexpr float pi = 3.14159265358979323846f;
@@ -19,6 +22,10 @@ constexpr float fixedOuterRadius = 1.15f;
 
 inline float safeDuration(float seconds) {
     return std::isfinite(seconds) ? std::clamp(seconds, minDuration, maxDuration) : defaultDuration;
+}
+
+inline float safeSize(float size) {
+    return std::isfinite(size) ? std::clamp(size, minSize, maxSize) : defaultSize;
 }
 
 // Actor hurt-time counts down; a fresh hit bumps it upward. The first sample
@@ -47,20 +54,22 @@ struct HurtTimeTracker {
 struct Point { float x, y, z; };
 struct RingState { float radius, lift, alpha; };
 
-// The damage ring stays at one fixed radius slightly larger than Jump Circle's
-// fully expanded radius. Only its height changes as it rises past the player.
-inline RingState animate(float age, float duration, float playerHeight) {
+// The damage ring stays at one fixed, user-adjustable radius slightly larger
+// than Jump Circle by default. Its vertical path travels up and then back down.
+inline RingState animate(float age, float duration, float playerHeight, float size = defaultSize) {
     const float t = std::clamp(age / safeDuration(duration), 0.0f, 1.0f);
-    const float ease = t * t * (3.0f - 2.0f * t);
-    return {fixedOuterRadius - outerBandOffset, playerHeight * ease,
+    const float verticalPhase = t <= 0.5f ? t * 2.0f : (1.0f - t) * 2.0f;
+    const float easedHeight = verticalPhase * verticalPhase * (3.0f - 2.0f * verticalPhase);
+    return {fixedOuterRadius * safeSize(size) - outerBandOffset, playerHeight * easedHeight,
             (1.0f - t) * (1.0f - t)};
 }
 
-// Four shaded strips create a narrow white band. Its radius stays constant,
-// unlike the expanding Jump Circle effect.
+// Four shaded strips create a narrow white band. Its radius stays constant
+// during a cycle; Effect Size controls the fixed radius.
 template <class Emit>
-void emitRisingRing(Point feet, float playerHeight, float age, float duration, Emit emit) {
-    const auto state = animate(age, duration, playerHeight);
+void emitVerticalRing(Point feet, float playerHeight, float age, float duration,
+                    float size, Emit emit) {
+    const auto state = animate(age, duration, playerHeight, size);
     constexpr std::array<float, bands + 1> offsets{-0.025f, -0.012f, 0.012f, 0.025f, outerBandOffset};
     constexpr std::array<float, bands + 1> strengths{0.0f, 0.65f, 1.0f, 0.65f, 0.0f};
     for (int i = 0; i < segments; ++i) {

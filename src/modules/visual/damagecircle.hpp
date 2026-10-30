@@ -13,6 +13,7 @@ public:
     void saveConfig(nlohmann::json& j) override;
 
     float effectDuration = 0.65f;
+    float effectSize = 1.0f;
 
 private:
     bool m_patched = false;

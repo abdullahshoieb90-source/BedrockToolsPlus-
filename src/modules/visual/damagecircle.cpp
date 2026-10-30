@@ -175,7 +175,8 @@ void render(void* renderer, void* screen) {
         const float age = std::chrono::duration<float>(now - ring.start).count();
         if (age < 0 || age >= duration) continue;
         tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, damagecircle::segments * damagecircle::bands * 4, 0);
-        damagecircle::emitRisingRing(feet, height, age, duration, [&](damagecircle::Point point, float alpha) {
+        damagecircle::emitVerticalRing(feet, height, age, duration,
+            damagecircle::safeSize(module->effectSize), [&](damagecircle::Point point, float alpha) {
             tessColor(reinterpret_cast<void*>(tess), 1.0f, 1.0f, 1.0f, alpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
         });
@@ -191,7 +192,7 @@ void renderHook(void* renderer, void* screen, void* params) {
 } // namespace
 
 DamageCircleModule::DamageCircleModule()
-    : Module("Damage Circle", "Shows a white ring slightly larger than Jump Circle that follows you and rises from your feet to above your head when you take damage.") {
+    : Module("Damage Circle", "Shows a white ring that follows you, changes direction between rising and falling, and lets you adjust its size and duration when you take damage.") {
     module = this;
     hideInHudEditor = true;
 }
@@ -225,12 +226,18 @@ void DamageCircleModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("effectDuration")) {
         try {
             const float value = j["effectDuration"].get<float>();
-            if (std::isfinite(value)) effectDuration = std::clamp(value, 0.1f, 10.0f);
+            if (std::isfinite(value)) effectDuration = damagecircle::safeDuration(value);
+        } catch (...) {}
+    }
+    if (j.contains("effectSize")) {
+        try {
+            const float value = j["effectSize"].get<float>();
+            if (std::isfinite(value)) effectSize = damagecircle::safeSize(value);
         } catch (...) {}
     }
 }
 void DamageCircleModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
-    j["effectDuration"] = std::isfinite(effectDuration)
-        ? std::clamp(effectDuration, 0.1f, 10.0f) : 0.65f;
+    j["effectDuration"] = damagecircle::safeDuration(effectDuration);
+    j["effectSize"] = damagecircle::safeSize(effectSize);
 }
