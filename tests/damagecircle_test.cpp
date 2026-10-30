@@ -95,8 +95,8 @@ int main() {
     assert(std::abs(damagecircle::animate(0.0f, 0.65f, 1.8f, 0.5f).radius - 0.54f) < .001f);
     assert(std::abs(damagecircle::animate(0.0f, 0.65f, 1.8f, 2.5f).radius - 2.84f) < .001f);
     float minY = 100.0f, maxY = -100.0f, minRadius = 100.0f, maxRadius = 0.0f;
-    damagecircle::emitVerticalRing({0.0f, 64.025f, 0.0f}, 1.8f, 0.1625f, 0.65f, 1.0f, 1.0f,
-        [&](damagecircle::Point point, float) {
+    damagecircle::emitVerticalRing({0.0f, 64.025f, 0.0f}, 1.8f, 0.1625f, 0.65f,
+        1.0f, 1.0f, jumpcircle::Style::Circle, [&](damagecircle::Point point, float) {
             minY = std::min(minY, point.y);
             maxY = std::max(maxY, point.y);
             const float radius = std::sqrt(point.x * point.x + point.z * point.z);
@@ -105,6 +105,13 @@ int main() {
         });
     assert(std::abs(minY - 64.925f) < .002f && std::abs(maxY - minY) < .002f);
     assert(minRadius > 1.08f && std::abs(maxRadius - 1.15f) < .002f); // fixed slightly larger than Jump Circle
+    damagecircle::Point circleVertex{}, squareVertex{};
+    damagecircle::emitVerticalRing({0, 0, 0}, 1.8f, 0.0f, 1.0f, 1.0f, 1.0f,
+        jumpcircle::Style::Circle, [&](damagecircle::Point point, float) { if (circleVertex.x == 0 && circleVertex.z == 0) circleVertex = point; });
+    damagecircle::emitVerticalRing({0, 0, 0}, 1.8f, 0.0f, 1.0f, 1.0f, 1.0f,
+        jumpcircle::Style::Square, [&](damagecircle::Point point, float) { if (squareVertex.x == 0 && squareVertex.z == 0) squareVertex = point; });
+    assert(std::abs(circleVertex.x - squareVertex.x) > .01f ||
+           std::abs(circleVertex.z - squareVertex.z) > .01f); // selected outline shape changes geometry
 
     put(player, off::Actor::mHurtTime, 9);
     tick(player.data());
@@ -124,28 +131,52 @@ int main() {
     settings["effectDuration"] = 2.5f;
     settings["effectSize"] = 1.4f;
     settings["effectSpeed"] = 1.6f;
+    settings["effectStyle"] = "4";
+    settings["effectColor"] = "#3366CC";
+    settings["rainbow"] = true;
+    settings["rainbowSpeed"] = 0.4f;
     settings["showPlayers"] = true;
     settings["showMobs"] = true;
     mod.loadConfig(settings);
     assert(std::abs(mod.effectDuration - 2.5f) < .001f);
     assert(std::abs(mod.effectSize - 1.4f) < .001f);
     assert(std::abs(mod.effectSpeed - 1.6f) < .001f);
+    assert(mod.style == 4 && mod.effectColor == 0xFF3366CCu);
+    assert(mod.rainbow && std::abs(mod.rainbowSpeed - 0.4f) < .001f);
     assert(mod.showPlayers && mod.showMobs);
     nlohmann::json saved;
     mod.saveConfig(saved);
     assert(std::abs(saved["effectDuration"].get<float>() - 2.5f) < .001f);
     assert(std::abs(saved["effectSize"].get<float>() - 1.4f) < .001f);
     assert(std::abs(saved["effectSpeed"].get<float>() - 1.6f) < .001f);
+    assert(jumpcircle::styleIndex(saved["effectStyle"].get<std::string>()) == 4);
+    assert(saved["effectColor"].get<std::string>() == "#FF3366CC");
+    assert(saved["rainbow"].get<bool>() && std::abs(saved["rainbowSpeed"].get<float>() - 0.4f) < .001f);
     assert(saved["showPlayers"].get<bool>() && saved["showMobs"].get<bool>());
+    for (int i = 0; i < jumpcircle::styleCount; ++i) {
+        nlohmann::json styleChoice;
+        styleChoice["effectStyle"] = std::to_string(i);
+        mod.loadConfig(styleChoice);
+        assert(mod.style == i);
+        nlohmann::json roundTrip;
+        mod.saveConfig(roundTrip);
+        assert(jumpcircle::styleIndex(roundTrip["effectStyle"].get<std::string>()) == i);
+    }
     nlohmann::json invalid;
     invalid["effectDuration"] = 99.0f;
     invalid["effectSize"] = 99.0f;
     invalid["effectSpeed"] = 99.0f;
+    invalid["effectColor"] = "#notcolor";
     mod.loadConfig(invalid);
     assert(std::abs(mod.effectDuration - 10.0f) < .001f);
     assert(std::abs(mod.effectSize - 2.5f) < .001f);
     assert(std::abs(mod.effectSpeed - 4.0f) < .001f);
-    mod.effectSize = 1.0f; // draw with the default size below
+    assert(mod.effectColor == 0xFF3366CCu); // malformed color retains the previous value
+    mod.style = 0;
+    mod.effectColor = 0xFFFFFFFFu;
+    mod.rainbow = false;
+    mod.rainbowSpeed = 0.20f;
+    mod.effectSize = 1.0f; // draw with default visual settings below
     mod.effectSpeed = 1.0f;
 
     std::uintptr_t tess = reinterpret_cast<std::uintptr_t>(&vertices);

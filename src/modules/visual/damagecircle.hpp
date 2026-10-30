@@ -16,6 +16,10 @@ public:
     float effectDuration = 0.65f;
     float effectSize = 1.0f;
     float effectSpeed = 1.0f;
+    int style = 0;
+    std::uint32_t effectColor = 0xFFFFFFFFu;
+    bool rainbow = false;
+    float rainbowSpeed = 0.20f;
     bool showPlayers = true;
     bool showMobs = true;
 

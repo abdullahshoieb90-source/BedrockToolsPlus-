@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include "jumpcircle_geometry.hpp"
 
 namespace damagecircle {
 
@@ -18,7 +19,6 @@ constexpr float defaultSpeed = 1.0f;
 constexpr float defaultCycleDuration = 0.65f;
 constexpr int segments = 120;
 constexpr int bands = 4;
-constexpr float pi = 3.14159265358979323846f;
 constexpr float outerBandOffset = 0.035f;
 // Jump Circle's maximum world-space radius is 1.08 blocks; use a fixed radius
 // just above that so the damage ring reads slightly larger without pulsing.
@@ -79,15 +79,15 @@ inline RingState animate(float age, float duration, float playerHeight,
 // fixed radius; Effect Speed controls vertical cycles, not its visible lifetime.
 template <class Emit>
 void emitVerticalRing(Point feet, float playerHeight, float age, float duration,
-                      float size, float speed, Emit emit) {
+                      float size, float speed, jumpcircle::Style style, Emit emit) {
     const auto state = animate(age, duration, playerHeight, size, speed);
     constexpr std::array<float, bands + 1> offsets{-0.025f, -0.012f, 0.012f, 0.025f, outerBandOffset};
     constexpr std::array<float, bands + 1> strengths{0.0f, 0.65f, 1.0f, 0.65f, 0.0f};
     for (int i = 0; i < segments; ++i) {
-        const float a0 = 2.0f * pi * static_cast<float>(i) / segments;
-        const float a1 = 2.0f * pi * static_cast<float>(i + 1) / segments;
-        const Point direction0{std::cos(a0), 0.0f, std::sin(a0)};
-        const Point direction1{std::cos(a1), 0.0f, std::sin(a1)};
+        const auto contour0 = jumpcircle::contour(style, i);
+        const auto contour1 = jumpcircle::contour(style, i + 1);
+        const Point direction0{contour0.x, 0.0f, contour0.z};
+        const Point direction1{contour1.x, 0.0f, contour1.z};
         for (int band = 0; band < bands; ++band) {
             const float inner = std::max(0.0f, state.radius + offsets[band]);
             const float outer = state.radius + offsets[band + 1];

@@ -1,5 +1,6 @@
 #include "damagecircle.hpp"
 #include "damagecircle_geometry.hpp"
+#include "blockoutline_geometry.hpp"
 #include "core/memory/Hooks.hpp"
 #include "core/RenderState.hpp"
 #include <bedrocktools/events/AttackEvent.hpp>
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -241,14 +243,26 @@ void render(void* renderer, void* screen) {
     bedrocktools::core::ScopedShaderColor shaderColor(screen);
     if (!shaderColor) return;
     const float duration = damagecircle::safeDuration(module->effectDuration);
+    const float rainbowSpeed = std::isfinite(module->rainbowSpeed)
+        ? std::clamp(module->rainbowSpeed, 0.05f, 1.0f) : 0.20f;
+    const double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
+    const std::uint32_t rgb = module->rainbow
+        ? blockoutline::hsvToRgb(static_cast<float>(std::fmod(seconds * rainbowSpeed, 1.0) * 360.0))
+        : (module->effectColor & 0x00FFFFFFu);
+    const float red = ((rgb >> 16) & 255) / 255.0f;
+    const float green = ((rgb >> 8) & 255) / 255.0f;
+    const float blue = (rgb & 255) / 255.0f;
+    const float colorAlpha = ((module->effectColor >> 24) & 255) / 255.0f;
+    const auto style = static_cast<jumpcircle::Style>(
+        std::clamp(module->style, 0, jumpcircle::styleCount - 1));
     for (const auto& ring : snapshot) {
         const float age = std::chrono::duration<float>(now - ring.start).count();
         if (age < 0 || age >= duration) continue;
         tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, damagecircle::segments * damagecircle::bands * 4, 0);
         damagecircle::emitVerticalRing(ring.feet, ring.height, age, duration,
-            damagecircle::safeSize(module->effectSize), damagecircle::safeSpeed(module->effectSpeed),
+            damagecircle::safeSize(module->effectSize), damagecircle::safeSpeed(module->effectSpeed), style,
             [&](damagecircle::Point point, float alpha) {
-            tessColor(reinterpret_cast<void*>(tess), 1.0f, 1.0f, 1.0f, alpha);
+            tessColor(reinterpret_cast<void*>(tess), red, green, blue, alpha * colorAlpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
         });
         char pad[0x100]{};
@@ -263,7 +277,7 @@ void renderHook(void* renderer, void* screen, void* params) {
 } // namespace
 
 DamageCircleModule::DamageCircleModule()
-    : Module("Damage Circle", "Shows a white ring on you when damaged, and optionally on players or mobs you hit; set its visibility time separately from its up/down speed.") {
+    : Module("Damage Circle", "Shows a customizable ring on you when damaged and, optionally, on players or mobs you hit.") {
     module = this;
     hideInHudEditor = true;
 }
@@ -313,6 +327,25 @@ void DamageCircleModule::onEnable() {
 void DamageCircleModule::onDisable() { clearState(); }
 void DamageCircleModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
+    if (j.contains("effectStyle") && j["effectStyle"].is_string())
+        style = jumpcircle::styleIndex(j["effectStyle"].get<std::string>());
+    if (j.contains("effectColor") && j["effectColor"].is_string()) {
+        const std::string text = j["effectColor"].get<std::string>();
+        if ((text.size() == 7 || text.size() == 9) && text[0] == '#' &&
+            text.find_first_not_of("0123456789abcdefABCDEF", 1) == std::string::npos) {
+            try {
+                const auto value = static_cast<std::uint32_t>(std::stoul(text.substr(1), nullptr, 16));
+                effectColor = text.size() == 7 ? 0xFF000000u | value : value;
+            } catch (...) {}
+        }
+    }
+    if (j.contains("rainbow")) { try { rainbow = j["rainbow"].get<bool>(); } catch (...) {} }
+    if (j.contains("rainbowSpeed")) {
+        try {
+            const float value = j["rainbowSpeed"].get<float>();
+            if (std::isfinite(value)) rainbowSpeed = std::clamp(value, 0.05f, 1.0f);
+        } catch (...) {}
+    }
     if (j.contains("effectDuration")) {
         try {
             const float value = j["effectDuration"].get<float>();
@@ -336,6 +369,13 @@ void DamageCircleModule::loadConfig(const nlohmann::json& j) {
 }
 void DamageCircleModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
+    j["effectStyle"] = jumpcircle::styleRadioValue(style);
+    char color[10];
+    std::snprintf(color, sizeof(color), "#%08X", effectColor);
+    j["effectColor"] = color;
+    j["rainbow"] = rainbow;
+    j["rainbowSpeed"] = std::isfinite(rainbowSpeed)
+        ? std::clamp(rainbowSpeed, 0.05f, 1.0f) : 0.20f;
     j["effectDuration"] = damagecircle::safeDuration(effectDuration);
     j["effectSize"] = damagecircle::safeSize(effectSize);
     j["effectSpeed"] = damagecircle::safeSpeed(effectSpeed);
