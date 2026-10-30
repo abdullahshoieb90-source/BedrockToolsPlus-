@@ -39,11 +39,7 @@ for source in "${root}"/tests/*_test.cpp; do
     skip=""
     case "${name}" in
         jumpcircle_test)
-            if [ -n "${entt_inc}" ] && [ -d "${entt_inc}" ]; then
-                extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson" -I "${entt_inc}")
-            else
-                skip="entt headers (set ENTT_INCLUDE)"
-            fi
+            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
             ;;
         blockoutline_test)
             # Includes the production renderer with host substitutes for the

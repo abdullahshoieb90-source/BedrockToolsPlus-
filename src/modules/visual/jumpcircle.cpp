@@ -1,6 +1,5 @@
 #include "jumpcircle.hpp"
 #include "jumpcircle_geometry.hpp"
-#include <bedrocktools/sdk/input/MoveInput.hpp>
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
@@ -62,7 +61,7 @@ std::mutex stateMutex;
 std::vector<Ring> rings;
 void* trackedPlayer = nullptr;
 Vec3 previousFeet{};
-float previousDy = 0;
+jumpcircle::MotionTracker motion;
 bool hasPrevious = false;
 Clock::time_point lastTick{};
 
@@ -95,7 +94,7 @@ std::uintptr_t resolveAdrp(std::uint32_t* p, std::size_t count, std::uint32_t re
 
 void clearState() {
     std::lock_guard lock(stateMutex);
-    rings.clear(); trackedPlayer = nullptr; hasPrevious = false; previousDy = 0; lastTick = {};
+    rings.clear(); trackedPlayer = nullptr; hasPrevious = false; motion = {}; lastTick = {};
 }
 
 void tick(void* player) {
@@ -108,23 +107,28 @@ void tick(void* player) {
     auto box = *reinterpret_cast<const AABB*>(component + AABBShapeComponent::mAABB);
     Vec3 feet{(box.min.x + box.max.x) * 0.5f, box.min.y, (box.min.z + box.max.z) * 0.5f};
     if (!std::isfinite(feet.x) || !std::isfinite(feet.y) || !std::isfinite(feet.z)) { clearState(); return; }
-    auto* input = bedrocktools::sdk::moveInputComponent(player);
-    const bool jump = input && (input->mInputState.test(::MoveInputState::Flag::JumpDown) ||
-                                input->mRawInputState.test(::MoveInputState::Flag::JumpDown));
     auto now = Clock::now();
     std::lock_guard lock(stateMutex);
     if (trackedPlayer != player || (hasPrevious && now - lastTick > std::chrono::milliseconds(300))) {
-        rings.clear(); hasPrevious = false; previousDy = 0; trackedPlayer = player;
+        rings.clear(); hasPrevious = false; motion = {}; trackedPlayer = player;
     }
     if (hasPrevious) {
         const float dy = feet.y - previousFeet.y;
         const float dx = feet.x - previousFeet.x, dz = feet.z - previousFeet.z;
-        if (dx * dx + dz * dz < 4.0f && jumpcircle::takeoff(previousDy, dy, jump)) {
-            // Anchor at the takeoff point, just above the ground to avoid z-fighting.
-            if (rings.size() >= 8) rings.erase(rings.begin());
-            rings.push_back({{previousFeet.x, previousFeet.y + 0.025f, previousFeet.z}, now});
+        if (dx * dx + dz * dz >= 4.0f || std::abs(dy) > 4.0f) {
+            // Do not leave stale effects or synthesize events on teleports.
+            rings.clear(); motion = {};
+        } else {
+            const auto events = motion.update(dy);
+            auto spawn = [&](const Vec3& position) {
+                if (rings.size() >= 8) rings.erase(rings.begin());
+                rings.push_back({{position.x, position.y + 0.025f, position.z}, now});
+            };
+            // On an immediate jump after landing, the previous feet position
+            // is the best available ground sample for both effects.
+            if (events.landing) spawn(events.takeoff ? previousFeet : feet);
+            if (events.takeoff) spawn(previousFeet);
         }
-        previousDy = dy;
     }
     previousFeet = feet; hasPrevious = true; lastTick = now;
     std::erase_if(rings, [now](const Ring& ring) { return std::chrono::duration<float>(now - ring.start).count() >= jumpcircle::duration; });
@@ -162,7 +166,7 @@ void render(void* renderer, void* screen) {
         float age = std::chrono::duration<float>(now - ring.start).count();
         if (age < 0 || age >= jumpcircle::duration) continue;
         tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, jumpcircle::segments * jumpcircle::bands * 4, 0);
-        jumpcircle::emitRing(ring.center, age, [&](jumpcircle::Point point, float alpha) {
+        jumpcircle::emitRing(ring.center, age, static_cast<jumpcircle::Style>(std::clamp(module->style, 0, jumpcircle::styleCount - 1)), [&](jumpcircle::Point point, float alpha) {
             tessColor(reinterpret_cast<void*>(tess), 1, 1, 1, alpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
         });
@@ -177,7 +181,7 @@ void renderHook(void* renderer, void* screen, void* params) {
 }
 }
 
-JumpCircleModule::JumpCircleModule() : Module("Jump Circle", "Shows a white expanding glow on the ground when you jump.") {
+JumpCircleModule::JumpCircleModule() : Module("Jump Circle", "Shows an expanding glow when you jump and land. Choose a circle, square or star.") {
     module = this; hideInHudEditor = true;
 }
 JumpCircleModule::~JumpCircleModule() { if (module == this) module = nullptr; }
@@ -204,3 +208,13 @@ void JumpCircleModule::onEnable() {
         m_patched = bedrocktools::hooks::install(m_patchTarget, reinterpret_cast<void*>(&renderHook), reinterpret_cast<void**>(&originalRender)) != nullptr;
 }
 void JumpCircleModule::onDisable() { clearState(); }
+
+void JumpCircleModule::loadConfig(const nlohmann::json& j) {
+    Module::loadConfig(j);
+    if (j.contains("effectStyle") && j["effectStyle"].is_string())
+        style = jumpcircle::styleIndex(j["effectStyle"].get<std::string>());
+}
+void JumpCircleModule::saveConfig(nlohmann::json& j) {
+    Module::saveConfig(j);
+    j["effectStyle"] = jumpcircle::styleRadioValue(style);
+}

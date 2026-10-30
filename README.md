@@ -55,9 +55,9 @@ The target is sampled on the client tick instead of resolving the hit result fro
 
 ## Jump Circle
 
-Enable **Jump Circle** to show a soft white ring at your takeoff point. It expands and fades over the ground, without modifying gameplay or requiring Wings or Block Outline. The effect is depth-tested and visible in third person.
+Enable **Jump Circle** to show a soft white effect at both takeoff and landing. It expands and fades over the ground, without modifying gameplay or requiring Wings or Block Outline. **Effect Style** selects Circle, Square or Star. The overlay is depth-tested and visible in third person.
 
-Jump detection uses the local player's jump input and upward movement, rather than a game-side jump event; automatic jumps without input and unusual movement modes may not produce an effect. As with the other world overlays, rendering depends on the supported Bedrock version's native signatures and materials.
+Jump and landing are inferred from the local player's vertical movement, so automatic jumps and held jump work without relying on button input. This is a heuristic rather than a game-side ground event: unusual movement, flight, bounce effects, jump boosts or partial-block steps may be missed or mistaken for jumps. Rendering depends on the supported Bedrock version's native signatures and materials.
 
 ## Inventory HUD
 
