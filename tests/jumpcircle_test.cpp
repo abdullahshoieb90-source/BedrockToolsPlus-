@@ -7,6 +7,7 @@
 #include <vector>
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
+#include "fake_shader_color.hpp"
 
 namespace bedrocktools::events { EventBus& bus() { static EventBus b; return b; } }
 namespace bedrocktools::memory { std::uintptr_t resolve(SignatureId) { return 0; } }
@@ -16,10 +17,18 @@ namespace {
 int vertices = 0, begins = 0, flushes = 0;
 std::vector<float> alphas;
 std::vector<std::array<float, 3>> colors;
+std::vector<fake_render::Color> shaderColors;
+fake_render::GpuColor gpu;
 void fakeBegin(void*, void*, int mode, int count, int) { assert(mode == 1); assert(count == jumpcircle::segments * jumpcircle::bands * 4); ++begins; }
 void fakeColor(void*, float r, float g, float b, float a) { alphas.push_back(a); colors.push_back({r,g,b}); }
 void fakeVertex(void*, float, float, float) { ++vertices; }
-void fakeFlush(void*, void*, void*, char*) { ++flushes; }
+void fakeFlush(void* screen, void*, void*, char*) {
+    ++flushes;
+    auto* holder = fake_render::colorHolder(screen);
+    assert(holder);
+    gpu.upload(*holder);
+    shaderColors.push_back(gpu.rgba);
+}
 template <typename T, std::size_t N>
 void put(std::array<std::byte, N>& data, std::size_t offset, T value) { std::memcpy(data.data() + offset, &value, sizeof(value)); }
 }
@@ -31,7 +40,8 @@ int main() {
     alignas(std::max_align_t) std::array<std::byte, 0x200> screen{};
     alignas(std::max_align_t) std::array<std::byte, 0x500> renderer{};
     alignas(std::max_align_t) std::array<std::byte, 0x1100> camera{};
-    std::array<float, 4> color{.2f,.3f,.4f,.5f};
+    fake_render::ShaderColor color{{.2f,.3f,.4f,.5f}, 0};
+    fake_render::ShaderColor legacy{{.7f,.6f,.5f,.4f}, 0};
     AABB box{{-.3f, 64, -.3f},{.3f,65.8f,.3f}};
     std::uintptr_t boxPtr = reinterpret_cast<std::uintptr_t>(&box);
     put(player, off::Actor::mStateVectorComponent + off::BuiltInActorComponents::mAABBShapeComponent, boxPtr);
@@ -94,13 +104,21 @@ int main() {
     assert(mod.effectColor == 0x80123456u);
     std::uintptr_t tess = reinterpret_cast<std::uintptr_t>(&vertices);
     put(screen, off::ScreenContext::mTessellator, tess);
-    put(screen, off::ScreenContext::mColorHolder, reinterpret_cast<std::uintptr_t>(color.data()));
+    put(screen, fake_render::kColorHolderOffset, reinterpret_cast<std::uintptr_t>(&color));
+    put(screen, fake_render::kOldColorHolderOffset, reinterpret_cast<std::uintptr_t>(&legacy));
     put(renderer, off::LevelRenderer::mLevelRendererPlayer, reinterpret_cast<std::uintptr_t>(camera.data()));
     Vec3 cameraPos{0,65,0}; put(camera, off::LevelRendererPlayer::mCamPos, cameraPos);
     tessBegin = fakeBegin; tessColor = fakeColor; tessVertex = fakeVertex; renderMesh = fakeFlush;
     materialGroup = 1; translucent.data[0] = &vertices;
+    gpu.rgba = {0, 0, 0, 1}; // e.g. player rendering left a black cached tint
     render(renderer.data(), screen.data());
     assert(begins == 2 && flushes == 2 && vertices == 2 * jumpcircle::segments * jumpcircle::bands * 4);
+    assert(shaderColors.size() == 2 &&
+           (shaderColors[0] == fake_render::Color{1,1,1,1}) && shaderColors[1] == shaderColors[0]);
+    assert((color.rgba == fake_render::Color{.2f,.3f,.4f,.5f}) && color.dirty == 1);
+    assert((legacy.rgba == fake_render::Color{.7f,.6f,.5f,.4f}));
+    gpu.upload(color);
+    assert((gpu.rgba == fake_render::Color{.2f,.3f,.4f,.5f}) && color.dirty == 0);
     assert(alphas.size() == static_cast<std::size_t>(vertices));
     assert(std::abs(colors[0][0] - 18.0f/255.0f) < .001f);
     assert(std::abs(colors[0][1] - 52.0f/255.0f) < .001f);
@@ -136,7 +154,7 @@ int main() {
         tick(player.data());
     }
     assert(rings.size() == jumpcircle::maxEffects);
-    assert((color == std::array<float, 4>{.2f,.3f,.4f,.5f}));
+    assert((color.rgba == fake_render::Color{.2f,.3f,.4f,.5f}));
     // A large teleport clears effects and cannot be mistaken for landing.
     box.min.x += 10; box.max.x += 10;
     tick(player.data());

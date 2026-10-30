@@ -10,6 +10,7 @@
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include "core/memory/Hooks.hpp"
+#include "core/RenderState.hpp"
 #include "../../config/ConfigManager.hpp"
 
 #include <stb/stb_image_write.h>
@@ -527,11 +528,8 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     const int leftCount = wings::buildWing(design, pose, 1, s_leftQuads, wings::kMaxWingQuads);
     if (rightCount <= 0 && leftCount <= 0) return;
 
-    std::uintptr_t colorHolderPtr = *(std::uintptr_t*)((std::uintptr_t)screenContext + ScreenContext::mColorHolder);
-    if (!colorHolderPtr || colorHolderPtr < 0x1000) return;
-    float* colorHolder = (float*)colorHolderPtr;
-    float savedColor[4] = { colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3] };
-    colorHolder[0] = 1.0f; colorHolder[1] = 1.0f; colorHolder[2] = 1.0f; colorHolder[3] = 1.0f;
+    bedrocktools::core::ScopedShaderColor shaderColor(screenContext);
+    if (!shaderColor) return;
 
     // Player yaw -> right/forward vectors
     constexpr float kPi = 3.14159265358979323846f;
@@ -609,11 +607,6 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     resolveWing(s_leftQuads, leftCount, body, feet, rightVec, forwardVec, cam, seeBack, emitter);
 
     s_renderMesh(screenContext, tess, matFill, pad);
-
-    colorHolder[0] = savedColor[0];
-    colorHolder[1] = savedColor[1];
-    colorHolder[2] = savedColor[2];
-    colorHolder[3] = savedColor[3];
 }
 
 static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {

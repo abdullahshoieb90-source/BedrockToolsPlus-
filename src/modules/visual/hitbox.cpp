@@ -4,6 +4,7 @@
 #include "thick_lines.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
 #include "core/memory/Hooks.hpp"
+#include "core/RenderState.hpp"
 #include <bedrocktools/sdk/Memory.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
@@ -503,15 +504,8 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     void* matFill = s_matFill ? (void*)&s_matFill : matInner;
     if (!matFill) matFill = overlayMaterial;
 
-    uintptr_t colorHolderPtr = *(uintptr_t*)((uintptr_t)screenContext + bedrocktools::sdk::offsets::ScreenContext::mColorHolder);
-    if (!colorHolderPtr || colorHolderPtr < 0x1000) return;
-    float* colorHolder = (float*)colorHolderPtr;
-
-    float savedColor[4] = { colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3] };
-    colorHolder[0] = 1.0f;
-    colorHolder[1] = 1.0f;
-    colorHolder[2] = 1.0f;
-    colorHolder[3] = 1.0f;
+    bedrocktools::core::ScopedShaderColor shaderColor(screenContext);
+    if (!shaderColor) return;
 
     // Menu thickness slider -> world-space half width. 1.0 (or lower) keeps
     // the classic hairline box; anything above is drawn as real geometry,
@@ -838,11 +832,6 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
             renderActor(ent, groupColor);
         }
     }
-
-    colorHolder[0] = savedColor[0];
-    colorHolder[1] = savedColor[1];
-    colorHolder[2] = savedColor[2];
-    colorHolder[3] = savedColor[3];
 }
 
 HitboxModule::HitboxModule()

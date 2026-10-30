@@ -13,13 +13,18 @@ inline constexpr std::size_t mBaseFogStart = 0x42C;
 inline constexpr std::size_t mBaseFogEnd = 0x430;
 inline constexpr std::size_t mCurrentFogDensityMax = 0x45C;
 inline constexpr std::size_t mCamPos = 0x614;
-inline constexpr std::size_t mSelectionOverlayMaterial = 0x1028;
+inline constexpr std::size_t mSelectionOverlayMaterial = 0x10A0;
 }
 
 namespace ScreenContext {
 inline constexpr std::size_t mActorShaderConstants = 0x20;
-inline constexpr std::size_t mColorHolder = 0x28;
+// Corrected for the supported Bedrock 1.26.60 build.
+inline constexpr std::size_t mColorHolder = 0x30;
 inline constexpr std::size_t mTessellator = 0xB0;
+}
+
+namespace ShaderColor {
+inline constexpr std::size_t mDirty = 0x10;
 }
 
 namespace ActorShaderConstants {

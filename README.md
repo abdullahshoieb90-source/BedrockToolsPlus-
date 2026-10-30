@@ -2,7 +2,7 @@
 
 ## Upstream synchronization
 
-Compatibility signatures, SDK offsets, and interaction-hook ABI are updated from [QYCottage/BedrockTools](https://github.com/QYCottage/BedrockTools) at `3de9a7d641c8222a9bf536d828449a27b58cd20a` (v1.5.8, Minecraft Bedrock `1.26.60.X`). Upstream modules and their overlay bridge are not included; Plus modules can be extended independently. Plus branding, resources, configuration migration, and build optimizations are retained. The upstream MIT notice is preserved in `LICENSE.upstream`; the Plus license remains in `LICENSE`.
+Compatibility signatures, SDK offsets, and interaction-hook ABI are updated from [QYCottage/BedrockTools](https://github.com/QYCottage/BedrockTools) at `3de9a7d641c8222a9bf536d828449a27b58cd20a` (v1.5.8, Minecraft Bedrock `1.26.60.X`). The shader-color and selection-material offsets also incorporate the upstream 1.26.60 rendering fix from `c5bf5347fc8d`. Upstream modules and their overlay bridge are not included; Plus modules can be extended independently. Plus branding, resources, configuration migration, and build optimizations are retained. The upstream MIT notice is preserved in `LICENSE.upstream`; the Plus license remains in `LICENSE`.
 
 Android builds are provided by the build workflow; host tests do not validate offsets or hooks against a running game.
 
@@ -36,7 +36,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 **Hitbox** draws the collision boxes of nearby entities and players, plus optional eye and look lines, as a world-space overlay.
 
 - Boxes are drawn at the interpolated render position the game draws each entity at, not at the raw collision AABB. The raw box snaps a whole tick of movement ahead of the smoothly moving body, which reads as the hitbox lagging behind the player; **Smooth Boxes** (on by default) derives the interpolation phase from each entity's own box samples, so a stalled tick callback (for example while gliding with a firework-boosted elytra) can never leave a box frozen behind the player. Turning it off gives the plain tick boxes back.
-- **Show Entities**, **Show Players** and **Show Items** pick which groups are drawn, **Hitbox Color** and **Show Items Color** style them, and **Line Thickness** above 1 draws real camera-facing geometry because most mobile GLES drivers ignore native line width.
+- **Show Entities**, **Show Players** and **Show Items** pick which groups are drawn, **Hitbox Color** and **Show Items Color** style them, and **Line Thickness** above 1 draws real camera-facing geometry because most mobile GLES drivers ignore native line width. Box and line colors remain independent of the game's shader tint in both camera perspectives.
 - There is no Range setting any more: the module scans a fixed ~128-block radius around you (far beyond the ~50-block sight the overlay is used at) and draws everything the game fetches there. **Show Entities**, **Show Players** and **Show Items** decide which groups are drawn — turn **Show Items** off if a mob/item farm floods the screen.
 - **Show 3rd Person** adds your own box while the camera is behind you, **Show Eye Line** and **Show Look Line** annotate every box, and **Hitbox Indicator** recolors the box under your crosshair with **Indicator Active Color** / **Indicator Default Color**. The highlight follows the game's own crosshair verdict, so an entity lights up only when the game itself says it is within your allowed attack distance (3 blocks in survival, 5 in creative); when that verdict is unavailable the indicator falls back to a 3-block reach measured from your own box.
 - Boxes hidden behind solid blocks are culled, so a wall stops an entity's box from showing through it.
@@ -50,6 +50,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 - **Rainbow** animates both passes, with **Rainbow Speed** controlling the cycle. **Pulse** smoothly animates their opacity, with a separate **Pulse Speed**.
 - Translucent passes actually blend: any pass with **Opacity** below 1 (or an active **Pulse**) renders with an alpha-blended, still depth-tested material, because the vanilla selection material has no blending state and would ignore the alpha. Fully opaque settings keep the vanilla look.
 - **Through Walls** switches to a no-depth material when the current game build provides it. It is off by default, so terrain normally occludes the overlay.
+- Outline and fill colors are isolated from the game's shader tint in first and third person; the previous game render state is restored after the overlay.
 
 The target is sampled on the client tick instead of resolving the hit result from the render thread, avoiding frame stalls. Settings and keybind state are persisted in `config.json`.
 

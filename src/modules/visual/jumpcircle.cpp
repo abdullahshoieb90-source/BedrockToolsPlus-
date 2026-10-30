@@ -2,6 +2,7 @@
 #include "jumpcircle_geometry.hpp"
 #include "blockoutline_geometry.hpp"
 #include "core/memory/Hooks.hpp"
+#include "core/RenderState.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
@@ -166,13 +167,11 @@ void render(void* renderer, void* screen) {
     if (!translucent) return;
     auto scr = reinterpret_cast<std::uintptr_t>(screen);
     auto tess = *reinterpret_cast<std::uintptr_t*>(scr + ScreenContext::mTessellator);
-    auto holder = *reinterpret_cast<std::uintptr_t*>(scr + ScreenContext::mColorHolder);
     auto lrp = *reinterpret_cast<std::uintptr_t*>(reinterpret_cast<std::uintptr_t>(renderer) + LevelRenderer::mLevelRendererPlayer);
-    if (tess < 0x1000 || holder < 0x1000 || lrp < 0x1000) return;
+    if (tess < 0x1000 || lrp < 0x1000) return;
     auto cam = *reinterpret_cast<const Vec3*>(lrp + LevelRendererPlayer::mCamPos);
-    auto* colors = reinterpret_cast<float*>(holder);
-    const float saved[]{colors[0], colors[1], colors[2], colors[3]};
-    colors[0] = colors[1] = colors[2] = colors[3] = 1.0f;
+    bedrocktools::core::ScopedShaderColor shaderColor(screen);
+    if (!shaderColor) return;
     const float duration = jumpcircle::safeDuration(module->effectDuration);
     const bool persistent = module->persistent;
     const double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
@@ -197,7 +196,6 @@ void render(void* renderer, void* screen) {
         char pad[0x100]{};
         renderMesh(screen, reinterpret_cast<void*>(tess), &translucent, pad);
     }
-    for (int i = 0; i < 4; ++i) colors[i] = saved[i];
 }
 void renderHook(void* renderer, void* screen, void* params) {
     if (originalRender) originalRender(renderer, screen, params);

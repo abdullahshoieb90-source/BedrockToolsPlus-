@@ -3,6 +3,7 @@
 #include "thick_lines.hpp"
 
 #include "core/memory/Hooks.hpp"
+#include "core/RenderState.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
@@ -423,17 +424,8 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
     }
     if (!outlineMaterial || !fillMaterial) return;
 
-    const std::uintptr_t colorHolderAddress = *reinterpret_cast<std::uintptr_t*>(
-        screenAddress + bedrocktools::sdk::offsets::ScreenContext::mColorHolder);
-    if (colorHolderAddress < 0x1000) return;
-    auto* colorHolder = reinterpret_cast<float*>(colorHolderAddress);
-    const float savedColor[4] = {
-        colorHolder[0], colorHolder[1], colorHolder[2], colorHolder[3],
-    };
-    colorHolder[0] = 1.0f;
-    colorHolder[1] = 1.0f;
-    colorHolder[2] = 1.0f;
-    colorHolder[3] = 1.0f;
+    bedrocktools::core::ScopedShaderColor shaderColor(screenContext);
+    if (!shaderColor) return;
 
     const blockoutline::Box box = blockoutline::makeBlockBox(target.position, kBoxExpansion);
     if (g_blockOutline->fill) {
@@ -457,11 +449,6 @@ void renderBlockOutline(void* levelRenderer, void* screenContext) {
                     outlineAlpha,
                     g_blockOutline->lineThickness);
     }
-
-    colorHolder[0] = savedColor[0];
-    colorHolder[1] = savedColor[1];
-    colorHolder[2] = savedColor[2];
-    colorHolder[3] = savedColor[3];
 }
 
 void renderLevelHook(void* levelRenderer, void* screenContext, void* renderParams) {
