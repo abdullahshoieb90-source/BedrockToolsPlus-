@@ -179,12 +179,12 @@ int main() {
         float minX, maxX, minY, maxY, minZ, maxZ;
         wingBounds(g_quads, count, minX, maxX, minY, maxY, minZ, maxZ);
         check(minZ > 2.0f, tag + ": nothing crosses the torso back plane (z > 2)");
-        check(minX < -14.0f, tag + ": the wing reaches outboard past the torso");
+        check(minX < (d.staticShape ? -10.0f : -14.0f), tag + ": the wing reaches outboard past the torso");
         check(maxX < 0.0f, tag + ": the right wing stays on the right half");
         check(maxY < 44.0f && minY > -8.0f, tag + ": the wing stays in a sane vertical range");
 
         const float area = projectedArea(g_quads, count);
-        check(area > 320.0f, tag + ": the membrane covers a real wing area (" +
+        check(area > (d.staticShape ? 50.0f : 320.0f), tag + ": the membrane covers a real wing area (" +
                                  std::to_string(static_cast<int>(area)) + " px2)");
 
         // Mirror: left wing is the right wing with x negated.
@@ -199,6 +199,32 @@ int main() {
             if (std::fabs(g_quads[i].n.y - g_quadsLeft[i].n.y) > 1e-4f) mirrored = false;
         }
         check(mirrored, tag + ": the left wing is the exact mirror of the right one");
+    }
+
+    // The video reference is a compact, static black bat silhouette. Input
+    // animation must not deform it, while old styles remain animated.
+    {
+        const int index = wings::wingStyleIndexForId("video_bat");
+        const wings::WingDesign& d = wings::kWingDesigns[index];
+        check(index > 0 && std::string(d.id) == "video_bat", "video bat is selectable by id");
+        check(d.staticShape && !wings::kWingDesigns[0].staticShape,
+              "only the new shape opts out of animation");
+        check(d.radialRibs && d.radialStruts == 3 && !d.feathers && !d.fairing,
+              "video bat uses three radial ribs and a simple membrane");
+        check(d.back.r < 25 && d.back.g < 25 && d.back.b < 25 && d.glowStrength == 0.0f,
+              "video bat has a near-black membrane without glow");
+        check(d.upperPx + d.forePx + d.handPx < 11.0f,
+              "video bat remains compact relative to the player");
+        wings::WingPose animated = restPose();
+        animated.shoulderDeg = -50.0f;
+        animated.flutter = 1.0f;
+        const int a = wings::buildWing(d, wings::WingPose{}, -1, g_quads, wings::kMaxWingQuads);
+        const int b = wings::buildWing(d, animated, -1, g_quadsLeft, wings::kMaxWingQuads);
+        bool same = a == b;
+        for (int i = 0; i < a && same; ++i)
+            for (int k = 0; k < 4; ++k)
+                if (wings::length(g_quads[i].p[k] - g_quadsLeft[i].p[k]) > 1e-5f) same = false;
+        check(same, "video bat shape is unchanged by flap and flutter input");
     }
 
     // ------------------------------------------------------------------

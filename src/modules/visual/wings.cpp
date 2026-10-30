@@ -626,7 +626,7 @@ static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
 } // namespace
 
 WingsModule::WingsModule()
-    : Module("Wings", "Renders animated 3D wings on your back, driven by your movement. Pick a shape in the Wing Style selector: Dragon, Angel, Demon, Bat, Butterfly, Phoenix, Fairy, Demon Wings, Vampire Bat or Red Bat. Does not modify your skin.") {
+    : Module("Wings", "Renders animated 3D wings on your back, driven by your movement. Pick a shape in the Wing Style selector: Dragon, Angel, Demon, Bat, Butterfly, Phoenix, Fairy, Demon Wings, Vampire Bat, Red Bat, Veil or Video Bat. Does not modify your skin.") {
     g_wings = this;
     showInMenu = true;
     hideInHudEditor = true; // world overlay, not HUD

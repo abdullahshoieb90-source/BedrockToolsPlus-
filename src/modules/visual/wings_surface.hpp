@@ -632,10 +632,13 @@ inline void addFeathers(Sink& sink, const Vec3 joint[4], const WingDesign& d, co
 
 // Builds one wing (side < 0 = right, side > 0 = left) into `out`.
 // Returns the number of quads written (never more than the cap).
-inline int buildWing(const WingDesign& d, const WingPose& pose, int side,
+inline int buildWing(const WingDesign& d, const WingPose& inputPose, int side,
                      WingQuad* out, int cap) {
     if (!out || cap <= 0) return 0;
 
+    // A shape-only style stays in its authored pose; it still follows the
+    // player because the renderer applies the player transform afterwards.
+    const WingPose pose = d.staticShape ? WingPose{} : inputPose;
     Vec3 joint[4];
     buildArmJoints(d, pose, joint);
 

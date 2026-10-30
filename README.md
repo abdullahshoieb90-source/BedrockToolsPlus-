@@ -106,6 +106,8 @@ The **Wings** module renders animated 3D wings on your back that flap, idle and 
 - **Demon Wings** — larger black-framed crimson wing with a glow aura
 - **Vampire Bat** — a narrower crimson membrane with deeper fingers
 - **Red Bat** — the shortest, most saturated bat wing
+- **Veil** — a dark, broad sheet with grey struts
+- **Video Bat** — compact black bat wings with subtle grey ribs, inspired by the reference video; shape only (no flap animation)
 
 The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. They are drawn with a depth-tested game material, so your body correctly occludes them when the camera swings in front of you, and the side facing the camera is auto-selected: the bright membrane from behind, a darker shadowed underside from the front. Every style is one continuous membrane instead of a chain of boxes: an articulated arm (shoulder, elbow, wrist) is bent into a smooth leading edge, and a cambered sail hangs off it with a swept, scalloped trailing edge, finger struts, a spar and wing-tip claw, a shoulder fairing and — on the feathered styles — three overlapping rows of quills. The sheet ripples while you flap and goes taut while you glide, and it is shaded per face with a headlight plus a sky lift so it keeps its volume from every angle.
 

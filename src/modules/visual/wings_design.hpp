@@ -63,6 +63,7 @@ struct WingDesign {
     float sweepPx = 2.2f;       // backwards walk of the arm along the span
     float rootZPx = 2.9f;       // depth of the shoulder pivot (behind the torso)
     float flutterPx = 0.85f;    // membrane ripple amplitude
+    bool staticShape = false;   // display the authored shape without wing animation
 
     // --- Detail layers ---
     // Finger struts are what make a bat sail read as a bat sail, but they only
@@ -422,6 +423,23 @@ inline constexpr WingDesign kWingDesigns[] = {
         .frame = kVeilFrame, .lead = kVeilLead, .back = kVeilBack,
         .front = kVeilFront, .trail = kVeilTrail, .tip = kVeilTip,
         .glow = kVeilGlow, .glowStrength = 0.0f, .backLight = 0.05f,
+    },
+    {
+        // Compact black bat wings based on the in-game video: the membrane is
+        // dark, with subtle grey radial bones and a scalloped lower edge. Keep
+        // this as an additional style so existing saved selections stay intact.
+        .id = "video_bat", .label = "Video Bat",
+        .upperPx = 3.6f, .forePx = 3.2f, .handPx = 2.8f,
+        .raiseDeg = 0.0f, .elbowDeg = -2.0f, .wristDeg = -3.0f,
+        .chordRootPx = 4.6f, .chordTipPx = 4.4f, .chordMidPx = 0.5f, .chordBias = 1.0f,
+        .fanDeg = 5.0f, .scallopPx = 1.4f, .fingers = 3,
+        .camberPx = 0.35f, .sweepPx = 0.4f, .rootZPx = 3.1f, .flutterPx = 0.0f,
+        .staticShape = true,
+        .ribs = false, .radialRibs = true, .radialStruts = 3, .fairing = false,
+        .feathers = false,
+        .frame = kVeilFrame, .lead = kVeilLead, .back = kVeilBack,
+        .front = kVeilFront, .trail = kVeilTrail, .tip = kVeilFrame,
+        .glow = kVeilGlow, .glowStrength = 0.0f, .backLight = 0.0f,
     },
 };
 
