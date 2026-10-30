@@ -6,7 +6,13 @@
 #include <string_view>
 
 namespace jumpcircle {
-constexpr float duration = 0.65f;
+constexpr float defaultDuration = 0.65f;
+constexpr float minDuration = 0.1f;
+constexpr float maxDuration = 10.0f;
+constexpr std::size_t maxEffects = 24;
+inline float safeDuration(float seconds) {
+    return std::isfinite(seconds) ? std::clamp(seconds, minDuration, maxDuration) : defaultDuration;
+}
 // Divisible by four and ten, so square corners and all five star tips land on
 // vertices. All styles use the same vertex budget.
 constexpr int segments = 80;
@@ -29,17 +35,17 @@ inline std::string styleRadioValue(int index) {
 struct Point { float x, y, z; };
 struct RingState { float radius, alpha; };
 
-inline RingState animate(float age) {
-    const float t = std::clamp(age / duration, 0.0f, 1.0f);
+inline RingState animate(float age, float duration, bool persistent) {
+    const float t = std::clamp(age / safeDuration(duration), 0.0f, 1.0f);
     const float ease = 1.0f - (1.0f - t) * (1.0f - t);
-    return {0.38f + 0.70f * ease, (1.0f - t) * (1.0f - t)};
+    return {0.38f + 0.70f * ease, persistent ? 1.0f : (1.0f - t) * (1.0f - t)};
 }
 
 // Without a verified ground/jump event in this game's SDK, infer takeoff and
 // landing from consecutive tick positions. No button input is required, so
 // touch auto-jump and held jump work as well. Landings are armed only by a
-// detected takeoff and followed by downward movement; pauses at the apex do
-// not count. The step exclusions avoid common half/full block step-ups.
+// downward movement whether it started with a jump or walking off a block;
+// pauses at the apex do not count. The step exclusions avoid common half/full block step-ups.
 struct MotionEvents { bool takeoff = false, landing = false; };
 struct MotionTracker {
     float previousDy = 0;
@@ -61,7 +67,7 @@ struct MotionTracker {
             result.takeoff = true;
             airborne = true;
         }
-        if (airborne && dy < -0.01f) descending = true;
+        if (dy < -0.01f) { airborne = true; descending = true; }
         previousDy = dy;
         return result;
     }
@@ -89,8 +95,8 @@ inline Point contour(Style style, int segment) {
 
 // Four concentric strips produce the soft halo without a texture.
 template <class Emit>
-void emitRing(Point center, float age, Style style, Emit emit) {
-    const auto state = animate(age);
+void emitRing(Point center, float age, float duration, bool persistent, Style style, Emit emit) {
+    const auto state = animate(age, duration, persistent);
     constexpr float offsets[] = {-0.13f, -0.045f, 0.0f, 0.045f, 0.13f};
     constexpr float strengths[] = {0.0f, 0.30f, 0.90f, 0.30f, 0.0f};
     auto vertex = [&](Point direction, float radius, float alpha) {

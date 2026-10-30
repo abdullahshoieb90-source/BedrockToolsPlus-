@@ -1,5 +1,6 @@
 #include "jumpcircle.hpp"
 #include "jumpcircle_geometry.hpp"
+#include "blockoutline_geometry.hpp"
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
@@ -10,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -109,8 +111,12 @@ void tick(void* player) {
     if (!std::isfinite(feet.x) || !std::isfinite(feet.y) || !std::isfinite(feet.z)) { clearState(); return; }
     auto now = Clock::now();
     std::lock_guard lock(stateMutex);
-    if (trackedPlayer != player || (hasPrevious && now - lastTick > std::chrono::milliseconds(300))) {
+    if (trackedPlayer != player) {
         rings.clear(); hasPrevious = false; motion = {}; trackedPlayer = player;
+    } else if (hasPrevious && now - lastTick > std::chrono::milliseconds(300)) {
+        // Resuming after a pause must not invent an event from stale samples.
+        // Keep persistent effects belonging to this player.
+        hasPrevious = false; motion = {};
     }
     if (hasPrevious) {
         const float dy = feet.y - previousFeet.y;
@@ -121,7 +127,7 @@ void tick(void* player) {
         } else {
             const auto events = motion.update(dy);
             auto spawn = [&](const Vec3& position) {
-                if (rings.size() >= 8) rings.erase(rings.begin());
+                if (rings.size() >= jumpcircle::maxEffects) rings.erase(rings.begin());
                 rings.push_back({{position.x, position.y + 0.025f, position.z}, now});
             };
             // On an immediate jump after landing, the previous feet position
@@ -131,7 +137,12 @@ void tick(void* player) {
         }
     }
     previousFeet = feet; hasPrevious = true; lastTick = now;
-    std::erase_if(rings, [now](const Ring& ring) { return std::chrono::duration<float>(now - ring.start).count() >= jumpcircle::duration; });
+    if (!module->persistent) {
+        const float duration = jumpcircle::safeDuration(module->effectDuration);
+        std::erase_if(rings, [now, duration](const Ring& ring) {
+            return std::chrono::duration<float>(now - ring.start).count() >= duration;
+        });
+    }
 }
 
 void render(void* renderer, void* screen) {
@@ -162,12 +173,24 @@ void render(void* renderer, void* screen) {
     auto* colors = reinterpret_cast<float*>(holder);
     const float saved[]{colors[0], colors[1], colors[2], colors[3]};
     colors[0] = colors[1] = colors[2] = colors[3] = 1.0f;
+    const float duration = jumpcircle::safeDuration(module->effectDuration);
+    const bool persistent = module->persistent;
+    const double seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
+    const float speed = std::isfinite(module->rainbowSpeed) ? std::clamp(module->rainbowSpeed, 0.05f, 1.0f) : 0.20f;
+    // Reduce the phase in double precision before conversion to float: the
+    // steady clock may have accumulated millions of seconds on a phone.
+    const auto rgb = module->rainbow
+        ? blockoutline::hsvToRgb(static_cast<float>(std::fmod(seconds * speed, 1.0) * 360.0))
+        : module->effectColor;
+    const float red = ((rgb >> 16) & 255) / 255.0f;
+    const float green = ((rgb >> 8) & 255) / 255.0f;
+    const float blue = (rgb & 255) / 255.0f;
     for (const auto& ring : snapshot) {
         float age = std::chrono::duration<float>(now - ring.start).count();
-        if (age < 0 || age >= jumpcircle::duration) continue;
+        if (age < 0 || (!persistent && age >= duration)) continue;
         tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, jumpcircle::segments * jumpcircle::bands * 4, 0);
-        jumpcircle::emitRing(ring.center, age, static_cast<jumpcircle::Style>(std::clamp(module->style, 0, jumpcircle::styleCount - 1)), [&](jumpcircle::Point point, float alpha) {
-            tessColor(reinterpret_cast<void*>(tess), 1, 1, 1, alpha);
+        jumpcircle::emitRing(ring.center, age, duration, persistent, static_cast<jumpcircle::Style>(std::clamp(module->style, 0, jumpcircle::styleCount - 1)), [&](jumpcircle::Point point, float alpha) {
+            tessColor(reinterpret_cast<void*>(tess), red, green, blue, alpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
         });
         char pad[0x100]{};
@@ -181,7 +204,7 @@ void renderHook(void* renderer, void* screen, void* params) {
 }
 }
 
-JumpCircleModule::JumpCircleModule() : Module("Jump Circle", "Shows an expanding glow when you jump and land. Choose a circle, square or star.") {
+JumpCircleModule::JumpCircleModule() : Module("Jump Circle", "Shows a configurable expanding glow when you jump, fall and land.") {
     module = this; hideInHudEditor = true;
 }
 JumpCircleModule::~JumpCircleModule() { if (module == this) module = nullptr; }
@@ -213,8 +236,34 @@ void JumpCircleModule::loadConfig(const nlohmann::json& j) {
     Module::loadConfig(j);
     if (j.contains("effectStyle") && j["effectStyle"].is_string())
         style = jumpcircle::styleIndex(j["effectStyle"].get<std::string>());
+    if (j.contains("effectDuration")) {
+        try { effectDuration = jumpcircle::safeDuration(j["effectDuration"].get<float>()); } catch (...) {}
+    }
+    if (j.contains("effectColor") && j["effectColor"].is_string()) {
+        const std::string text = j["effectColor"].get<std::string>();
+        // Require exactly #RRGGBB; malformed configs retain the old color.
+        if (text.size() == 7 && text[0] == '#' &&
+            text.find_first_not_of("0123456789abcdefABCDEF", 1) == std::string::npos) {
+            try { effectColor = 0xFF000000u | static_cast<std::uint32_t>(std::stoul(text.substr(1), nullptr, 16)); } catch (...) {}
+        }
+    }
+    if (j.contains("rainbow")) { try { rainbow = j["rainbow"].get<bool>(); } catch (...) {} }
+    if (j.contains("persistent")) { try { persistent = j["persistent"].get<bool>(); } catch (...) {} }
+    if (j.contains("rainbowSpeed")) {
+        try {
+            const float speed = j["rainbowSpeed"].get<float>();
+            if (std::isfinite(speed)) rainbowSpeed = std::clamp(speed, 0.05f, 1.0f);
+        } catch (...) {}
+    }
 }
 void JumpCircleModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
     j["effectStyle"] = jumpcircle::styleRadioValue(style);
+    j["effectDuration"] = jumpcircle::safeDuration(effectDuration);
+    char color[8];
+    std::snprintf(color, sizeof(color), "#%06X", effectColor & 0x00FFFFFFu);
+    j["effectColor"] = color;
+    j["rainbow"] = rainbow;
+    j["rainbowSpeed"] = std::isfinite(rainbowSpeed) ? std::clamp(rainbowSpeed, 0.05f, 1.0f) : 0.20f;
+    j["persistent"] = persistent;
 }

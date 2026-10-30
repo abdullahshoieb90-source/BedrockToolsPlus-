@@ -15,8 +15,9 @@ namespace bedrocktools::memory { std::uintptr_t resolve(SignatureId) { return 0;
 namespace {
 int vertices = 0, begins = 0, flushes = 0;
 std::vector<float> alphas;
+std::vector<std::array<float, 3>> colors;
 void fakeBegin(void*, void*, int mode, int count, int) { assert(mode == 1); assert(count == jumpcircle::segments * jumpcircle::bands * 4); ++begins; }
-void fakeColor(void*, float, float, float, float a) { alphas.push_back(a); }
+void fakeColor(void*, float r, float g, float b, float a) { alphas.push_back(a); colors.push_back({r,g,b}); }
 void fakeVertex(void*, float, float, float) { ++vertices; }
 void fakeFlush(void*, void*, void*, char*) { ++flushes; }
 template <typename T, std::size_t N>
@@ -54,11 +55,23 @@ int main() {
     assert(rings.size() == 2); // no repeated landing while stationary
     nlohmann::json settings;
     settings["effectStyle"] = "2";
+    settings["effectColor"] = "#1280FF";
+    settings["effectDuration"] = 2.5f;
+    settings["rainbow"] = false;
+    settings["rainbowSpeed"] = .4f;
+    settings["persistent"] = true;
     mod.loadConfig(settings);
-    assert(mod.style == 2);
+    assert(mod.style == 2 && mod.effectColor == 0xFF1280FFu);
+    assert(mod.effectDuration == 2.5f && mod.persistent && !mod.rainbow && mod.rainbowSpeed == .4f);
     nlohmann::json saved;
     mod.saveConfig(saved);
     assert(saved["effectStyle"].get<std::string>() == "2,Circle,Square,Star");
+    assert(saved["effectColor"].get<std::string>() == "#1280FF");
+    assert(saved["effectDuration"].get<float>() == 2.5f);
+    assert(saved["persistent"].get<bool>());
+    settings["effectColor"] = "#wrong!";
+    mod.loadConfig(settings);
+    assert(mod.effectColor == 0xFF1280FFu);
     std::uintptr_t tess = reinterpret_cast<std::uintptr_t>(&vertices);
     put(screen, off::ScreenContext::mTessellator, tess);
     put(screen, off::ScreenContext::mColorHolder, reinterpret_cast<std::uintptr_t>(color.data()));
@@ -69,6 +82,36 @@ int main() {
     render(renderer.data(), screen.data());
     assert(begins == 2 && flushes == 2 && vertices == 2 * jumpcircle::segments * jumpcircle::bands * 4);
     assert(alphas.size() == static_cast<std::size_t>(vertices));
+    assert(std::abs(colors[0][0] - 18.0f/255.0f) < .001f);
+    assert(std::abs(colors[0][1] - 128.0f/255.0f) < .001f);
+    assert(colors[0][2] == 1.0f);
+    // Persistent effects survive their configured lifetime.
+    for (auto& ring : rings) ring.start = Clock::now() - std::chrono::seconds(30);
+    tick(player.data());
+    assert(rings.size() == 2);
+    int oldBegins = begins;
+    mod.rainbow = true;
+    render(renderer.data(), screen.data());
+    assert(begins == oldBegins + 2);
+    assert(colors.back() != colors.front());
+    mod.persistent = false;
+    tick(player.data());
+    assert(rings.empty());
+    // Drop from a block without jumping and land once at the new position.
+    box.min.y -= .42f; box.max.y -= .42f;
+    tick(player.data());
+    assert(rings.empty());
+    tick(player.data());
+    assert(rings.size() == 1 && std::abs(rings[0].center.y - box.min.y - .025f) < .001f);
+    tick(player.data());
+    assert(rings.size() == 1);
+    // The retained-effects budget is bounded even if the switch is on.
+    mod.persistent = true;
+    for (int i = 0; i < 30; ++i) {
+        box.min.y -= .25f; box.max.y -= .25f; tick(player.data());
+        tick(player.data());
+    }
+    assert(rings.size() == jumpcircle::maxEffects);
     assert((color == std::array<float, 4>{.2f,.3f,.4f,.5f}));
     // A large teleport clears effects and cannot be mistaken for landing.
     box.min.x += 10; box.max.x += 10;

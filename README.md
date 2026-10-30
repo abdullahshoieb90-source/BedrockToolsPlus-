@@ -55,9 +55,11 @@ The target is sampled on the client tick instead of resolving the hit result fro
 
 ## Jump Circle
 
-Enable **Jump Circle** to show a soft white effect at both takeoff and landing. It expands and fades over the ground, without modifying gameplay or requiring Wings or Block Outline. **Effect Style** selects Circle, Square or Star. The overlay is depth-tested and visible in third person.
+Enable **Jump Circle** to show a soft effect at takeoff and landing, including when walking off a block. **Effect Style** selects Circle, Square or Star; **Effect Duration** controls expansion and fade time (0.1–10 seconds); **Effect Color** sets the color, while **Rainbow** cycles through RGB colors at **Rainbow Speed**.
 
-Jump and landing are inferred from the local player's vertical movement, so automatic jumps and held jump work without relying on button input. This is a heuristic rather than a game-side ground event: unusual movement, flight, bounce effects, jump boosts or partial-block steps may be missed or mistaken for jumps. Rendering depends on the supported Bedrock version's native signatures and materials.
+Enable **Persistent** to keep effects visible after they expand instead of fading. For mobile performance, only the most recent 24 effects are retained; disabling the module or changing worlds clears them. Turning Persistent off allows older effects to expire. The effect is depth-tested and visible in third person.
+
+Jump and landing are inferred from vertical movement, not a verified game-side ground event. Automatic jumps and walking off blocks do not depend on button input, but unusual movement, flight, water, bounce effects, jump boosts or partial-block steps may be missed or mistaken for jumps/landings. Rendering depends on the supported Bedrock version's native signatures and materials.
 
 ## Inventory HUD
 
