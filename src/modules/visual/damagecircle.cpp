@@ -58,10 +58,14 @@ RenderMesh renderMesh = nullptr;
 RenderLevel originalRender = nullptr;
 std::uintptr_t materialGroup = 0;
 MaterialPtr translucent;
-struct Ring { damagecircle::Point center; Clock::time_point start; };
+struct Ring { Clock::time_point start; };
 std::mutex stateMutex;
 std::vector<Ring> rings;
 void* trackedPlayer = nullptr;
+damagecircle::Point playerFeet{};
+float playerHalfWidth = 0.3f;
+float playerHeight = 1.8f;
+bool hasPlayerPosition = false;
 damagecircle::HurtTimeTracker hurtTime;
 Clock::time_point lastTick{};
 
@@ -94,7 +98,7 @@ std::uintptr_t resolveAdrp(std::uint32_t* p, std::size_t count, std::uint32_t re
 
 void clearState() {
     std::lock_guard lock(stateMutex);
-    rings.clear(); trackedPlayer = nullptr; hurtTime.reset(); lastTick = {};
+    rings.clear(); trackedPlayer = nullptr; playerFeet = {}; hasPlayerPosition = false; hurtTime.reset(); lastTick = {};
 }
 
 void tick(void* rawPlayer) {
@@ -105,8 +109,11 @@ void tick(void* rawPlayer) {
     const int currentHurtTime = player->hurtTime();
     const AABB box = player->bounds();
     const Vec3 feet{(box.min.x + box.max.x) * 0.5f, box.min.y, (box.min.z + box.max.z) * 0.5f};
+    const float halfWidth = std::max(box.max.x - box.min.x, box.max.z - box.min.z) * 0.5f;
+    const float height = box.max.y - box.min.y;
     if (currentHurtTime < 0 || currentHurtTime > 100 ||
-        !std::isfinite(feet.x) || !std::isfinite(feet.y) || !std::isfinite(feet.z)) {
+        !std::isfinite(feet.x) || !std::isfinite(feet.y) || !std::isfinite(feet.z) ||
+        !std::isfinite(halfWidth) || halfWidth <= 0.0f || !std::isfinite(height) || height <= 0.0f) {
         clearState(); return;
     }
 
@@ -115,12 +122,18 @@ void tick(void* rawPlayer) {
     if (trackedPlayer != rawPlayer) {
         rings.clear(); hurtTime.reset(); trackedPlayer = rawPlayer;
     }
+    // Keep every active effect attached to the latest player position and
+    // size. Sampling the local hitbox here makes the ring follow movement.
+    playerFeet = {feet.x, feet.y + 0.025f, feet.z};
+    playerHalfWidth = halfWidth;
+    playerHeight = height;
+    hasPlayerPosition = true;
     // Do not interpret a delayed tick after a pause as a new damage event.
     const bool resumedAfterPause = lastTick != Clock::time_point{} && now - lastTick > std::chrono::milliseconds(300);
     if (resumedAfterPause) hurtTime.reset();
     if (hurtTime.update(currentHurtTime) && !resumedAfterPause) {
         if (rings.size() >= 12) rings.erase(rings.begin());
-        rings.push_back({{feet.x, feet.y + 0.025f, feet.z}, now});
+        rings.push_back({now});
     }
     lastTick = now;
     const float duration = damagecircle::safeDuration(module->effectDuration);
@@ -134,10 +147,17 @@ void render(void* renderer, void* screen) {
         reinterpret_cast<std::uintptr_t>(renderer) < 0x1000 || reinterpret_cast<std::uintptr_t>(screen) < 0x1000) return;
     const auto now = Clock::now();
     std::vector<Ring> snapshot;
+    damagecircle::Point feet;
+    float halfWidth = 0.0f;
+    float height = 0.0f;
     {
         std::lock_guard lock(stateMutex);
-        if (lastTick == Clock::time_point{} || now - lastTick > std::chrono::milliseconds(300)) return;
+        if (!hasPlayerPosition || lastTick == Clock::time_point{} ||
+            now - lastTick > std::chrono::milliseconds(300)) return;
         snapshot = rings;
+        feet = playerFeet;
+        halfWidth = playerHalfWidth;
+        height = playerHeight;
     }
     if (snapshot.empty() || !materialGroup) return;
     if (!translucent) {
@@ -160,7 +180,7 @@ void render(void* renderer, void* screen) {
         const float age = std::chrono::duration<float>(now - ring.start).count();
         if (age < 0 || age >= duration) continue;
         tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, damagecircle::segments * damagecircle::bands * 4, 0);
-        damagecircle::emitRisingRing(ring.center, age, duration, [&](damagecircle::Point point, float alpha) {
+        damagecircle::emitRisingRing(feet, halfWidth, height, age, duration, [&](damagecircle::Point point, float alpha) {
             tessColor(reinterpret_cast<void*>(tess), 1.0f, 1.0f, 1.0f, alpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
         });
@@ -176,7 +196,7 @@ void renderHook(void* renderer, void* screen, void* params) {
 } // namespace
 
 DamageCircleModule::DamageCircleModule()
-    : Module("Damage Circle", "Shows a white ring that expands and rises from your feet to above your head when you take damage.") {
+    : Module("Damage Circle", "Shows a fixed-width white ring that follows you and rises from your feet to above your head when you take damage.") {
     module = this;
     hideInHudEditor = true;
 }

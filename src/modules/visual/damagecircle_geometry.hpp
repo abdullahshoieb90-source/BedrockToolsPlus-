@@ -12,6 +12,7 @@ constexpr float maxDuration = 10.0f;
 constexpr int segments = 120;
 constexpr int bands = 4;
 constexpr float pi = 3.14159265358979323846f;
+constexpr float outerBandOffset = 0.035f;
 
 inline float safeDuration(float seconds) {
     return std::isfinite(seconds) ? std::clamp(seconds, minDuration, maxDuration) : defaultDuration;
@@ -43,21 +44,24 @@ struct HurtTimeTracker {
 struct Point { float x, y, z; };
 struct RingState { float radius, lift, alpha; };
 
-// The damage effect is a horizontal ring that rises up the player's body while
-// expanding outward. This deliberately differs from Jump Circle's ground-hugging
-// ring: it travels from the feet to above the head during the damage flash.
-inline RingState animate(float age, float duration) {
+// The damage ring keeps the player's measured width for its whole lifetime;
+// only its height changes, moving from the feet to the top of the hitbox.
+inline RingState animate(float age, float duration, float playerHalfWidth, float playerHeight) {
     const float t = std::clamp(age / safeDuration(duration), 0.0f, 1.0f);
     const float ease = t * t * (3.0f - 2.0f * t);
-    return {0.34f + 0.50f * ease, 1.82f * ease, (1.0f - t) * (1.0f - t)};
+    const float outerRadius = std::max(0.08f, playerHalfWidth);
+    return {std::max(0.04f, outerRadius - outerBandOffset), playerHeight * ease,
+            (1.0f - t) * (1.0f - t)};
 }
 
-// Four shaded strips form a narrow glowing band around the player.
+// Four shaded strips create a narrow white band. Its outside edge matches the
+// measured player width, so it does not expand like the Jump Circle effect.
 template <class Emit>
-void emitRisingRing(Point feet, float age, float duration, Emit emit) {
-    const auto state = animate(age, duration);
-    constexpr std::array<float, bands + 1> offsets{-0.055f, -0.018f, 0.018f, 0.055f, 0.09f};
-    constexpr std::array<float, bands + 1> strengths{0.0f, 0.45f, 1.0f, 0.55f, 0.0f};
+void emitRisingRing(Point feet, float playerHalfWidth, float playerHeight,
+                    float age, float duration, Emit emit) {
+    const auto state = animate(age, duration, playerHalfWidth, playerHeight);
+    constexpr std::array<float, bands + 1> offsets{-0.025f, -0.012f, 0.012f, 0.025f, outerBandOffset};
+    constexpr std::array<float, bands + 1> strengths{0.0f, 0.65f, 1.0f, 0.65f, 0.0f};
     for (int i = 0; i < segments; ++i) {
         const float a0 = 2.0f * pi * static_cast<float>(i) / segments;
         const float a1 = 2.0f * pi * static_cast<float>(i + 1) / segments;
