@@ -65,7 +65,18 @@ int main() {
     assert(mod.effectDuration == 2.5f && mod.persistent && !mod.rainbow && mod.rainbowSpeed == .4f);
     nlohmann::json saved;
     mod.saveConfig(saved);
-    assert(saved["effectStyle"].get<std::string>() == "2,Circle,Square,Star");
+    assert(saved["effectStyle"].get<std::string>() == jumpcircle::styleRadioValue(2));
+    // Every menu selection persists and resolves back to the same style.
+    for (int i = 0; i < jumpcircle::styleCount; ++i) {
+        nlohmann::json choice;
+        choice["effectStyle"] = std::to_string(i);
+        mod.loadConfig(choice);
+        assert(mod.style == i);
+        nlohmann::json roundTrip;
+        mod.saveConfig(roundTrip);
+        assert(jumpcircle::styleIndex(roundTrip["effectStyle"].get<std::string>()) == i);
+    }
+    mod.style = 2;
     assert(saved["effectColor"].get<std::string>() == "#FF1280FF");
     // Legacy Android color sliders always send #AARRGGBB to the callback.
     saved["effectColor"] = "#80123456";

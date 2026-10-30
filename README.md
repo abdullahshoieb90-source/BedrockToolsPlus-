@@ -55,7 +55,7 @@ The target is sampled on the client tick instead of resolving the hit result fro
 
 ## Jump Circle
 
-Enable **Jump Circle** to show a soft effect at takeoff and landing, including when walking off a block. **Effect Style** selects Circle, Square or Star; **Effect Duration** controls expansion and fade time (0.1–10 seconds); **Effect Color** sets the color and opacity, while **Rainbow** cycles through RGB colors at **Rainbow Speed** (using the selected opacity instead of the selected RGB color).
+Enable **Jump Circle** to show a soft effect at takeoff and landing, including when walking off a block. **Effect Style** offers 13 shapes: Circle, Square, Star, Triangle, Diamond, Pentagon, Hexagon, Octagon, Four Point Star, Six Point Star, Heart, Flower and Gear; **Effect Duration** controls expansion and fade time (0.1–10 seconds); **Effect Color** sets the color and opacity, while **Rainbow** cycles through RGB colors at **Rainbow Speed** (using the selected opacity instead of the selected RGB color).
 
 Enable **Persistent** to keep effects visible after they expand instead of fading. For mobile performance, only the most recent 24 effects are retained; disabling the module or changing worlds clears them. Turning Persistent off allows older effects to expire. The effect is depth-tested and visible in third person.
 

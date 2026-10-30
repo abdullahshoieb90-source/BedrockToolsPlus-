@@ -34,7 +34,14 @@ int main() {
     assert(bounce.landing && bounce.takeoff);
     assert(styleIndex("2,Circle,Square,Star") == 2);
     assert(styleIndex("Square") == 1 && styleIndex("nonsense") == 0);
-    assert(styleRadioValue(2) == "2,Circle,Square,Star");
+    assert(styleRadioValue(2).starts_with("2,Circle,Square,Star,"));
+    assert(styleCount == 13);
+    for (int i = 0; i < styleCount; ++i) {
+        assert(styleIndex(std::to_string(i)) == i);
+        assert(styleIndex(styleNames[i]) == i);
+        assert(styleIndex(styleRadioValue(i)) == i);
+    }
+    assert(styleIndex("99") == 0);
     auto start = animate(0, defaultDuration, false);
     auto middle = animate(defaultDuration * .5f, defaultDuration, false);
     auto end = animate(defaultDuration, defaultDuration, false);
@@ -46,6 +53,7 @@ int main() {
     assert(safeDuration(-10) == minDuration && safeDuration(100) == maxDuration);
     for (int style = 0; style < styleCount; ++style) {
         int count = 0;
+        float signedArea = 0;
         bool bright = false, transparent = false;
         emitRing({2, 3, 4}, .1f, defaultDuration, false, static_cast<Style>(style), [&](Point p, float alpha) {
             assert(std::isfinite(p.x) && p.y == 3 && std::isfinite(p.z));
@@ -54,8 +62,25 @@ int main() {
             ++count;
         });
         assert(count == segments * bands * 4 && bright && transparent);
+        for (int i = 0; i < segments; ++i) {
+            const auto p = contour(static_cast<Style>(style), i);
+            const auto q = contour(static_cast<Style>(style), i + 1);
+            signedArea += p.x * q.z - q.x * p.z;
+        }
+        assert(signedArea > 0.5f); // closed, nondegenerate, upward-facing winding
         auto a = contour(static_cast<Style>(style), 0), b = contour(static_cast<Style>(style), segments);
         assert(std::abs(a.x - b.x) < .00001f && std::abs(a.z - b.z) < .00001f);
+    }
+    for (int first = 0; first < styleCount; ++first) {
+        for (int second = 0; second < first; ++second) {
+            float difference = 0;
+            for (int i = 0; i < segments; ++i) {
+                const auto a = contour(static_cast<Style>(first), i);
+                const auto b = contour(static_cast<Style>(second), i);
+                difference += std::hypot(a.x - b.x, a.z - b.z);
+            }
+            assert(difference > 1.0f); // each style actually differs
+        }
     }
     auto starTip = contour(Style::Star, 0), starValley = contour(Style::Star, segments / 10);
     assert(std::hypot(starTip.x, starTip.z) > std::hypot(starValley.x, starValley.z) * 2);
