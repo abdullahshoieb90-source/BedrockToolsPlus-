@@ -196,7 +196,7 @@ void renderHook(void* renderer, void* screen, void* params) {
 } // namespace
 
 DamageCircleModule::DamageCircleModule()
-    : Module("Damage Circle", "Shows a fixed-width white ring that follows you and rises from your feet to above your head when you take damage.") {
+    : Module("Damage Circle", "Shows a white ring slightly wider than your hitbox that follows you and rises from your feet to above your head when you take damage.") {
     module = this;
     hideInHudEditor = true;
 }

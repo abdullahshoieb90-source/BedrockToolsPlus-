@@ -13,6 +13,7 @@ constexpr int segments = 120;
 constexpr int bands = 4;
 constexpr float pi = 3.14159265358979323846f;
 constexpr float outerBandOffset = 0.035f;
+constexpr float playerWidthScale = 1.35f;
 
 inline float safeDuration(float seconds) {
     return std::isfinite(seconds) ? std::clamp(seconds, minDuration, maxDuration) : defaultDuration;
@@ -44,18 +45,19 @@ struct HurtTimeTracker {
 struct Point { float x, y, z; };
 struct RingState { float radius, lift, alpha; };
 
-// The damage ring keeps the player's measured width for its whole lifetime;
-// only its height changes, moving from the feet to the top of the hitbox.
+// The damage ring keeps a fixed width based on the player's measured hitbox;
+// it is slightly wider for visibility. Only its height changes, moving from
+// the feet to the top of the hitbox.
 inline RingState animate(float age, float duration, float playerHalfWidth, float playerHeight) {
     const float t = std::clamp(age / safeDuration(duration), 0.0f, 1.0f);
     const float ease = t * t * (3.0f - 2.0f * t);
-    const float outerRadius = std::max(0.08f, playerHalfWidth);
+    const float outerRadius = std::max(0.08f, playerHalfWidth * playerWidthScale);
     return {std::max(0.04f, outerRadius - outerBandOffset), playerHeight * ease,
             (1.0f - t) * (1.0f - t)};
 }
 
 // Four shaded strips create a narrow white band. Its outside edge matches the
-// measured player width, so it does not expand like the Jump Circle effect.
+// scaled player width, so it does not expand like the Jump Circle effect.
 template <class Emit>
 void emitRisingRing(Point feet, float playerHalfWidth, float playerHeight,
                     float age, float duration, Emit emit) {

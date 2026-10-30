@@ -71,7 +71,7 @@ int main() {
     const auto startState = damagecircle::animate(0.0f, 0.65f, 0.3f, 1.8f);
     const auto middleState = damagecircle::animate(0.325f, 0.65f, 0.3f, 1.8f);
     const auto endState = damagecircle::animate(0.65f, 0.65f, 0.3f, 1.8f);
-    assert(std::abs(startState.lift) < .001f && std::abs(startState.radius - 0.265f) < .001f);
+    assert(std::abs(startState.lift) < .001f && std::abs(startState.radius - 0.37f) < .001f);
     assert(std::abs(middleState.lift - 0.9f) < .001f && std::abs(middleState.radius - startState.radius) < .001f);
     assert(std::abs(endState.lift - 1.8f) < .001f && std::abs(endState.radius - middleState.radius) < .001f);
     float minY = 100.0f, maxY = -100.0f, minRadius = 100.0f, maxRadius = 0.0f;
@@ -84,7 +84,7 @@ int main() {
             maxRadius = std::max(maxRadius, radius);
         });
     assert(std::abs(minY - 64.925f) < .002f && std::abs(maxY - minY) < .002f);
-    assert(minRadius > 0.23f && std::abs(maxRadius - 0.3f) < .002f); // fixed to the player's width
+    assert(minRadius > 0.23f && std::abs(maxRadius - 0.405f) < .002f); // fixed at 1.35x the player's width
 
     put(player, off::Actor::mHurtTime, 9);
     tick(player.data());
@@ -131,7 +131,7 @@ int main() {
     assert(!colors.empty() && !vertexPositions.empty());
     float maxAbsX = 0.0f;
     for (const auto& position : vertexPositions) maxAbsX = std::max(maxAbsX, std::abs(position[0]));
-    assert(maxAbsX > 0.29f && maxAbsX <= 0.301f); // ring stayed centered on the moved player, at exact width
+    assert(maxAbsX > 0.40f && maxAbsX <= 0.406f); // ring follows the player, at the wider fixed size
     for (const auto& colorValue : colors) {
         assert(colorValue[0] == 1.0f && colorValue[1] == 1.0f && colorValue[2] == 1.0f);
     }
