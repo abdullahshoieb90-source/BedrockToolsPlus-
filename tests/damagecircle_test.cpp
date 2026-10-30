@@ -49,6 +49,14 @@ int main() {
     alignas(std::max_align_t) std::array<std::byte, 0x500> renderer{};
     alignas(std::max_align_t) std::array<std::byte, 0x1100> camera{};
     AABB box{{-.3f, 64, -.3f}, {.3f, 65.8f, .3f}};
+    auto setupTarget = [&](auto& actorData, auto& componentData, float x, std::uint32_t category) {
+        AABB targetBox{{x - .3f, 64.0f, -.3f}, {x + .3f, 65.8f, .3f}};
+        put(actorData, off::Actor::mHurtTime, 0);
+        put(actorData, off::Actor::mCategories, category);
+        put(actorData, off::Actor::mStateVectorComponent + off::BuiltInActorComponents::mAABBShapeComponent,
+            reinterpret_cast<std::uintptr_t>(componentData.data()));
+        put(componentData, off::AABBShapeComponent::mAABB, targetBox);
+    };
     put(player, off::Actor::mHurtTime, 0);
     put(player, off::Actor::mStateVectorComponent + off::BuiltInActorComponents::mAABBShapeComponent,
         reinterpret_cast<std::uintptr_t>(component.data()));
@@ -109,13 +117,17 @@ int main() {
     nlohmann::json settings;
     settings["effectDuration"] = 2.5f;
     settings["effectSize"] = 1.4f;
+    settings["showPlayers"] = true;
+    settings["showMobs"] = true;
     mod.loadConfig(settings);
     assert(std::abs(mod.effectDuration - 2.5f) < .001f);
     assert(std::abs(mod.effectSize - 1.4f) < .001f);
+    assert(mod.showPlayers && mod.showMobs);
     nlohmann::json saved;
     mod.saveConfig(saved);
     assert(std::abs(saved["effectDuration"].get<float>() - 2.5f) < .001f);
     assert(std::abs(saved["effectSize"].get<float>() - 1.4f) < .001f);
+    assert(saved["showPlayers"].get<bool>() && saved["showMobs"].get<bool>());
     nlohmann::json invalid;
     invalid["effectDuration"] = 99.0f;
     invalid["effectSize"] = 99.0f;
@@ -148,6 +160,61 @@ int main() {
         assert(colorValue[0] == 1.0f && colorValue[1] == 1.0f && colorValue[2] == 1.0f);
     }
     assert((color.rgba == fake_render::Color{.2f, .3f, .4f, .5f}) && color.dirty == 1);
+
+    alignas(std::max_align_t) std::array<std::byte, 0x500> victimPlayer{};
+    alignas(std::max_align_t) std::array<std::byte, 0x100> victimPlayerComponent{};
+    setupTarget(victimPlayer, victimPlayerComponent, 8.0f, off::ActorCategories::IsPlayer);
+    auto* victim = reinterpret_cast<bedrocktools::sdk::Actor*>(victimPlayer.data());
+    bedrocktools::events::AttackEvent playerAttack{
+        bedrocktools::events::AttackKind::SurvivalMode, nullptr, victim, nullptr, nullptr};
+    bedrocktools::events::bus().publish(playerAttack);
+    put(victimPlayer, off::Actor::mHurtTime, 10);
+    const auto beforePlayerHit = rings.size();
+    tick(player.data());
+    assert(rings.size() == beforePlayerHit + 1 && rings.back().actor == victim);
+    // The ring follows the victim's new position while it is active.
+    AABB movedVictimBox{{8.7f, 64.0f, -.3f}, {9.3f, 65.8f, .3f}};
+    put(victimPlayerComponent, off::AABBShapeComponent::mAABB, movedVictimBox);
+    tick(player.data());
+    assert(std::abs(rings.back().feet.x - 9.0f) < .001f);
+
+    // Player and mob hit effects are independent menu options.
+    mod.showPlayers = false;
+    alignas(std::max_align_t) std::array<std::byte, 0x500> ignoredPlayer{};
+    alignas(std::max_align_t) std::array<std::byte, 0x100> ignoredPlayerComponent{};
+    setupTarget(ignoredPlayer, ignoredPlayerComponent, 12.0f, off::ActorCategories::IsPlayer);
+    auto* ignoredPlayerActor = reinterpret_cast<bedrocktools::sdk::Actor*>(ignoredPlayer.data());
+    bedrocktools::events::AttackEvent ignoredPlayerAttack{
+        bedrocktools::events::AttackKind::SurvivalMode, nullptr, ignoredPlayerActor, nullptr, nullptr};
+    bedrocktools::events::bus().publish(ignoredPlayerAttack);
+    put(ignoredPlayer, off::Actor::mHurtTime, 10);
+    const auto beforeIgnoredPlayer = rings.size();
+    tick(player.data());
+    assert(rings.size() == beforeIgnoredPlayer);
+
+    alignas(std::max_align_t) std::array<std::byte, 0x500> victimMob{};
+    alignas(std::max_align_t) std::array<std::byte, 0x100> victimMobComponent{};
+    setupTarget(victimMob, victimMobComponent, 15.0f, off::ActorCategories::IsMob);
+    auto* mob = reinterpret_cast<bedrocktools::sdk::Actor*>(victimMob.data());
+    bedrocktools::events::AttackEvent mobAttack{
+        bedrocktools::events::AttackKind::SurvivalMode, nullptr, mob, nullptr, nullptr};
+    bedrocktools::events::bus().publish(mobAttack);
+    put(victimMob, off::Actor::mHurtTime, 10);
+    const auto beforeMobHit = rings.size();
+    tick(player.data());
+    assert(rings.size() == beforeMobHit + 1 && rings.back().actor == mob);
+    mod.showMobs = false;
+    alignas(std::max_align_t) std::array<std::byte, 0x500> ignoredMob{};
+    alignas(std::max_align_t) std::array<std::byte, 0x100> ignoredMobComponent{};
+    setupTarget(ignoredMob, ignoredMobComponent, 18.0f, off::ActorCategories::IsMob);
+    auto* ignoredMobActor = reinterpret_cast<bedrocktools::sdk::Actor*>(ignoredMob.data());
+    bedrocktools::events::AttackEvent ignoredMobAttack{
+        bedrocktools::events::AttackKind::SurvivalMode, nullptr, ignoredMobActor, nullptr, nullptr};
+    bedrocktools::events::bus().publish(ignoredMobAttack);
+    put(ignoredMob, off::Actor::mHurtTime, 10);
+    const auto beforeIgnoredMob = rings.size();
+    tick(player.data());
+    assert(rings.size() == beforeIgnoredMob);
 
     mod.setMasterEnabled(false);
     assert(rings.empty());

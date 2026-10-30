@@ -2,6 +2,7 @@
 #include "damagecircle_geometry.hpp"
 #include "core/memory/Hooks.hpp"
 #include "core/RenderState.hpp"
+#include <bedrocktools/events/AttackEvent.hpp>
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
@@ -58,9 +59,23 @@ RenderMesh renderMesh = nullptr;
 RenderLevel originalRender = nullptr;
 std::uintptr_t materialGroup = 0;
 MaterialPtr translucent;
-struct Ring { Clock::time_point start; };
+constexpr auto attackConfirmWindow = std::chrono::milliseconds(1000);
+constexpr std::size_t maxPendingAttacks = 8;
+constexpr std::size_t maxRings = 24;
+struct Ring {
+    bedrocktools::sdk::Actor* actor = nullptr;
+    damagecircle::Point feet{};
+    float height = 1.8f;
+    Clock::time_point start{};
+};
+struct PendingAttack {
+    bedrocktools::sdk::Actor* target = nullptr;
+    int baselineHurtTime = 0;
+    Clock::time_point at{};
+};
 std::mutex stateMutex;
 std::vector<Ring> rings;
+std::vector<PendingAttack> pendingAttacks;
 void* trackedPlayer = nullptr;
 damagecircle::Point playerFeet{};
 float playerHeight = 1.8f;
@@ -95,9 +110,36 @@ std::uintptr_t resolveAdrp(std::uint32_t* p, std::size_t count, std::uint32_t re
     return 0;
 }
 
+bool actorPose(bedrocktools::sdk::Actor* actor, damagecircle::Point& feet, float& height) {
+    if (reinterpret_cast<std::uintptr_t>(actor) < 0x1000) return false;
+    const AABB box = actor->bounds();
+    feet = {(box.min.x + box.max.x) * 0.5f, box.min.y + 0.025f,
+            (box.min.z + box.max.z) * 0.5f};
+    height = box.max.y - box.min.y;
+    return std::isfinite(feet.x) && std::isfinite(feet.y) && std::isfinite(feet.z) &&
+           std::isfinite(height) && height > 0.0f;
+}
+
+bool targetTypeEnabled(bedrocktools::sdk::Actor* actor) {
+    if (!actor || !module) return false;
+    const auto categories = actor->categories();
+    if ((categories & bedrocktools::sdk::offsets::ActorCategories::IsPlayer) != 0)
+        return module->showPlayers;
+    if ((categories & bedrocktools::sdk::offsets::ActorCategories::IsMob) != 0)
+        return module->showMobs;
+    return false;
+}
+
+void addRing(bedrocktools::sdk::Actor* actor, const damagecircle::Point& feet,
+             float height, Clock::time_point now) {
+    if (rings.size() >= maxRings) rings.erase(rings.begin());
+    rings.push_back({actor, feet, height, now});
+}
+
 void clearState() {
     std::lock_guard lock(stateMutex);
-    rings.clear(); trackedPlayer = nullptr; playerFeet = {}; hasPlayerPosition = false; hurtTime.reset(); lastTick = {};
+    rings.clear(); pendingAttacks.clear(); trackedPlayer = nullptr;
+    playerFeet = {}; hasPlayerPosition = false; hurtTime.reset(); lastTick = {};
 }
 
 void tick(void* rawPlayer) {
@@ -118,41 +160,69 @@ void tick(void* rawPlayer) {
     const auto now = Clock::now();
     std::lock_guard lock(stateMutex);
     if (trackedPlayer != rawPlayer) {
-        rings.clear(); hurtTime.reset(); trackedPlayer = rawPlayer;
+        rings.clear(); pendingAttacks.clear(); hurtTime.reset(); trackedPlayer = rawPlayer;
     }
-    // Keep every active effect attached to the latest player position and
-    // size. Sampling the local hitbox here makes the ring follow movement.
     playerFeet = {feet.x, feet.y + 0.025f, feet.z};
     playerHeight = height;
     hasPlayerPosition = true;
-    // Do not interpret a delayed tick after a pause as a new damage event.
-    const bool resumedAfterPause = lastTick != Clock::time_point{} && now - lastTick > std::chrono::milliseconds(300);
+
+    // Self-damage is detected directly from the local actor's hurt timer.
+    const bool resumedAfterPause = lastTick != Clock::time_point{} &&
+        now - lastTick > std::chrono::milliseconds(300);
     if (resumedAfterPause) hurtTime.reset();
-    if (hurtTime.update(currentHurtTime) && !resumedAfterPause) {
-        if (rings.size() >= 12) rings.erase(rings.begin());
-        rings.push_back({now});
+    if (hurtTime.update(currentHurtTime) && !resumedAfterPause)
+        addRing(player, playerFeet, playerHeight, now);
+
+    // Other entities only get an effect after an attack is confirmed by their
+    // hurt-time increasing. Whiffs and blocked attacks never create a ring.
+    for (auto it = pendingAttacks.begin(); it != pendingAttacks.end();) {
+        if (now - it->at > attackConfirmWindow) {
+            it = pendingAttacks.erase(it);
+            continue;
+        }
+        const int targetHurtTime = it->target->hurtTime();
+        if (targetHurtTime < 0 || targetHurtTime > 100) {
+            it = pendingAttacks.erase(it);
+            continue;
+        }
+        if (targetHurtTime > it->baselineHurtTime && targetTypeEnabled(it->target)) {
+            damagecircle::Point targetFeet{};
+            float targetHeight = 0.0f;
+            if (actorPose(it->target, targetFeet, targetHeight))
+                addRing(it->target, targetFeet, targetHeight, now);
+        }
+        it->baselineHurtTime = targetHurtTime;
+        ++it;
+    }
+
+    // Keep effects attached to their actors while they move.
+    const float duration = damagecircle::safeDuration(module->effectDuration);
+    for (auto it = rings.begin(); it != rings.end();) {
+        if (std::chrono::duration<float>(now - it->start).count() >= duration) {
+            it = rings.erase(it);
+            continue;
+        }
+        if (it->actor == player) {
+            it->feet = playerFeet;
+            it->height = playerHeight;
+        } else if (!actorPose(it->actor, it->feet, it->height)) {
+            it = rings.erase(it);
+            continue;
+        }
+        ++it;
     }
     lastTick = now;
-    const float duration = damagecircle::safeDuration(module->effectDuration);
-    std::erase_if(rings, [now, duration](const Ring& ring) {
-        return std::chrono::duration<float>(now - ring.start).count() >= duration;
-    });
 }
-
 void render(void* renderer, void* screen) {
     if (!module || !module->enabled || !tessBegin || !tessColor || !tessVertex || !renderMesh ||
         reinterpret_cast<std::uintptr_t>(renderer) < 0x1000 || reinterpret_cast<std::uintptr_t>(screen) < 0x1000) return;
     const auto now = Clock::now();
     std::vector<Ring> snapshot;
-    damagecircle::Point feet;
-    float height = 0.0f;
     {
         std::lock_guard lock(stateMutex);
         if (!hasPlayerPosition || lastTick == Clock::time_point{} ||
             now - lastTick > std::chrono::milliseconds(300)) return;
         snapshot = rings;
-        feet = playerFeet;
-        height = playerHeight;
     }
     if (snapshot.empty() || !materialGroup) return;
     if (!translucent) {
@@ -175,7 +245,7 @@ void render(void* renderer, void* screen) {
         const float age = std::chrono::duration<float>(now - ring.start).count();
         if (age < 0 || age >= duration) continue;
         tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, damagecircle::segments * damagecircle::bands * 4, 0);
-        damagecircle::emitVerticalRing(feet, height, age, duration,
+        damagecircle::emitVerticalRing(ring.feet, ring.height, age, duration,
             damagecircle::safeSize(module->effectSize), [&](damagecircle::Point point, float alpha) {
             tessColor(reinterpret_cast<void*>(tess), 1.0f, 1.0f, 1.0f, alpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
@@ -192,11 +262,28 @@ void renderHook(void* renderer, void* screen, void* params) {
 } // namespace
 
 DamageCircleModule::DamageCircleModule()
-    : Module("Damage Circle", "Shows a white ring that follows you, changes direction between rising and falling, and lets you adjust its size and duration when you take damage.") {
+    : Module("Damage Circle", "Shows a white ring on you when damaged, and optionally on players or mobs you hit; the ring follows its entity and moves up and down.") {
     module = this;
     hideInHudEditor = true;
 }
 DamageCircleModule::~DamageCircleModule() { if (module == this) module = nullptr; }
+void DamageCircleModule::onAttack(bedrocktools::sdk::Actor* target) {
+    if (!enabled || !target || !targetTypeEnabled(target)) return;
+    const int baseline = target->hurtTime();
+    if (baseline < 0 || baseline > 100) return;
+
+    const auto now = Clock::now();
+    std::lock_guard lock(stateMutex);
+    for (auto& pending : pendingAttacks) {
+        if (pending.target == target) {
+            pending.baselineHurtTime = baseline;
+            pending.at = now;
+            return;
+        }
+    }
+    if (pendingAttacks.size() >= maxPendingAttacks) pendingAttacks.erase(pendingAttacks.begin());
+    pendingAttacks.push_back({target, baseline, now});
+}
 void DamageCircleModule::onInit() {
     using bedrocktools::memory::resolve;
     using bedrocktools::memory::SignatureId;
@@ -212,6 +299,8 @@ void DamageCircleModule::onInit() {
         auto address = resolveAdrp(reinterpret_cast<std::uint32_t*>(group), 2, 0);
         if (address) materialGroup = address + MaterialGroup::mRenderMaterialGroupOffset;
     }
+    bedrocktools::events::bus().subscribe<bedrocktools::events::AttackEvent>(
+        [](auto& event) { if (module) module->onAttack(event.target); });
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [](auto& event) { tick(event.player); });
 }
@@ -235,9 +324,13 @@ void DamageCircleModule::loadConfig(const nlohmann::json& j) {
             if (std::isfinite(value)) effectSize = damagecircle::safeSize(value);
         } catch (...) {}
     }
+    if (j.contains("showPlayers")) { try { showPlayers = j["showPlayers"].get<bool>(); } catch (...) {} }
+    if (j.contains("showMobs")) { try { showMobs = j["showMobs"].get<bool>(); } catch (...) {} }
 }
 void DamageCircleModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
     j["effectDuration"] = damagecircle::safeDuration(effectDuration);
     j["effectSize"] = damagecircle::safeSize(effectSize);
+    j["showPlayers"] = showPlayers;
+    j["showMobs"] = showMobs;
 }

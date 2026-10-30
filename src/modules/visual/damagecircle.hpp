@@ -1,5 +1,6 @@
 #pragma once
 #include "../Module.hpp"
+#include <bedrocktools/sdk/world/Actor.hpp>
 #include <cstdint>
 
 class DamageCircleModule final : public Module {
@@ -14,6 +15,10 @@ public:
 
     float effectDuration = 0.65f;
     float effectSize = 1.0f;
+    bool showPlayers = true;
+    bool showMobs = true;
+
+    void onAttack(bedrocktools::sdk::Actor* target);
 
 private:
     bool m_patched = false;
