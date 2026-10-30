@@ -36,7 +36,7 @@ int main() {
     std::uintptr_t boxPtr = reinterpret_cast<std::uintptr_t>(&box);
     put(player, off::Actor::mStateVectorComponent + off::BuiltInActorComponents::mAABBShapeComponent, boxPtr);
     JumpCircleModule mod;
-    mod.enabled = true;
+    mod.setMasterEnabled(true);
     tick(player.data());
     assert(rings.empty());
     box.min.y += .42f; box.max.y += .42f;
@@ -66,12 +66,21 @@ int main() {
     nlohmann::json saved;
     mod.saveConfig(saved);
     assert(saved["effectStyle"].get<std::string>() == "2,Circle,Square,Star");
-    assert(saved["effectColor"].get<std::string>() == "#1280FF");
+    assert(saved["effectColor"].get<std::string>() == "#FF1280FF");
+    // Legacy Android color sliders always send #AARRGGBB to the callback.
+    saved["effectColor"] = "#80123456";
+    mod.loadConfig(saved);
+    assert(mod.effectColor == 0x80123456u);
+    nlohmann::json updated;
+    mod.saveConfig(updated);
+    assert(updated["effectColor"].get<std::string>() == "#80123456");
     assert(saved["effectDuration"].get<float>() == 2.5f);
     assert(saved["persistent"].get<bool>());
-    settings["effectColor"] = "#wrong!";
-    mod.loadConfig(settings);
-    assert(mod.effectColor == 0xFF1280FFu);
+    // settings still carries a valid RGB color; test a malformed value alone.
+    nlohmann::json invalid;
+    invalid["effectColor"] = "#wrong!";
+    mod.loadConfig(invalid);
+    assert(mod.effectColor == 0x80123456u);
     std::uintptr_t tess = reinterpret_cast<std::uintptr_t>(&vertices);
     put(screen, off::ScreenContext::mTessellator, tess);
     put(screen, off::ScreenContext::mColorHolder, reinterpret_cast<std::uintptr_t>(color.data()));
@@ -83,8 +92,12 @@ int main() {
     assert(begins == 2 && flushes == 2 && vertices == 2 * jumpcircle::segments * jumpcircle::bands * 4);
     assert(alphas.size() == static_cast<std::size_t>(vertices));
     assert(std::abs(colors[0][0] - 18.0f/255.0f) < .001f);
-    assert(std::abs(colors[0][1] - 128.0f/255.0f) < .001f);
-    assert(colors[0][2] == 1.0f);
+    assert(std::abs(colors[0][1] - 52.0f/255.0f) < .001f);
+    assert(std::abs(colors[0][2] - 86.0f/255.0f) < .001f);
+    // At full persistent opacity the bright band is scaled by picker alpha.
+    float maxAlpha = 0;
+    for (float a : alphas) maxAlpha = std::max(maxAlpha, a);
+    assert(std::abs(maxAlpha - .90f * 128.0f / 255.0f) < .001f);
     // Persistent effects survive their configured lifetime.
     for (auto& ring : rings) ring.start = Clock::now() - std::chrono::seconds(30);
     tick(player.data());

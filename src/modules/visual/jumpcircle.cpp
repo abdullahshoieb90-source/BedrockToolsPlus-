@@ -185,12 +185,13 @@ void render(void* renderer, void* screen) {
     const float red = ((rgb >> 16) & 255) / 255.0f;
     const float green = ((rgb >> 8) & 255) / 255.0f;
     const float blue = (rgb & 255) / 255.0f;
+    const float colorAlpha = ((module->effectColor >> 24) & 255) / 255.0f;
     for (const auto& ring : snapshot) {
         float age = std::chrono::duration<float>(now - ring.start).count();
         if (age < 0 || (!persistent && age >= duration)) continue;
         tessBegin(reinterpret_cast<void*>(tess), nullptr, 1, jumpcircle::segments * jumpcircle::bands * 4, 0);
         jumpcircle::emitRing(ring.center, age, duration, persistent, static_cast<jumpcircle::Style>(std::clamp(module->style, 0, jumpcircle::styleCount - 1)), [&](jumpcircle::Point point, float alpha) {
-            tessColor(reinterpret_cast<void*>(tess), red, green, blue, alpha);
+            tessColor(reinterpret_cast<void*>(tess), red, green, blue, alpha * colorAlpha);
             tessVertex(reinterpret_cast<void*>(tess), point.x - cam.x, point.y - cam.y, point.z - cam.z);
         });
         char pad[0x100]{};
@@ -241,10 +242,15 @@ void JumpCircleModule::loadConfig(const nlohmann::json& j) {
     }
     if (j.contains("effectColor") && j["effectColor"].is_string()) {
         const std::string text = j["effectColor"].get<std::string>();
-        // Require exactly #RRGGBB; malformed configs retain the old color.
-        if (text.size() == 7 && text[0] == '#' &&
+        // The launcher's legacy color picker sends #AARRGGBB, even when the
+        // initial value was #RRGGBB. Support both and preserve the alpha slider.
+        // Malformed configs retain the previous color.
+        if ((text.size() == 7 || text.size() == 9) && text[0] == '#' &&
             text.find_first_not_of("0123456789abcdefABCDEF", 1) == std::string::npos) {
-            try { effectColor = 0xFF000000u | static_cast<std::uint32_t>(std::stoul(text.substr(1), nullptr, 16)); } catch (...) {}
+            try {
+                const auto value = static_cast<std::uint32_t>(std::stoul(text.substr(1), nullptr, 16));
+                effectColor = text.size() == 7 ? 0xFF000000u | value : value;
+            } catch (...) {}
         }
     }
     if (j.contains("rainbow")) { try { rainbow = j["rainbow"].get<bool>(); } catch (...) {} }
@@ -260,8 +266,8 @@ void JumpCircleModule::saveConfig(nlohmann::json& j) {
     Module::saveConfig(j);
     j["effectStyle"] = jumpcircle::styleRadioValue(style);
     j["effectDuration"] = jumpcircle::safeDuration(effectDuration);
-    char color[8];
-    std::snprintf(color, sizeof(color), "#%06X", effectColor & 0x00FFFFFFu);
+    char color[10];
+    std::snprintf(color, sizeof(color), "#%08X", effectColor);
     j["effectColor"] = color;
     j["rainbow"] = rainbow;
     j["rainbowSpeed"] = std::isfinite(rainbowSpeed) ? std::clamp(rainbowSpeed, 0.05f, 1.0f) : 0.20f;
