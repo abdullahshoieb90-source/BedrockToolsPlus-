@@ -2,7 +2,7 @@
 
 ## Upstream synchronization
 
-Compatibility signatures, SDK offsets, and interaction-hook ABI are updated from [QYCottage/BedrockTools](https://github.com/QYCottage/BedrockTools) at `3de9a7d641c8222a9bf536d828449a27b58cd20a` (v1.5.8, Minecraft Bedrock `1.26.60.X`). The pre-update Plus module list is unchanged: upstream modules and their overlay bridge are not included. Plus branding, resources, configuration migration, and build optimizations are retained. The upstream MIT notice is preserved in `LICENSE.upstream`; the Plus license remains in `LICENSE`.
+Compatibility signatures, SDK offsets, and interaction-hook ABI are updated from [QYCottage/BedrockTools](https://github.com/QYCottage/BedrockTools) at `3de9a7d641c8222a9bf536d828449a27b58cd20a` (v1.5.8, Minecraft Bedrock `1.26.60.X`). Upstream modules and their overlay bridge are not included; Plus modules can be extended independently. Plus branding, resources, configuration migration, and build optimizations are retained. The upstream MIT notice is preserved in `LICENSE.upstream`; the Plus license remains in `LICENSE`.
 
 Android builds are provided by the build workflow; host tests do not validate offsets or hooks against a running game.
 
@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 12 configurable modules
+- 13 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -23,7 +23,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Hitbox, Block Outline, Wings
+**Visual:** Hitbox, Block Outline, Wings, Jump Circle
 
 **HUD:** Effect Display, Crosshair, Hotbar Slots, Inventory HUD, Armor
 
@@ -52,6 +52,12 @@ The source is public so people can study how a real LeviLauncher mod is structur
 - **Through Walls** switches to a no-depth material when the current game build provides it. It is off by default, so terrain normally occludes the overlay.
 
 The target is sampled on the client tick instead of resolving the hit result from the render thread, avoiding frame stalls. Settings and keybind state are persisted in `config.json`.
+
+## Jump Circle
+
+Enable **Jump Circle** to show a soft white ring at your takeoff point. It expands and fades over the ground, without modifying gameplay or requiring Wings or Block Outline. The effect is depth-tested and visible in third person.
+
+Jump detection uses the local player's jump input and upward movement, rather than a game-side jump event; automatic jumps without input and unusual movement modes may not produce an effect. As with the other world overlays, rendering depends on the supported Bedrock version's native signatures and materials.
 
 ## Inventory HUD
 

@@ -3,6 +3,7 @@
 #include "hud/effectdisplay.hpp"
 #include "visual/hitbox.hpp"
 #include "visual/blockoutline.hpp"
+#include "visual/jumpcircle.hpp"
 #include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
 #include "misc/commandhotkey.hpp"
@@ -78,4 +79,5 @@ void registerAllModules() {
     registry.emplace<HotbarSlotsModule>();
     registry.emplace<InventoryHudModule>();
     registry.emplace<ArmorModule>();
+    registry.emplace<JumpCircleModule>();
 }

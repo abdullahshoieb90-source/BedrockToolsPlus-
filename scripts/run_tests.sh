@@ -38,6 +38,13 @@ for source in "${root}"/tests/*_test.cpp; do
     extra_srcs=()
     skip=""
     case "${name}" in
+        jumpcircle_test)
+            if [ -n "${entt_inc}" ] && [ -d "${entt_inc}" ]; then
+                extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson" -I "${entt_inc}")
+            else
+                skip="entt headers (set ENTT_INCLUDE)"
+            fi
+            ;;
         blockoutline_test)
             # Includes the production renderer with host substitutes for the
             # preloader hook API and the small JSON surface used by configs.

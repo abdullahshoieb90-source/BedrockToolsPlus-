@@ -1,4 +1,4 @@
-"""Guard the compatibility-only update against reintroducing upstream modules.
+"""Guard the Plus module scope against accidentally reintroducing upstream modules.
 
 Run with: python3 -m unittest discover -s tests -p 'test_*.py'
 """
@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ModuleScopeTest(unittest.TestCase):
-    def test_original_plus_registry_is_preserved(self):
+    def test_plus_registry_is_preserved(self):
         registry = (ROOT / "src/modules/ModuleRegistry.cpp").read_text()
         registered = re.findall(r"registry\.emplace<(\w+)>\(\)", registry)
         self.assertEqual(registered, [
@@ -19,9 +19,10 @@ class ModuleScopeTest(unittest.TestCase):
             "BlockOutlineModule", "CustomCapesModule", "CommentKey",
             "CommandHotkeyModule", "CrosshairModule", "WingsModule",
             "HotbarSlotsModule", "InventoryHudModule", "ArmorModule",
+            "JumpCircleModule",
         ])
 
-    def test_only_original_plus_module_implementations_are_built(self):
+    def test_only_plus_module_implementations_are_built(self):
         # xmake compiles every src/modules/**/*.cpp, even unregistered ones.
         actual = {
             str(p.relative_to(ROOT / "src/modules"))
@@ -32,7 +33,7 @@ class ModuleScopeTest(unittest.TestCase):
             "misc/commandhotkey.cpp", "hud/effectdisplay.cpp",
             "hud/crosshair.cpp", "hud/hotbarslots.cpp", "hud/huditems.cpp",
             "hud/inventoryhud.cpp", "hud/armorhud.cpp", "visual/hitbox.cpp",
-            "visual/blockoutline.cpp", "visual/wings.cpp",
+            "visual/blockoutline.cpp", "visual/wings.cpp", "visual/jumpcircle.cpp",
             "player/customcapes.cpp",
         })
         self.assertFalse((ROOT / "src/launcher/OverlayBridge.cpp").exists())
