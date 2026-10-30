@@ -234,7 +234,10 @@ void registerModulesWithLauncher() {
                 float minVal = 0.0f;
                 float maxVal = 100.0f;
 
-                if (kLower.find("opacity") != std::string::npos ||
+                if (kLower == "effectduration") {
+                    minVal = 0.1f;
+                    maxVal = 10.0f;
+                } else if (kLower.find("opacity") != std::string::npos ||
                     kLower.find("color") != std::string::npos ||
                     kLower.find("alpha") != std::string::npos) {
                     maxVal = 1.0f;

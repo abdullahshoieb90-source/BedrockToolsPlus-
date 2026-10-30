@@ -38,6 +38,9 @@ for source in "${root}"/tests/*_test.cpp; do
     extra_srcs=()
     skip=""
     case "${name}" in
+        jumpcircle_test)
+            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
+            ;;
         blockoutline_test)
             # Includes the production renderer with host substitutes for the
             # preloader hook API and the small JSON surface used by configs.
