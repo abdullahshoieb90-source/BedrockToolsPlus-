@@ -38,6 +38,18 @@ for source in "${root}"/tests/*_test.cpp; do
     extra_srcs=()
     skip=""
     case "${name}" in
+        spatialgui_diagnostics_android_test)
+            extra+=(-I "${root}/tests/fake_spatial_diag" -I "${root}/tests/fake_spatial_hook" -I "${root}/tests/fakepl" -I "${root}/tests/fakejson" -pthread)
+            ;;
+        spatialgui_diagnostics_test)
+            extra+=(-I "${root}/tests/fake_spatial_hook" -I "${root}/tests/fakepl" -I "${root}/tests/fakejson" -pthread)
+            ;;
+        spatialgui_android_touch_test)
+            extra+=(-I "${root}/tests/fake_spatial_jni")
+            ;;
+        spatialgui_offscreen_test|spatialgui_compositor_test|spatialgui_screen_capture_test)
+            extra+=(-I "${root}/tests/fakegles")
+            ;;
         jumpcircle_test|damagecircle_test)
             extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
             ;;

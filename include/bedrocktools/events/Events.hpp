@@ -11,3 +11,4 @@
 #include <bedrocktools/events/ScreenStateEvent.hpp>
 
 #include <bedrocktools/events/ContainerSlotSelectedEvent.hpp>
+#include <bedrocktools/events/TouchInputEvent.hpp>

@@ -3,6 +3,7 @@
 #include "hud/effectdisplay.hpp"
 #include "visual/hitbox.hpp"
 #include "visual/blockoutline.hpp"
+#include "spatialgui/diagnostics.hpp"
 #include "visual/jumpcircle.hpp"
 #include "visual/damagecircle.hpp"
 #include "player/customcapes.hpp"
@@ -72,6 +73,7 @@ void registerAllModules() {
     registry.emplace<EffectDisplayModule>();
     registry.emplace<HitboxModule>();
     registry.emplace<BlockOutlineModule>();
+    registry.emplace<SpatialGuiDiagnostics>();
     registry.emplace<CustomCapesModule>();
     registry.emplace<CommentKey>();
     registry.emplace<CommandHotkeyModule>();

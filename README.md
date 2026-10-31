@@ -218,3 +218,7 @@ Discord: [discord.gg/rMgdpTFFVg](https://discord.gg/rMgdpTFFVg)
 ## License
 
 BedrockToolsPlus is licensed under the [GNU General Public License v3.0](LICENSE).
+
+## Spatial GUI diagnostics (experimental)
+
+The optional **Spatial GUI Diagnostics** module only logs screen-render information using the Android log tag `BTP-SpatialDiag`; it does **not** render or enable Spatial GUI. It is off by default. Its native hook has not yet been validated on a real device and could crash if the game ABI differs; test only in a backed-up disposable world. See [the development notes](docs/spatial-gui.md).

@@ -1,0 +1,138 @@
+#include "diagnostics.hpp"
+#include "container_tracker.hpp"
+#include "core/memory/Hooks.hpp"
+#include <bedrocktools/memory/Signatures.hpp>
+#include <atomic>
+#include <cstdint>
+
+#if defined(__ANDROID__)
+#include <EGL/egl.h>
+#include <GLES3/gl3.h>
+#include <android/log.h>
+#endif
+
+namespace {
+using Render = void (*)(void*, void*);
+Render original = nullptr;
+std::atomic<bool> g_enabled{false};
+bedrocktools::hooks::Handle g_hook = nullptr;
+std::atomic<unsigned> samples{0};
+std::atomic<unsigned> hookSamples{0};
+std::atomic<unsigned> eventSamples{0};
+std::atomic<unsigned> frameSamples{0};
+bedrocktools::spatialgui::ContainerTracker containers;
+
+void observeScreen(bedrocktools::events::ScreenStateEvent& event) {
+    using namespace bedrocktools::events;
+    if (!g_enabled.load(std::memory_order_acquire) || event.screen != ScreenKind::Container) return;
+    if (event.phase == ScreenPhase::Opened) {
+        containers.opened(event.controller);
+        samples.store(0, std::memory_order_release);
+        // Render hooks may have exhausted their initial log budget on the HUD
+        // before the user opens a container. Reserve fresh samples per open.
+        hookSamples.store(0, std::memory_order_release);
+        frameSamples.store(0, std::memory_order_release);
+    } else containers.closed(event.controller);
+#if defined(__ANDROID__)
+    // Separate lifecycle observations from render samples: absence of a
+    // sample alone cannot tell which hook or GL precondition is missing.
+    if (eventSamples.fetch_add(1, std::memory_order_relaxed) < 16)
+        __android_log_print(ANDROID_LOG_INFO, "BTP-SpatialDiag",
+                            "container event: %s controller_present=%d",
+                            event.phase == ScreenPhase::Opened ? "open" : "close",
+                            event.controller != nullptr);
+#endif
+}
+
+// FrameEvent is published by the existing eglSwapBuffers hook, only when it
+// has an EGL context. Its absence does not prove which graphics backend is in
+// use: the hook may be unavailable or the device may not use eglSwapBuffers.
+void observeFrame(bedrocktools::events::FrameEvent&) {
+#if defined(__ANDROID__)
+    if (!g_enabled.load(std::memory_order_acquire)) return;
+    if (frameSamples.fetch_add(1, std::memory_order_relaxed) < 2)
+        __android_log_print(ANDROID_LOG_INFO, "BTP-SpatialDiag",
+                            "egl swap frame: container_open=%d egl_context=%d",
+                            containers.hasOpen(), eglGetCurrentContext() != EGL_NO_CONTEXT);
+#endif
+}
+
+// The existing Android candidate signature is unique in the supplied
+// 1.26.60.04 binary; upstream LeviLamina describes ScreenView::render as
+// void(ScreenView*, UIRenderContext*), but the Android ABI and function
+// identity still need on-device verification. This opt-in hook never changes
+// render targets, reads screen object fields, cancels input or draws overlays.
+void renderHook(void* view, void* context) {
+#if defined(__ANDROID__)
+    const bool active = g_enabled.load(std::memory_order_acquire);
+    const bool containerOpen = active && containers.hasOpen();
+    const bool haveContext = active && eglGetCurrentContext() != EGL_NO_CONTEXT;
+    if (active && hookSamples.fetch_add(1, std::memory_order_relaxed) < 4)
+        __android_log_print(ANDROID_LOG_INFO, "BTP-SpatialDiag",
+                            "screen hook called: container_open=%d egl_context=%d",
+                            containerOpen, haveContext);
+    const bool shouldSample = containerOpen && haveContext &&
+                              samples.fetch_add(1, std::memory_order_relaxed) < 8;
+    GLint beforeDraw = 0, afterDraw = 0, viewport[4]{};
+    if (shouldSample) {
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &beforeDraw);
+        glGetIntegerv(GL_VIEWPORT, viewport);
+    }
+#endif
+    if (original) original(view, context);
+#if defined(__ANDROID__)
+    if (shouldSample) {
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &afterDraw);
+        // These are generic screen-render samples while any container is open;
+        // they do not prove the sampled view belongs to that container.
+        __android_log_print(ANDROID_LOG_INFO, "BTP-SpatialDiag",
+                            "screen render: viewport=%dx%d draw_fbo_changed=%d (view not identified)",
+                            viewport[2], viewport[3], beforeDraw != afterDraw);
+    }
+#endif
+}
+}
+
+SpatialGuiDiagnostics::SpatialGuiDiagnostics()
+    : Module("Spatial GUI Diagnostics", "Read-only screen-render diagnostics; not a spatial inventory.") {
+    hideInHudEditor = true;
+}
+SpatialGuiDiagnostics::~SpatialGuiDiagnostics() {
+    onDisable();
+    bedrocktools::events::bus().unsubscribe(m_screenSubscription);
+    bedrocktools::events::bus().unsubscribe(m_frameSubscription);
+}
+void SpatialGuiDiagnostics::onInit() {
+    using bedrocktools::memory::SignatureId;
+    m_target = reinterpret_cast<void*>(bedrocktools::memory::resolve(SignatureId::ScreenViewRender));
+    if (!m_screenSubscription)
+        m_screenSubscription = bedrocktools::events::bus().subscribe<bedrocktools::events::ScreenStateEvent>(observeScreen);
+    if (!m_frameSubscription)
+        m_frameSubscription = bedrocktools::events::bus().subscribe<bedrocktools::events::FrameEvent>(observeFrame);
+}
+void SpatialGuiDiagnostics::onEnable() {
+    containers.clear();
+    samples.store(0, std::memory_order_release);
+    hookSamples.store(0, std::memory_order_release);
+    eventSamples.store(0, std::memory_order_release);
+    frameSamples.store(0, std::memory_order_release);
+    if (!g_hook && m_target)
+        g_hook = bedrocktools::hooks::install(m_target, reinterpret_cast<void*>(&renderHook),
+                                            reinterpret_cast<void**>(&original));
+    // A hook without a callable trampoline would suppress vanilla screens.
+    if (g_hook && !original) {
+        bedrocktools::hooks::remove(g_hook);
+        g_hook = nullptr;
+    }
+    m_installed = g_hook != nullptr;
+    g_enabled.store(m_installed, std::memory_order_release);
+#if defined(__ANDROID__)
+    __android_log_print(ANDROID_LOG_INFO, "BTP-SpatialDiag", "diagnostics %s; vanilla UI unchanged",
+                        m_installed ? "enabled" : "unavailable: screen-render hook not installed");
+#endif
+}
+void SpatialGuiDiagnostics::onDisable() {
+    g_enabled.store(false, std::memory_order_release);
+    containers.clear();
+    samples.store(0, std::memory_order_release);
+}
