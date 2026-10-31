@@ -2,7 +2,7 @@
 
 ## Upstream synchronization
 
-Compatibility signatures, SDK offsets, and interaction-hook ABI are updated from [QYCottage/BedrockTools](https://github.com/QYCottage/BedrockTools) at `3de9a7d641c8222a9bf536d828449a27b58cd20a` (v1.5.8, Minecraft Bedrock `1.26.60.X`). The shader-color and selection-material offsets also incorporate the upstream 1.26.60 rendering fix from `c5bf5347fc8d`. Upstream modules and their overlay bridge are not included; Plus modules can be extended independently. Plus branding, resources, configuration migration, and build optimizations are retained. The upstream MIT notice is preserved in `LICENSE.upstream`; the Plus license remains in `LICENSE`.
+Compatibility signatures, SDK offsets, and interaction-hook ABI are updated from [QYCottage/BedrockTools](https://github.com/QYCottage/BedrockTools) at `3de9a7d641c8222a9bf536d828449a27b58cd20a` (v1.5.8, Minecraft Bedrock `1.26.60.X`). The shader-color and selection-material offsets also incorporate the upstream 1.26.60 rendering fix from `c5bf5347fc8d`. Upstream modules and their overlay bridge are not included, with one deliberate exception: the AutoGG feature is ported to a Plus module (see below). Plus modules can be extended independently. Plus branding, resources, configuration migration, and build optimizations are retained. The upstream MIT notice is preserved in `LICENSE.upstream`; the Plus license remains in `LICENSE`.
 
 Android builds are provided by the build workflow; host tests do not validate offsets or hooks against a running game.
 
@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 13 configurable modules
+- 14 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -27,7 +27,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **HUD:** Effect Display, Crosshair, Hotbar Slots, Inventory HUD, Armor
 
-**Player:** Custom Capes
+**Player:** Custom Capes, AutoGG
 
 **Misc:** Hit Sound, CommentKey, Command Hotkey
 
@@ -130,6 +130,15 @@ The **Custom Capes** module lets you wear any PNG as a classic cape.
 Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
 
 The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
+
+## AutoGG
+
+The **AutoGG** module sends a chat message for you once a match is over. It is a port of the upstream BedrockTools module and keeps the same configuration key, so a `ggMessage` value from an upstream config keeps working.
+
+- It watches the title, subtitle and chat/system packets the server already sends and recognizes the end-of-match screens of The Hive (win/loss titles, `Finished`, `Out of Time!`, Hiders/Seekers wins), Galaxite (`Is The ... Champion!`) and the vanilla `You won/lost the game!` / `Game Over!` lines. Nothing is detected locally, so no extra input or polling is involved.
+- **Gg Message** is the text that gets sent (default `gg`). An empty value keeps the module silent without turning it off, and replies are capped at 256 bytes.
+- The reply goes out as a normal chat `TextPacket`, exactly like typing it, and is sent at most once every 3 seconds. End screens usually deliver several packets at once (title, subtitle and a chat line), so the cooldown is what stops a burst of duplicate messages.
+- Toggling the module off stops all replies immediately; the packet handlers stay chained to the game's own handlers and never change what is drawn.
 
 ## Hit Sound
 
