@@ -21,13 +21,15 @@ int main() {
     SpatialGuiDiagnostics mod;mod.onInit();mod.setMasterEnabled(true);original=fakeOriginal;
     int controller=0;
     bedrocktools::events::ScreenStateEvent event{bedrocktools::events::ScreenKind::Container,bedrocktools::events::ScreenPhase::Opened,&controller};
+    for (int i=0;i<6;++i) renderHook(nullptr,nullptr);
+    assert(originalCalls==6 && hooksLogged==4 && eventsLogged==0 && samplesLogged==0);
     bedrocktools::events::bus().publish(event);
     hasContext=false; renderHook(nullptr,nullptr);
-    assert(originalCalls==1 && hooksLogged==1 && eventsLogged==1 && samplesLogged==0);
+    assert(originalCalls==7 && hooksLogged==5 && eventsLogged==1 && samplesLogged==0);
     hasContext=true;
     for (int i=0;i<12;++i) renderHook(nullptr,nullptr);
-    assert(originalCalls==13 && hooksLogged==4 && eventsLogged==1 && samplesLogged==8);
+    assert(originalCalls==19 && hooksLogged==8 && eventsLogged==1 && samplesLogged==8);
     event.phase=bedrocktools::events::ScreenPhase::Closed;bedrocktools::events::bus().publish(event);
-    renderHook(nullptr,nullptr);assert(originalCalls==14 && samplesLogged==8 && eventsLogged==2);
-    mod.setMasterEnabled(false);renderHook(nullptr,nullptr);assert(originalCalls==15 && samplesLogged==8 && hooksLogged==4);
+    renderHook(nullptr,nullptr);assert(originalCalls==20 && samplesLogged==8 && eventsLogged==2);
+    mod.setMasterEnabled(false);renderHook(nullptr,nullptr);assert(originalCalls==21 && samplesLogged==8 && hooksLogged==8);
 }

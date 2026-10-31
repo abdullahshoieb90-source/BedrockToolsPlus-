@@ -27,6 +27,9 @@ void observeScreen(bedrocktools::events::ScreenStateEvent& event) {
     if (event.phase == ScreenPhase::Opened) {
         containers.opened(event.controller);
         samples.store(0, std::memory_order_release);
+        // Render hooks may have exhausted their initial log budget on the HUD
+        // before the user opens a container. Reserve fresh samples per open.
+        hookSamples.store(0, std::memory_order_release);
     } else containers.closed(event.controller);
 #if defined(__ANDROID__)
     // Separate lifecycle observations from render samples: absence of a
