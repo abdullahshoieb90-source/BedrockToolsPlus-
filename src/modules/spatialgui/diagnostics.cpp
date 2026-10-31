@@ -17,6 +17,8 @@ Render original = nullptr;
 std::atomic<bool> g_enabled{false};
 bedrocktools::hooks::Handle g_hook = nullptr;
 std::atomic<unsigned> samples{0};
+std::atomic<unsigned> hookSamples{0};
+std::atomic<unsigned> eventSamples{0};
 bedrocktools::spatialgui::ContainerTracker containers;
 
 void observeScreen(bedrocktools::events::ScreenStateEvent& event) {
@@ -26,6 +28,15 @@ void observeScreen(bedrocktools::events::ScreenStateEvent& event) {
         containers.opened(event.controller);
         samples.store(0, std::memory_order_release);
     } else containers.closed(event.controller);
+#if defined(__ANDROID__)
+    // Separate lifecycle observations from render samples: absence of a
+    // sample alone cannot tell which hook or GL precondition is missing.
+    if (eventSamples.fetch_add(1, std::memory_order_relaxed) < 16)
+        __android_log_print(ANDROID_LOG_INFO, "BTP-SpatialDiag",
+                            "container event: %s controller_present=%d",
+                            event.phase == ScreenPhase::Opened ? "open" : "close",
+                            event.controller != nullptr);
+#endif
 }
 
 // The existing Android candidate signature is unique in the supplied
@@ -35,9 +46,15 @@ void observeScreen(bedrocktools::events::ScreenStateEvent& event) {
 // render targets, reads screen object fields, cancels input or draws overlays.
 void renderHook(void* view, void* context) {
 #if defined(__ANDROID__)
-    const bool shouldSample = g_enabled.load(std::memory_order_acquire) && containers.hasOpen() &&
-                              samples.fetch_add(1, std::memory_order_relaxed) < 8 &&
-                              eglGetCurrentContext() != EGL_NO_CONTEXT;
+    const bool active = g_enabled.load(std::memory_order_acquire);
+    const bool containerOpen = active && containers.hasOpen();
+    const bool haveContext = active && eglGetCurrentContext() != EGL_NO_CONTEXT;
+    if (active && hookSamples.fetch_add(1, std::memory_order_relaxed) < 4)
+        __android_log_print(ANDROID_LOG_INFO, "BTP-SpatialDiag",
+                            "screen hook called: container_open=%d egl_context=%d",
+                            containerOpen, haveContext);
+    const bool shouldSample = containerOpen && haveContext &&
+                              samples.fetch_add(1, std::memory_order_relaxed) < 8;
     GLint beforeDraw = 0, afterDraw = 0, viewport[4]{};
     if (shouldSample) {
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &beforeDraw);
@@ -75,6 +92,8 @@ void SpatialGuiDiagnostics::onInit() {
 void SpatialGuiDiagnostics::onEnable() {
     containers.clear();
     samples.store(0, std::memory_order_release);
+    hookSamples.store(0, std::memory_order_release);
+    eventSamples.store(0, std::memory_order_release);
     if (!g_hook && m_target)
         g_hook = bedrocktools::hooks::install(m_target, reinterpret_cast<void*>(&renderHook),
                                             reinterpret_cast<void**>(&original));
