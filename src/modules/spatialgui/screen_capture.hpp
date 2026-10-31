@@ -35,13 +35,14 @@ public:
         clearTransparent();
         // A throwing callback unwinds the binding and leaves m_ready false.
         if (!std::forward<Render>(render)()) return false;
+        if (!m_target.currentContextMatches()) return false;
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
         if (static_cast<GLuint>(draw) != m_target.framebuffer()) return false;
         if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) return false;
         m_ready = true;
         return true;
     }
-    GLuint texture() const { return m_ready ? m_target.texture() : 0; }
+    GLuint texture() const { return m_ready && m_target.currentContextMatches() ? m_target.texture() : 0; }
     int width() const { return m_ready ? m_target.width() : 0; }
     int height() const { return m_ready ? m_target.height() : 0; }
     bool release() {

@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <limits>
 using namespace bedrocktools::spatialgui;
+namespace fakeEgl { EGLDisplay display = reinterpret_cast<void*>(1); EGLContext context = reinterpret_cast<void*>(2); }
+EGLDisplay eglGetCurrentDisplay() {return fakeEgl::display;}
+EGLContext eglGetCurrentContext() {return fakeEgl::context;}
 namespace g {
 GLuint next=100, program=5, vao=6, active=2, tex[3]={7,8,9}, sampler=10;
 GLint blend[6]={11,12,13,14,15,16};
@@ -38,9 +41,14 @@ int main(){
  int errors=0; auto check=[&](bool b,const char* s){std::printf("%s %s\n",b?"ok":"FAIL",s);errors+=!b;};
  PanelCompositor panel; ClipQuad quad{{{-1,1,0,1},{1,1,0,1},{-1,-1,0,1},{1,-1,0,2}}};
  check(!panel.draw(2,quad),"uninitialized draw rejected");
+ fakeEgl::context=EGL_NO_CONTEXT; check(!panel.initialize(),"missing EGL context rejects initialization");
+ fakeEgl::context=reinterpret_cast<void*>(2);
  g::shaderOK=false; check(!panel.initialize(),"shader compile failure rejected");
  g::shaderOK=true;g::linkOK=false;check(!panel.initialize(),"program link failure rejected");
  g::linkOK=true;check(panel.initialize(),"compositor initialized");
+ fakeEgl::context=reinterpret_cast<void*>(3);
+ check(!panel.initialize() && !panel.draw(44,quad) && !panel.release(),"wrong EGL context cannot use or delete compositor");
+ fakeEgl::context=reinterpret_cast<void*>(2);
  auto bad=quad;bad[0].w=0;check(!panel.draw(2,bad) && g::draws==0,"invalid clip vertex rejected");
  g::enabled[GL_DEPTH_TEST]=1;g::enabled[GL_SCISSOR_TEST]=1;g::enabled[GL_RASTERIZER_DISCARD]=1;
  check(panel.draw(44,quad) && g::draws==1 && g::vertices[15]==2,"quad submitted with perspective w");

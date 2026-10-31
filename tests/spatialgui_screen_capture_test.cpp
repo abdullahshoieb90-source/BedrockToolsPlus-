@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstdio>
 using namespace bedrocktools::spatialgui;
+namespace fakeEgl { EGLDisplay display = reinterpret_cast<void*>(1); EGLContext context = reinterpret_cast<void*>(2); }
+EGLDisplay eglGetCurrentDisplay() {return fakeEgl::display;}
+EGLContext eglGetCurrentContext() {return fakeEgl::context;}
 namespace fake {
 GLuint next=1000, draw=17, read=18, rb=19, unpack=20, active=0, textures[4]={21,22,23,24};
 GLint viewport[4]={4,5,640,480};
@@ -59,6 +62,9 @@ int main() {
     bool ok=capture.capture(200,100,[&]{++calls; return fake::draw==fake::read && fake::viewport[2]==200 && clearstate::cleared && clearstate::scissor && !clearstate::mask[0] && clearstate::depth==.6f;});
     check(ok && calls==1 && capture.texture() && capture.width()==200 && capture.height()==100,"one renderer call produces capture");
     check(fake::draw==17 && fake::read==18 && fake::viewport[2]==640 && clearstate::color[3]==.5f && !clearstate::depthMask,"framebuffer, viewport and clear state restored");
+    fakeEgl::context=reinterpret_cast<void*>(3);
+    check(!capture.texture() && !capture.capture(200,100,[]{return true;}) && !capture.release(), "wrong context cannot expose or use capture");
+    fakeEgl::context=reinterpret_cast<void*>(2);
     ok=capture.capture(200,100,[&]{++calls;return false;});
     check(!ok && !capture.texture() && calls==2,"failed render hides previous texture");
     ok=capture.capture(200,100,[&]{glBindFramebuffer(GL_DRAW_FRAMEBUFFER,44);return true;});
@@ -70,6 +76,11 @@ int main() {
     check(ok && !nested && capture.texture(),"recursive capture is rejected without interfering with outer capture");
     try { capture.capture(200,100,[]{throw 1; return true;}); } catch(int) {}
     check(!capture.texture() && fake::draw==17 && fake::read==18,"exceptions invalidate texture and restore framebuffer");
+    ok=capture.capture(200,100,[&]{fakeEgl::context=reinterpret_cast<void*>(3); return true;});
+    check(!ok && !capture.texture(),"context changed by callback invalidates frame");
+    // Simulate EGL returning to the original context; fake GL is not a real
+    // per-context implementation, so restore its fixture bindings explicitly.
+    fakeEgl::context=reinterpret_cast<void*>(2); fake::draw=17; fake::read=18;
     capture.forgetAfterContextLoss(); check(!capture.texture(),"context loss invalidates frame");
     return errors?1:0;
 }

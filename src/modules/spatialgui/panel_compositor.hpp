@@ -1,6 +1,7 @@
 #pragma once
 
 #include "panel_projection.hpp"
+#include "egl_context.hpp"
 #include <GLES3/gl3.h>
 #include <array>
 #include <cmath>
@@ -22,6 +23,8 @@ public:
     ~PanelCompositor() = default;
 
     bool initialize() {
+        const auto current = EglContextIdentity::current();
+        if (!current.valid() || ((m_program || m_vao) && !m_owner.matchesCurrent())) return false;
         if (m_program && m_vao) return true;
         static constexpr const char* vs = R"(#version 300 es
 precision highp float;
@@ -60,7 +63,7 @@ void main() { outputColor = texture(image, texCoord); }
         GLuint vao = 0;
         glGenVertexArrays(1, &vao);
         if (!vao) { glDeleteProgram(program); return false; }
-        m_program = program; m_vao = vao; m_corners = corners; m_image = image;
+        m_program = program; m_vao = vao; m_corners = corners; m_image = image; m_owner = current;
         return true;
     }
 
@@ -69,7 +72,7 @@ void main() { outputColor = texture(image, texCoord); }
     // framebuffer (GL feedback is undefined). Disable this path until the capture's alpha convention has been
     // confirmed. No depth/occlusion is applied: this is an overlay compositor.
     bool draw(GLuint texture, const ClipQuad& quad) const {
-        if (!m_program || !m_vao || !texture) return false;
+        if (!m_program || !m_vao || !texture || !m_owner.matchesCurrent()) return false;
         for (const auto& v : quad)
             if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z) ||
                 !std::isfinite(v.w) || v.w <= 1e-6f) return false;
@@ -125,6 +128,8 @@ void main() { outputColor = texture(image, texCoord); }
     // Refuse to delete currently bound state, which would change the caller's
     // GL bindings. The owner must unbind it and call on the render thread.
     bool release() {
+        if (!m_program && !m_vao) return true;
+        if (!m_owner.matchesCurrent()) return false;
         GLint current=0, vao=0;
         glGetIntegerv(GL_CURRENT_PROGRAM, &current);
         glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
@@ -135,7 +140,7 @@ void main() { outputColor = texture(image, texCoord); }
         forgetAfterContextLoss();
         return true;
     }
-    void forgetAfterContextLoss() { m_program=0; m_vao=0; m_corners=-1; m_image=-1; }
+    void forgetAfterContextLoss() { m_program=0; m_vao=0; m_corners=-1; m_image=-1; m_owner={}; }
 private:
     static GLuint compile(GLenum type, const char* source) {
         GLuint shader=glCreateShader(type);
@@ -152,5 +157,6 @@ private:
     }
     GLuint m_program=0, m_vao=0;
     GLint m_corners=-1, m_image=-1;
+    EglContextIdentity m_owner{};
 };
 }

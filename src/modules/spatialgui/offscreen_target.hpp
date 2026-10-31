@@ -1,5 +1,6 @@
 #pragma once
 
+#include "egl_context.hpp"
 #include <GLES3/gl3.h>
 
 // Render-thread only. The caller must use a current GLES 3 context and must
@@ -19,11 +20,14 @@ public:
     GLuint framebuffer() const { return m_framebuffer; }
     int width() const { return m_width; }
     int height() const { return m_height; }
+    bool currentContextMatches() const { return m_owner.matchesCurrent(); }
 
     // Transactional resize: on failure the old target remains usable. Refuse to
     // replace a currently bound resource because deleting it would change the
     // caller's GL bindings behind its back.
     bool resize(int width, int height) {
+        const auto current = EglContextIdentity::current();
+        if (!current.valid() || (m_framebuffer && !m_owner.matchesCurrent())) return false;
         if (width <= 0 || height <= 0) return false;
         GLint maxTexture = 0, maxRenderbuffer = 0;
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
@@ -73,13 +77,15 @@ public:
         }
         destroyObjects();
         m_framebuffer = fbo; m_texture = color; m_depth = depth;
-        m_width = width; m_height = height;
+        m_width = width; m_height = height; m_owner = current;
         return true;
     }
 
     // Must not be called while one of these objects is bound. Returns false
     // rather than silently changing game state in that case.
     bool release() {
+        if (!m_framebuffer && !m_texture && !m_depth) return true;
+        if (!m_owner.matchesCurrent()) return false;
         GLint draw = 0, read = 0, texture = 0, renderbuffer = 0;
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
@@ -94,7 +100,7 @@ public:
 
     // After context loss old names no longer refer to usable resources. Do not
     // issue GL deletes in a newly created context, where names may be reused.
-    void forgetAfterContextLoss() { m_framebuffer = m_texture = m_depth = 0; m_width = m_height = 0; }
+    void forgetAfterContextLoss() { m_framebuffer = m_texture = m_depth = 0; m_width = m_height = 0; m_owner = {}; }
 
 private:
     static bool textureBoundOnAnyUnit(GLuint name) {
@@ -119,6 +125,7 @@ private:
     }
     GLuint m_framebuffer = 0, m_texture = 0, m_depth = 0;
     int m_width = 0, m_height = 0;
+    EglContextIdentity m_owner{};
 };
 
 // This scope changes only framebuffer bindings and viewport; the caller must
@@ -126,7 +133,8 @@ private:
 class ScopedTargetBinding {
 public:
     explicit ScopedTargetBinding(const OffscreenTarget& target) {
-        if (!target.framebuffer()) return;
+        if (!target.framebuffer() || !target.currentContextMatches()) return;
+        m_context = EglContextIdentity::current();
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &m_draw);
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &m_read);
         glGetIntegerv(GL_VIEWPORT, m_viewport);
@@ -137,7 +145,7 @@ public:
     ScopedTargetBinding(const ScopedTargetBinding&) = delete;
     ScopedTargetBinding& operator=(const ScopedTargetBinding&) = delete;
     ~ScopedTargetBinding() {
-        if (!m_active) return;
+        if (!m_active || !m_context.matchesCurrent()) return;
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(m_draw));
         glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(m_read));
         glViewport(m_viewport[0], m_viewport[1], m_viewport[2], m_viewport[3]);
@@ -146,5 +154,6 @@ public:
 private:
     GLint m_draw = 0, m_read = 0, m_viewport[4]{};
     bool m_active = false;
+    EglContextIdentity m_context{};
 };
 } // namespace bedrocktools::spatialgui

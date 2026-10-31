@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstdio>
 using namespace bedrocktools::spatialgui;
+namespace fakeEgl { EGLDisplay display = reinterpret_cast<void*>(1); EGLContext context = reinterpret_cast<void*>(2); }
+EGLDisplay eglGetCurrentDisplay() {return fakeEgl::display;}
+EGLContext eglGetCurrentContext() {return fakeEgl::context;}
 namespace fake {
 GLuint next=1000, draw=17, read=18, rb=19, unpack=20, active=0, textures[4]={21,22,23,24};
 GLint viewport[4]={4,5,640,480};
@@ -41,9 +44,19 @@ int main() {
     int failures=0;
     auto check=[&](bool ok,const char* label){std::printf("%s %s\n",ok?"ok":"FAIL",label); failures+=!ok;};
     OffscreenTarget target;
+    fakeEgl::context = EGL_NO_CONTEXT;
+    check(!target.resize(200,100), "missing EGL context rejects allocation");
+    fakeEgl::context = reinterpret_cast<void*>(2);
     check(!target.resize(0, 100) && !target.resize(2000,100), "invalid dimensions rejected");
     check(target.resize(200,100), "target created");
     auto fbo=target.framebuffer(), tex=target.texture();
+    fakeEgl::context = reinterpret_cast<void*>(3);
+    check(!target.resize(200,100) && !target.release(), "different EGL context cannot reuse or delete target");
+    { ScopedTargetBinding wrong(target); check(!wrong, "wrong EGL context cannot bind target"); }
+    fakeEgl::context = reinterpret_cast<void*>(2);
+    fakeEgl::display = reinterpret_cast<void*>(4);
+    check(!target.release(), "different EGL display cannot delete target");
+    fakeEgl::display = reinterpret_cast<void*>(1);
     check(fbo && tex && target.width()==200 && target.height()==100, "target properties");
     check(fake::draw==17 && fake::read==18 && fake::textures[0]==21 && fake::rb==19 && fake::unpack==20 && fake::unpackWasZero, "bindings restored and pixel buffer disabled during allocation");
     {
