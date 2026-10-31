@@ -26,6 +26,7 @@
 #include <vector>
 
 // Real declarations first, then the stubs the module links against.
+#include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
 #include "core/GameHooks.hpp"
@@ -123,6 +124,16 @@ void* clientInstance() {
 }
 } // namespace bedrocktools::core::gamehooks
 
+// The production build defines the bus in src/core/events/Events.cpp; the host
+// test provides its own instance so the module's event subscriptions and the
+// tests below share it without linking the game runtime.
+namespace bedrocktools::events {
+EventBus& bus() {
+    static EventBus instance;
+    return instance;
+}
+} // namespace bedrocktools::events
+
 // Module under test.
 #include "modules/player/autogg.cpp"
 
@@ -172,6 +183,72 @@ void makeTextPacket(TestPacket& packet, std::uint32_t variant, const std::string
 const char* kWonTitle = "\xC2\xA7" "f\xC2\xA7" "aYou won the game!";
 const char* kLostChat = "You lost the game!";
 const char* kHiveChat = "\xC2\xA7" "a has won the game!";
+
+// Minimal in-memory actor used to drive the kill/death channels. The synced
+// data wrapper at Actor::mEntityData points at a two-entry item array whose
+// health slot (data id 1) is writable, and the name slot holds a real
+// std::string so the kill reply can read the victim's name.
+class FakeActor {
+public:
+    FakeActor() {
+        m_items.assign(O::ActorDataIds::Health + 1, nullptr);
+        m_items[O::ActorDataIds::Health] = m_healthItem;
+        m_component[0] = m_items.data();
+        m_component[1] = m_items.data() + m_items.size();
+
+        *reinterpret_cast<void**>(m_storage + O::Actor::mEntityData) = m_component;
+        *reinterpret_cast<int*>(m_storage + O::Actor::mHurtTime) = 0;
+        new (m_storage + O::Player::mName) std::string("Victim");
+        setPlayer(true);
+        setHealth(20.0f);
+    }
+
+    ~FakeActor() {
+        reinterpret_cast<std::string*>(m_storage + O::Player::mName)->~basic_string();
+    }
+
+    FakeActor(const FakeActor&) = delete;
+    FakeActor& operator=(const FakeActor&) = delete;
+
+    bedrocktools::sdk::Actor* actor() {
+        return reinterpret_cast<bedrocktools::sdk::Actor*>(m_storage);
+    }
+    bedrocktools::sdk::Player* player() {
+        return reinterpret_cast<bedrocktools::sdk::Player*>(m_storage);
+    }
+
+    void setPlayer(bool player) {
+        *reinterpret_cast<std::uint32_t*>(m_storage + O::Actor::mCategories) =
+            player ? O::ActorCategories::IsPlayer : O::ActorCategories::IsMob;
+    }
+
+    void setHealth(float value) {
+        writeHeader(O::DataItem::FloatType);
+        *reinterpret_cast<float*>(m_healthItem + O::DataItem::mValue) = value;
+    }
+
+    void setHealthInt(int value) {
+        writeHeader(O::DataItem::IntType);
+        *reinterpret_cast<int*>(m_healthItem + O::DataItem::mValue) = value;
+    }
+
+    void removeHealthItem() {
+        m_items[O::ActorDataIds::Health] = nullptr;
+    }
+
+private:
+    void writeHeader(std::uint8_t type) {
+        *reinterpret_cast<std::uint8_t*>(m_healthItem + O::DataItem::mType) = type;
+        *reinterpret_cast<std::uint16_t*>(m_healthItem + O::DataItem::mId) =
+            static_cast<std::uint16_t>(O::ActorDataIds::Health);
+    }
+
+    alignas(16) unsigned char m_storage[0xC00]{};
+    alignas(16) unsigned char m_healthItem[0x18]{};
+    std::vector<void*> m_items;
+    void* m_component[2]{};
+};
+
 
 } // namespace
 
@@ -285,6 +362,139 @@ int main() {
     makeTitlePacket(emptyTitle, 0, kWonTitle);
     titleDetour(nullptr, nullptr, emptyTitle.raw());
     check(g_sent.size() == 3, "empty reply sends nothing");
+
+
+    // ------------------------------------------------------------------
+    // Kill / death reaction channels
+    // ------------------------------------------------------------------
+    nlohmann::json reactions;
+    module.saveConfig(reactions);
+    check(reactions["m_killMessage"].get<bool>() == false,
+          "kill messages are off by default");
+    check(reactions["m_deathMessage"].get<bool>() == false,
+          "death messages are off by default");
+    check(reactions["killMessageText"].get<std::string>() == "gg",
+          "default kill reply is gg");
+    check(reactions["deathMessageText"].get<std::string>() == "F",
+          "default death reply is F");
+    check(reactions["killPlayersOnly"].get<bool>() == true,
+          "players-only defaults to on");
+
+    auto reactivate = [&module] {
+        module.setMasterEnabled(false);
+        module.setMasterEnabled(true);
+    };
+
+    reactions["ggMessage"] = std::string("gg");
+    reactions["m_killMessage"] = true;
+    reactions["killMessageText"] = std::string("gg {name}");
+    reactions["killPlayersOnly"] = true;
+    reactions["m_deathMessage"] = false;
+    module.loadConfig(reactions);
+    reactivate();
+
+    FakeActor localPlayer;
+    bedrocktools::events::LocalPlayerTickEvent tick{};
+    tick.player = localPlayer.player();
+
+    // A hit alone must not produce a reply: the victim has to die inside the
+    // confirmation window.
+    const std::size_t beforeHit = g_sent.size();
+    FakeActor victim;
+    bedrocktools::events::AttackEvent hit(
+        bedrocktools::events::AttackKind::GameMode, nullptr, victim.actor(), nullptr, nullptr);
+    bedrocktools::events::bus().publish(hit);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeHit, "a hit that does not kill stays silent");
+
+    victim.setHealth(0.0f);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeHit + 1, "confirmed kill sends one reply");
+    check(g_sent.size() == beforeHit + 1 && g_sent.back().message == "gg Victim",
+          "kill reply substitutes the victim name");
+
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeHit + 1, "a confirmed kill is reported once");
+
+    // players-only: a mob reaching zero health is not a player kill.
+    reactivate();
+    const std::size_t beforeMob = g_sent.size();
+    FakeActor mob;
+    mob.setPlayer(false);
+    bedrocktools::events::AttackEvent mobHit(
+        bedrocktools::events::AttackKind::GameMode, nullptr, mob.actor(), nullptr, nullptr);
+    bedrocktools::events::bus().publish(mobHit);
+    mob.setHealth(0.0f);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeMob, "mob kills are ignored while players-only is on");
+
+    // With players-only off the same mob kill is reported.
+    reactions["killPlayersOnly"] = false;
+    reactions["killMessageText"] = std::string("gg");
+    module.loadConfig(reactions);
+    reactivate();
+    FakeActor mob2;
+    mob2.setPlayer(false);
+    bedrocktools::events::AttackEvent mobHit2(
+        bedrocktools::events::AttackKind::GameMode, nullptr, mob2.actor(), nullptr, nullptr);
+    bedrocktools::events::bus().publish(mobHit2);
+    mob2.setHealth(0.0f);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeMob + 1, "players-only off allows mob kills");
+
+    // A victim whose synced health is unavailable is dropped, never guessed.
+    reactivate();
+    const std::size_t beforeUnreadable = g_sent.size();
+    FakeActor unreadable;
+    unreadable.removeHealthItem();
+    bedrocktools::events::AttackEvent unreadableHit(
+        bedrocktools::events::AttackKind::GameMode, nullptr, unreadable.actor(), nullptr, nullptr);
+    bedrocktools::events::bus().publish(unreadableHit);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeUnreadable, "unreadable victim health is ignored");
+
+    // Death channel: one reply per death, re-armed by the respawn.
+    reactions["m_killMessage"] = false;
+    reactions["m_deathMessage"] = true;
+    reactions["deathMessageText"] = std::string("F");
+    module.loadConfig(reactions);
+    reactivate();
+
+    localPlayer.setHealth(20.0f);
+    bedrocktools::events::bus().publish(tick);
+    const std::size_t beforeDeath = g_sent.size();
+    localPlayer.setHealth(0.0f);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeDeath + 1, "death sends the configured reply");
+    check(g_sent.size() == beforeDeath + 1 && g_sent.back().message == "F",
+          "death reply text is used");
+
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeDeath + 1, "one reply per death");
+
+    // Servers that sync health as an int are handled too.
+    localPlayer.setHealthInt(20);
+    bedrocktools::events::bus().publish(tick);
+    reactivate();
+    localPlayer.setHealthInt(0);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeDeath + 2, "int-typed synced health is read");
+
+    // A death right after the match-end reply is swallowed: the GG already
+    // covers the moment.
+    module.loadConfig(reactions);
+    reactivate();
+    TestPacket finalTitle;
+    makeTitlePacket(finalTitle, 0, kWonTitle);
+    titleDetour(nullptr, nullptr, finalTitle.raw());
+    const std::size_t afterGg = g_sent.size();
+    check(g_sent.size() == beforeDeath + 3, "end title still replies");
+
+    localPlayer.setHealth(20.0f);
+    bedrocktools::events::bus().publish(tick);
+    localPlayer.setHealth(0.0f);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == afterGg, "a death right after the GG stays silent");
 
     std::printf(g_failures == 0 ? "ALL TESTS PASSED\n" : "%d TEST(S) FAILED\n", g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -138,6 +138,10 @@ The **AutoGG** module sends a chat message for you once a match is over. It is a
 - It watches the title, subtitle and chat/system packets the server already sends and recognizes the end-of-match screens of The Hive (win/loss titles, `Finished`, `Out of Time!`, Hiders/Seekers wins), Galaxite (`Is The ... Champion!`) and the vanilla `You won/lost the game!` / `Game Over!` lines. Nothing is detected locally, so no extra input or polling is involved.
 - **Gg Message** is the text that gets sent (default `gg`). An empty value keeps the module silent without turning it off, and replies are capped at 256 bytes.
 - The reply goes out as a normal chat `TextPacket`, exactly like typing it, and is sent at most once every 3 seconds. End screens usually deliver several packets at once (title, subtitle and a chat line), so the cooldown is what stops a burst of duplicate messages.
+- **Kill Message** (off by default) replies when a player you hit dies: the victim's synced health is watched for 2 seconds after the hit, and a drop to zero counts as the kill. **Kill Message Text** (default `gg`) supports `{name}`, which is replaced with the victim's name. **Kill Players Only** (on by default) ignores mobs, so a mob farm cannot flood the chat.
+- **Death Message** (off by default) replies once when your own health reaches zero and re-arms on respawn. **Death Message Text** defaults to `F`.
+- Kill and death replies share a 3 second cooldown, and any reaction that would fire within 2 seconds of a detected match end is dropped because the GG reply already covers that moment. Both channels are off until you enable them.
+- Kill detection is client-side and best-effort: it relies on the victim's health being synced to your game. On servers that hide health the kill reply simply never fires; it is never guessed from a pointer or a chat line. Death detection uses the same synced health of your own player.
 - Toggling the module off stops all replies immediately; the packet handlers stay chained to the game's own handlers and never change what is drawn.
 
 ## Hit Sound
