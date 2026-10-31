@@ -12,6 +12,7 @@ public:
     void onDisable() override;
 private:
     bedrocktools::events::Subscription m_screenSubscription = 0;
+    bedrocktools::events::Subscription m_frameSubscription = 0;
     void* m_target = nullptr;
     bool m_installed = false;
 };

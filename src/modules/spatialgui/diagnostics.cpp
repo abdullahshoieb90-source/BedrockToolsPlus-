@@ -19,6 +19,7 @@ bedrocktools::hooks::Handle g_hook = nullptr;
 std::atomic<unsigned> samples{0};
 std::atomic<unsigned> hookSamples{0};
 std::atomic<unsigned> eventSamples{0};
+std::atomic<unsigned> frameSamples{0};
 bedrocktools::spatialgui::ContainerTracker containers;
 
 void observeScreen(bedrocktools::events::ScreenStateEvent& event) {
@@ -30,6 +31,7 @@ void observeScreen(bedrocktools::events::ScreenStateEvent& event) {
         // Render hooks may have exhausted their initial log budget on the HUD
         // before the user opens a container. Reserve fresh samples per open.
         hookSamples.store(0, std::memory_order_release);
+        frameSamples.store(0, std::memory_order_release);
     } else containers.closed(event.controller);
 #if defined(__ANDROID__)
     // Separate lifecycle observations from render samples: absence of a
@@ -39,6 +41,19 @@ void observeScreen(bedrocktools::events::ScreenStateEvent& event) {
                             "container event: %s controller_present=%d",
                             event.phase == ScreenPhase::Opened ? "open" : "close",
                             event.controller != nullptr);
+#endif
+}
+
+// FrameEvent is published by the existing eglSwapBuffers hook, only when it
+// has an EGL context. Its absence does not prove which graphics backend is in
+// use: the hook may be unavailable or the device may not use eglSwapBuffers.
+void observeFrame(bedrocktools::events::FrameEvent&) {
+#if defined(__ANDROID__)
+    if (!g_enabled.load(std::memory_order_acquire)) return;
+    if (frameSamples.fetch_add(1, std::memory_order_relaxed) < 2)
+        __android_log_print(ANDROID_LOG_INFO, "BTP-SpatialDiag",
+                            "egl swap frame: container_open=%d egl_context=%d",
+                            containers.hasOpen(), eglGetCurrentContext() != EGL_NO_CONTEXT);
 #endif
 }
 
@@ -85,18 +100,22 @@ SpatialGuiDiagnostics::SpatialGuiDiagnostics()
 SpatialGuiDiagnostics::~SpatialGuiDiagnostics() {
     onDisable();
     bedrocktools::events::bus().unsubscribe(m_screenSubscription);
+    bedrocktools::events::bus().unsubscribe(m_frameSubscription);
 }
 void SpatialGuiDiagnostics::onInit() {
     using bedrocktools::memory::SignatureId;
     m_target = reinterpret_cast<void*>(bedrocktools::memory::resolve(SignatureId::ScreenViewRender));
     if (!m_screenSubscription)
         m_screenSubscription = bedrocktools::events::bus().subscribe<bedrocktools::events::ScreenStateEvent>(observeScreen);
+    if (!m_frameSubscription)
+        m_frameSubscription = bedrocktools::events::bus().subscribe<bedrocktools::events::FrameEvent>(observeFrame);
 }
 void SpatialGuiDiagnostics::onEnable() {
     containers.clear();
     samples.store(0, std::memory_order_release);
     hookSamples.store(0, std::memory_order_release);
     eventSamples.store(0, std::memory_order_release);
+    frameSamples.store(0, std::memory_order_release);
     if (!g_hook && m_target)
         g_hook = bedrocktools::hooks::install(m_target, reinterpret_cast<void*>(&renderHook),
                                             reinterpret_cast<void**>(&original));
