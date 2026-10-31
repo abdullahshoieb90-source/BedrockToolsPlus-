@@ -5,6 +5,7 @@
 #include "launcher/ModuleMenu.hpp"
 #include "modules/ModuleRegistry.hpp"
 #include "core/memory/Hooks.hpp"
+#include "core/input/TouchDispatch.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include <pl/Input.hpp>
@@ -99,11 +100,10 @@ void Runtime::wireEvents() {
         return ModuleRegistry::get().onKeyEvent(input.keyCode, input.isKeyDown);
     });
     pl::input::registerTouchCallback([](const pl::input::TouchEvent& input) {
-        // Android MotionEvent actions: 0 = DOWN, 1 = UP, 3 = CANCEL.
-        // Move/pointer-shift events are ignored; modules only track press state.
-        if (input.action != 0 && input.action != 1 && input.action != 3) return false;
-        const bool isDown = input.action == 0;
-        return ModuleRegistry::get().onTouchEvent(input.x, input.y, isDown);
+        return dispatchTouch(bus(), input.action, input.pointerId, input.x, input.y,
+            [](float x, float y, bool down) {
+                return ModuleRegistry::get().onTouchEvent(x, y, down);
+            });
     });
 }
 

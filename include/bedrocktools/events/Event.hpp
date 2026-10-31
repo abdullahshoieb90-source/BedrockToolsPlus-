@@ -13,7 +13,8 @@ enum class EventType : std::uint32_t {
     ScreenState,
     LocalPlayerPreTick,
     GameModeAction,
-    ContainerSlotSelected
+    ContainerSlotSelected,
+    TouchInput
 };
 
 enum class EventPriority : std::int32_t {

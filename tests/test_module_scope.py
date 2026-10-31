@@ -16,7 +16,7 @@ class ModuleScopeTest(unittest.TestCase):
         registered = re.findall(r"registry\.emplace<(\w+)>\(\)", registry)
         self.assertEqual(registered, [
             "HitSoundModule", "EffectDisplayModule", "HitboxModule",
-            "BlockOutlineModule", "CustomCapesModule", "CommentKey",
+            "BlockOutlineModule", "SpatialGuiDiagnostics", "CustomCapesModule", "CommentKey",
             "CommandHotkeyModule", "CrosshairModule", "WingsModule",
             "HotbarSlotsModule", "InventoryHudModule", "ArmorModule",
             "JumpCircleModule", "DamageCircleModule",
@@ -34,7 +34,8 @@ class ModuleScopeTest(unittest.TestCase):
             "hud/crosshair.cpp", "hud/hotbarslots.cpp", "hud/huditems.cpp",
             "hud/inventoryhud.cpp", "hud/armorhud.cpp", "visual/hitbox.cpp",
             "visual/blockoutline.cpp", "visual/wings.cpp", "visual/jumpcircle.cpp",
-            "visual/damagecircle.cpp",
+            "visual/damagecircle.cpp", "spatialgui/android_touch.cpp",
+            "spatialgui/diagnostics.cpp",
             "player/customcapes.cpp",
         })
         self.assertFalse((ROOT / "src/launcher/OverlayBridge.cpp").exists())
