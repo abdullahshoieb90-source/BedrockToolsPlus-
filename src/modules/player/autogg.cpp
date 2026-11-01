@@ -60,6 +60,16 @@ constexpr int kSubtitleType = 1;
 constexpr std::size_t kMaxVictimNameBytes = 32;
 // Sanity bound on the synced-data item count we are willing to walk.
 constexpr std::size_t kMaxDataItems = 256;
+// SynchedActorData keeps two 192-bit bookkeeping masks right after the item
+// vector: "dirty" at +0x18 and "present" at +0x30 (the upstream TNT Timer
+// writes both when it injects an item). EnsureIndex can allocate a default
+// item for an id the server never sent; its present bit stays clear and its
+// value reads as zero, which must never be mistaken for a dead player.
+constexpr std::size_t kSynchedPresentMask = 0x30;
+constexpr std::size_t kSynchedMaskBits = 192;
+// Anything above this is not a plausible health value (the game caps health
+// well below it), so the read is treated as garbage.
+constexpr float kMaxPlausibleHealth = 2048.0f;
 
 // End-screen strings, including the section-sign color codes the game embeds.
 // The escapes are split ("\xC2\xA7" "f...") so the hex escape never swallows
@@ -184,6 +194,13 @@ bool readHealth(Actor* actor, float& health) {
     const auto count = static_cast<std::size_t>(end - begin);
     constexpr std::size_t id = Offsets::ActorDataIds::Health;
     if (count <= id || count > kMaxDataItems) return false;
+    if (id >= kSynchedMaskBits) return false;
+
+    // Only trust values the server actually synced for this id.
+    const auto present = *reinterpret_cast<const std::uint64_t*>(
+        reinterpret_cast<std::uintptr_t>(component) + kSynchedPresentMask +
+        (id / 64) * sizeof(std::uint64_t));
+    if ((present & (std::uint64_t{1} << (id % 64))) == 0) return false;
 
     void* item = begin[id];
     if (!item) return false;
@@ -193,16 +210,19 @@ bool readHealth(Actor* actor, float& health) {
     const auto itemId = *reinterpret_cast<const std::uint16_t*>(address + Offsets::DataItem::mId);
     if (itemId != id) return false;
 
+    float value = 0.0f;
     if (type == Offsets::DataItem::IntType) {
-        health = static_cast<float>(*reinterpret_cast<const int*>(
+        value = static_cast<float>(*reinterpret_cast<const int*>(
             address + Offsets::DataItem::mValue));
-        return true;
+    } else if (type == Offsets::DataItem::FloatType) {
+        value = *reinterpret_cast<const float*>(address + Offsets::DataItem::mValue);
+    } else {
+        return false;
     }
-    if (type == Offsets::DataItem::FloatType) {
-        health = *reinterpret_cast<const float*>(address + Offsets::DataItem::mValue);
-        return true;
-    }
-    return false;
+
+    if (value < 0.0f || value > kMaxPlausibleHealth) return false;
+    health = value;
+    return true;
 }
 
 bool hasString(const nlohmann::json& j, const char* key) {
@@ -322,16 +342,26 @@ void AutoGG::onAttack(Actor* target) {
     if (!settings.killEnabled) return;
     if (settings.playersOnly && !target->hasCategory(Offsets::ActorCategories::IsPlayer)) return;
 
+    // Health at swing time is the only pre-kill sample we get: the attack hook
+    // runs before the original attack. A readable zero means the victim was
+    // already dead, so this hit can never be its kill; a readable positive
+    // value proves the victim was alive when we hit it.
+    float baseline = 0.0f;
+    const bool baselineReadable = readHealth(target, baseline);
+    if (baselineReadable && baseline <= 0.0f) return;
+    const bool sawAlive = baselineReadable && baseline > 0.0f;
+
     const auto deadline = std::chrono::steady_clock::now() + kKillConfirmWindow;
     for (auto& pending : m_pendingKills) {
         if (pending.target == target) {
             pending.deadline = deadline;
+            pending.sawAlive = pending.sawAlive || sawAlive;
             return;
         }
     }
 
     if (m_pendingKills.size() >= MaxPendingKills) m_pendingKills.erase(m_pendingKills.begin());
-    m_pendingKills.push_back(PendingKill{target, deadline});
+    m_pendingKills.push_back(PendingKill{target, deadline, sawAlive});
 }
 
 void AutoGG::onLocalPlayerTick(Player* player) {
@@ -390,7 +420,16 @@ void AutoGG::onLocalPlayerTick(Player* player) {
             continue;
         }
         if (victimHealth > 0.0f) {
+            it->sawAlive = true;
             ++it;
+            continue;
+        }
+
+        // Never report a victim we never saw alive: that is the signature of a
+        // server that does not sync player health, where the data item simply
+        // reads zero for every player.
+        if (!it->sawAlive) {
+            it = m_pendingKills.erase(it);
             continue;
         }
 

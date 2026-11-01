@@ -193,14 +193,18 @@ public:
     FakeActor() {
         m_items.assign(O::ActorDataIds::Health + 1, nullptr);
         m_items[O::ActorDataIds::Health] = m_healthItem;
-        m_component[0] = m_items.data();
-        m_component[1] = m_items.data() + m_items.size();
+        // SynchedActorData layout the module walks: item vector begin/end at
+        // +0x00/+0x08, then the dirty and present bit masks.
+        *reinterpret_cast<void**>(m_component) = m_items.data();
+        *reinterpret_cast<void**>(m_component + sizeof(void*)) =
+            m_items.data() + m_items.size();
 
         *reinterpret_cast<void**>(m_storage + O::Actor::mEntityData) = m_component;
         *reinterpret_cast<int*>(m_storage + O::Actor::mHurtTime) = 0;
         new (m_storage + O::Player::mName) std::string("Victim");
         setPlayer(true);
         setHealth(20.0f);
+        setHealthPresent(true);
     }
 
     ~FakeActor() {
@@ -236,6 +240,23 @@ public:
         m_items[O::ActorDataIds::Health] = nullptr;
     }
 
+    void restoreHealthItem() {
+        m_items[O::ActorDataIds::Health] = m_healthItem;
+    }
+
+    // Mirrors the present bit SynchedActorData keeps for every data id. A
+    // server that never sends HEALTH leaves it clear even though the item
+    // exists with a default value of zero.
+    void setHealthPresent(bool present) {
+        auto* word = reinterpret_cast<std::uint64_t*>(m_component + kSynchedPresentMask);
+        const auto bit = std::uint64_t{1} << (O::ActorDataIds::Health % 64);
+        if (present) {
+            *word |= bit;
+        } else {
+            *word &= ~bit;
+        }
+    }
+
 private:
     void writeHeader(std::uint8_t type) {
         *reinterpret_cast<std::uint8_t*>(m_healthItem + O::DataItem::mType) = type;
@@ -246,7 +267,7 @@ private:
     alignas(16) unsigned char m_storage[0xC00]{};
     alignas(16) unsigned char m_healthItem[0x18]{};
     std::vector<void*> m_items;
-    void* m_component[2]{};
+    alignas(16) unsigned char m_component[0x48]{};
 };
 
 
@@ -415,6 +436,47 @@ int main() {
 
     bedrocktools::events::bus().publish(tick);
     check(g_sent.size() == beforeHit + 1, "a confirmed kill is reported once");
+
+    // A hit on an already dead actor is never reported as a kill.
+    reactivate();
+    const std::size_t beforeCorpse = g_sent.size();
+    FakeActor corpse;
+    corpse.setHealth(0.0f);
+    bedrocktools::events::AttackEvent corpseHit(
+        bedrocktools::events::AttackKind::GameMode, nullptr, corpse.actor(), nullptr, nullptr);
+    bedrocktools::events::bus().publish(corpseHit);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeCorpse, "a hit on an already dead player is not a kill");
+
+    // Servers that never sync HEALTH: the item exists but its present bit is
+    // clear and it reads as zero, which must not be treated as a kill.
+    const std::size_t beforeUnsynced = g_sent.size();
+    FakeActor unsynced;
+    unsynced.setHealthPresent(false);
+    bedrocktools::events::AttackEvent unsyncedHit(
+        bedrocktools::events::AttackKind::GameMode, nullptr, unsynced.actor(), nullptr, nullptr);
+    bedrocktools::events::bus().publish(unsyncedHit);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeUnsynced, "unsynced health defaults are ignored");
+
+    // But a victim whose health only becomes readable after the swing still
+    // counts once it was seen alive and then reaches zero.
+    reactivate();
+    const std::size_t beforeLate = g_sent.size();
+    FakeActor lateVictim;
+    lateVictim.removeHealthItem();
+    bedrocktools::events::AttackEvent lateHit(
+        bedrocktools::events::AttackKind::GameMode, nullptr, lateVictim.actor(), nullptr, nullptr);
+    bedrocktools::events::bus().publish(lateHit);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeLate, "no reply while the victim health is unreadable");
+
+    lateVictim.restoreHealthItem();
+    bedrocktools::events::bus().publish(tick);
+    lateVictim.setHealth(0.0f);
+    bedrocktools::events::bus().publish(tick);
+    check(g_sent.size() == beforeLate + 1,
+          "a victim first seen alive then dead counts as a kill");
 
     // players-only: a mob reaching zero health is not a player kill.
     reactivate();

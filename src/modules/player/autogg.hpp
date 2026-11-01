@@ -53,10 +53,14 @@ public:
 
 private:
     // A hit whose victim is watched for a short window; a kill is confirmed
-    // when the victim's synced health reaches zero inside that window.
+    // when the victim's synced health reaches zero inside that window. A reply
+    // is only ever sent for a victim we saw alive first: an actor whose health
+    // data merely defaults to zero (never synced by the server) must not be
+    // reported as a kill.
     struct PendingKill {
         bedrocktools::sdk::Actor* target = nullptr;
         std::chrono::steady_clock::time_point deadline{};
+        bool sawAlive = false;
     };
 
     // Consistent snapshot of the reaction settings for one game-thread pass.
