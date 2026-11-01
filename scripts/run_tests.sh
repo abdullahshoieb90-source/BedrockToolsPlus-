@@ -62,6 +62,12 @@ for source in "${root}"/tests/*_test.cpp; do
                 skip="preloader/nlohmann_json headers (set PRE_LOADER_INCLUDE and JSON_INCLUDE)"
             fi
             ;;
+        autogg_test)
+            # Includes the production module. JSON comes from the host fake and
+            # the hook fake records the network detours so the test can feed
+            # title/text packets through them.
+            extra+=(-I "${root}/tests/autogg_fakepl" -I "${root}/tests/fakejson")
+            ;;
         crosshair_test)
             # This test owns its pl::modmenu / pl::memory stubs, so it only
             # needs the API type declarations plus the host JSON/JNI fakes; a
