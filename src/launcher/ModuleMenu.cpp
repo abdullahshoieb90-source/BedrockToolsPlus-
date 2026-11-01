@@ -39,14 +39,6 @@ static const ExplicitDependency kExplicitDependencies[] = {
     // Effect Display: the potion-icon size only matters while the icons are
     // shown at all.
     {"m_iconScale", "m_showIcons"},
-
-    // AutoGG: the reaction texts and the players-only switch are owned by the
-    // kill toggle, but their keys do not share its prefix.
-    {"killMessageText", "m_killMessage"},
-    {"killPlayersOnly", "m_killMessage"},
-
-    // AutoGG: the death text belongs to the death toggle.
-    {"deathMessageText", "m_deathMessage"},
 };
 
 static const char* explicitParentFor(const std::string& key) {

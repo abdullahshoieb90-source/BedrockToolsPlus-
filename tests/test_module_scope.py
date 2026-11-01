@@ -1,8 +1,5 @@
 """Guard the Plus module scope against accidentally reintroducing upstream modules.
 
-AutoGG is the one upstream feature that was ported on purpose; every other
-upstream module must stay out of the Plus build.
-
 Run with: python3 -m unittest discover -s tests -p 'test_*.py'
 """
 import json
@@ -22,7 +19,7 @@ class ModuleScopeTest(unittest.TestCase):
             "BlockOutlineModule", "CustomCapesModule", "CommentKey",
             "CommandHotkeyModule", "CrosshairModule", "WingsModule",
             "HotbarSlotsModule", "InventoryHudModule", "ArmorModule",
-            "JumpCircleModule", "DamageCircleModule", "AutoGG",
+            "JumpCircleModule", "DamageCircleModule",
         ])
 
     def test_only_plus_module_implementations_are_built(self):
@@ -38,7 +35,7 @@ class ModuleScopeTest(unittest.TestCase):
             "hud/inventoryhud.cpp", "hud/armorhud.cpp", "visual/hitbox.cpp",
             "visual/blockoutline.cpp", "visual/wings.cpp", "visual/jumpcircle.cpp",
             "visual/damagecircle.cpp",
-            "player/customcapes.cpp", "player/autogg.cpp",
+            "player/customcapes.cpp",
         })
         self.assertFalse((ROOT / "src/launcher/OverlayBridge.cpp").exists())
         runtime = (ROOT / "src/core/Runtime.cpp").read_text()
