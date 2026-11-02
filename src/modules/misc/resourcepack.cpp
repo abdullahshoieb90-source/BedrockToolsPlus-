@@ -1,4 +1,4 @@
-#include "misc/resourcepack.hpp"
+#include "bedrocktools/modules/misc/resourcepack.hpp"
 #include "core/Runtime.hpp"
 #include "bedrocktools/resources/ResourcePackManager.hpp"
 #include "launcher/ModuleMenu.hpp"
