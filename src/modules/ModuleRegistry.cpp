@@ -13,7 +13,7 @@
 #include "hud/hotbarslots.hpp"
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
-#include "misc/resourcepack.hpp"
+#include "bedrocktools/modules/misc/resourcepack.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -83,5 +83,5 @@ void registerAllModules() {
     registry.emplace<ArmorModule>();
     registry.emplace<JumpCircleModule>();
     registry.emplace<DamageCircleModule>();
-    registry.emplace<ResourcePackModule>();
+    registry.emplace<bedrocktools::modules::ResourcePackModule>();
 }
