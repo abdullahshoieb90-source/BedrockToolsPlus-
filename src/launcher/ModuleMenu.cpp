@@ -211,6 +211,11 @@ void registerModulesWithLauncher() {
                     if (kLower.find("cps") != std::string::npos) {
                         minVal = 1;
                         maxVal = 30;
+                    } else if (kLower.find("swingticks") != std::string::npos) {
+                        // Java Animations: the length of one swing, in game
+                        // ticks (2..20; the Java 1.7 attack animation is 6).
+                        minVal = 2;
+                        maxVal = 20;
                     } else if (kLower.find("time") != std::string::npos) {
                         maxVal = 24000;
                     } else if (kLower.find("red") != std::string::npos ||

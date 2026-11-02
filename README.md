@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 13 configurable modules
+- 14 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -27,7 +27,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **HUD:** Effect Display, Crosshair, Hotbar Slots, Inventory HUD, Armor
 
-**Player:** Custom Capes
+**Player:** Custom Capes, Java Animations
 
 **Misc:** Hit Sound, CommentKey, Command Hotkey
 
@@ -137,6 +137,22 @@ The **Custom Capes** module lets you wear any PNG as a classic cape.
 Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
 
 The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
+
+## Java Animations
+
+The **Java Animations** module gives your own hand and held item the Java Edition 1.7 animation feel in first person. It needs no resource pack: enable it and it applies immediately.
+
+- **Swing Style** picks the profile: **Java 1.7** (the default), **Java 1.8**, or **Vanilla** (leaves the game's own animation completely untouched).
+- **Swing Ticks** sets how long one swing lasts, in game ticks (2–20). The Java 1.7 attack animation is six ticks, which is the default; the module reports that length to the game, so the swing animation is retimed to match the arc it draws.
+- **Swing Scale** scales the whole arc (0.1–5.0): below 1.0 the swing is subtler, above 1.0 it is exaggerated, and 0 mutes the swing while keeping the rest pose.
+- **Item Pose** applies the Java rest stance — the item hangs lower and flatter instead of being canted towards the camera the way Bedrock holds it.
+- **Use Raise** lifts the arm to the mouth while eating or drinking, with the 1.7 nibble.
+
+How it is animated: `LocalPlayer::swing` arms a timer, `Mob::getModifiedSwingDuration` supplies the length of that swing, and the pose is sampled from the timer on the render thread, so the arc plays out smoothly at any frame rate instead of stepping between poses — the same continuity rule the Wings module follows, and `tests/javaanimations_test.cpp` walks a six-tick swing at 60 and 144 fps to pin it. Both halves of the arc are smoothsteps, so a swing leaves and re-enters the rest pose at zero velocity rather than popping, and attacking again mid-swing resumes the arc from the height it is already at instead of snapping back to the rest pose first.
+
+Scope, stated plainly: this is a **first-person** module — it moves the hand, arm and item you see. The third-person player model is driven by resource-pack animations, which a native module cannot replace, so the 1.7 look on your character seen from the outside still needs an animation resource pack. The pose is applied in the hand's own space and the matrix is restored afterwards, so nothing else inherits it, and the swing-length override is scoped to the local player, so mobs keep their own swing length. The curves are our own implementation of the 1.7 feel; nothing from a third-party animation pack is bundled.
+
+Like every rendering module, this depends on the supported Bedrock version's native signatures: if one cannot be resolved the module simply does nothing.
 
 ## Hit Sound
 
