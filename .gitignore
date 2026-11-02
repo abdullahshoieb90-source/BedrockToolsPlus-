@@ -8,3 +8,6 @@ compile_commands.json
 *.levipack
 *.zip
 lightdocs
+# Python host-test artifacts
+__pycache__/
+*.py[cod]
