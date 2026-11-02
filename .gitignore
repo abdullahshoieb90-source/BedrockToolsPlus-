@@ -1,0 +1,10 @@
+build/
+.xmake/
+.vscode/
+.idea/
+.DS_Store
+compile_commands.json
+*.so
+*.levipack
+*.zip
+lightdocs

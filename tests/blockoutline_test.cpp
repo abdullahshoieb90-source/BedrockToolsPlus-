@@ -1,0 +1,497 @@
+// Integration-style host test for the Block Outline module.
+// It drives the real tick target sampler and render path with small in-memory
+// Minecraft stand-ins, then verifies config persistence and legacy aliases.
+//
+// Build: g++ -std=c++20 -I include -I src -I tests/fakepl -I tests/fakejson
+//        tests/blockoutline_test.cpp -o /tmp/blockoutline_test
+// Run:   /tmp/blockoutline_test
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <string>
+#include <vector>
+
+#include "bedrocktools/events/EventBus.hpp"
+#include "bedrocktools/memory/Signatures.hpp"
+#include "bedrocktools/sdk/Offsets.hpp"
+#include "bedrocktools/sdk/Types.hpp"
+#include "fake_shader_color.hpp"
+
+namespace {
+
+struct Batch {
+    int mode = -1;
+    int reservedVertices = 0;
+    int emittedVertices = 0;
+    void* material = nullptr;
+    fake_render::Color vertexColor{};
+    fake_render::Color outputColor{};
+    bool legacyHolderUntouched = false;
+};
+
+std::vector<Batch> g_batches;
+Batch g_currentBatch;
+void* g_hitResult = nullptr;
+fake_render::GpuColor g_gpu;
+fake_render::ShaderColor* g_legacyHolder = nullptr;
+const fake_render::Color kLegacyColor{0.2f, 0.4f, 0.6f, 0.8f};
+
+void fakeRenderLevel(void*, void*, void*) {}
+void fakeTessBegin(void*, void*, int mode, int vertexCount, int) {
+    g_currentBatch = {};
+    g_currentBatch.mode = mode;
+    g_currentBatch.reservedVertices = vertexCount;
+}
+void fakeTessColor(void*, float r, float g, float b, float a) {
+    g_currentBatch.vertexColor = {r, g, b, a};
+}
+void fakeTessVertex(void*, float, float, float) {
+    ++g_currentBatch.emittedVertices;
+}
+void fakeRenderMesh(void* screenContext, void*, void* material, char*) {
+    g_currentBatch.material = material;
+    auto* holder = fake_render::colorHolder(screenContext);
+    if (holder) g_currentBatch.outputColor = g_gpu.draw(*holder, g_currentBatch.vertexColor);
+    g_currentBatch.legacyHolderUntouched = g_legacyHolder && g_legacyHolder->rgba == kLegacyColor;
+    g_batches.push_back(g_currentBatch);
+}
+void* fakeGetHitResult(void*) {
+    return g_hitResult;
+}
+
+template <typename T, std::size_t N>
+void writeAt(std::array<std::byte, N>& storage, std::size_t offset, const T& value) {
+    std::memcpy(storage.data() + offset, &value, sizeof(T));
+}
+
+} // namespace
+
+namespace bedrocktools::memory {
+std::uintptr_t resolve(SignatureId id) {
+    switch (id) {
+        case SignatureId::RenderLevel:
+            return reinterpret_cast<std::uintptr_t>(&fakeRenderLevel);
+        case SignatureId::TessellatorBegin:
+            return reinterpret_cast<std::uintptr_t>(&fakeTessBegin);
+        case SignatureId::TessellatorColor:
+            return reinterpret_cast<std::uintptr_t>(&fakeTessColor);
+        case SignatureId::TessellatorVertex:
+            return reinterpret_cast<std::uintptr_t>(&fakeTessVertex);
+        case SignatureId::MeshHelpersRenderMeshImmediately2:
+            return reinterpret_cast<std::uintptr_t>(&fakeRenderMesh);
+        case SignatureId::LevelGetHitResult:
+            return reinterpret_cast<std::uintptr_t>(&fakeGetHitResult);
+        default:
+            return 0;
+    }
+}
+} // namespace bedrocktools::memory
+
+namespace bedrocktools::events {
+EventBus& bus() {
+    static EventBus instance;
+    return instance;
+}
+} // namespace bedrocktools::events
+
+// Include the production implementation so this test can invoke its internal
+// render hook helpers without adding a test-only API to the module.
+#include "modules/visual/blockoutline.cpp"
+
+namespace {
+
+int g_failures = 0;
+
+void check(bool condition, const char* message) {
+    if (condition) {
+        std::printf("  ok   %s\n", message);
+    } else {
+        std::printf("  FAIL %s\n", message);
+        ++g_failures;
+    }
+}
+
+bool near(float a, float b, float epsilon = 0.0001f) {
+    return std::fabs(a - b) <= epsilon;
+}
+
+bool colorNear(const fake_render::Color& actual, const fake_render::Color& expected) {
+    for (std::size_t i = 0; i < actual.size(); ++i) {
+        if (!near(actual[i], expected[i])) return false;
+    }
+    return true;
+}
+
+} // namespace
+
+int main() {
+    using namespace bedrocktools::sdk;
+    using namespace bedrocktools::sdk::offsets;
+
+    std::printf("block outline render integration\n");
+
+    alignas(std::max_align_t) std::array<std::byte, 640> player{};
+    alignas(std::max_align_t) std::array<std::byte, 16> level{};
+    alignas(std::max_align_t) std::array<std::byte, 96> hit{};
+    alignas(std::max_align_t) std::array<std::byte, 256> screenContext{};
+    alignas(std::max_align_t) std::array<std::byte, 0x500> levelRenderer{};
+    alignas(std::max_align_t) std::array<std::byte, 0x1100> playerRenderer{};
+    fake_render::ShaderColor colorHolder{{0.2f, 0.3f, 0.4f, 0.5f}, 0};
+    fake_render::ShaderColor legacyHolder{kLegacyColor, 0};
+    g_legacyHolder = &legacyHolder;
+    std::uint64_t tessellator = 0;
+
+    void* levelPointer = level.data();
+    writeAt(player, Actor::mLevel, levelPointer);
+
+    const int blockType = HitResult::TypeBlock;
+    const int upFace = blockoutline::Up;
+    const BlockPos blockPosition{10, 64, -3};
+    writeAt(hit, HitResult::mType, blockType);
+    writeAt(hit, HitResult::mFacing, upFace);
+    writeAt(hit, HitResult::mBlockPos, blockPosition);
+    g_hitResult = hit.data();
+
+    void* tessellatorPointer = &tessellator;
+    void* colorHolderPointer = &colorHolder;
+    void* legacyHolderPointer = &legacyHolder;
+    writeAt(screenContext, ScreenContext::mTessellator, tessellatorPointer);
+    writeAt(screenContext, fake_render::kColorHolderOffset, colorHolderPointer);
+    // The old slot contains a plausible, unrelated object, not the color
+    // holder. A renderer using the stale offset must not alter it.
+    writeAt(screenContext, fake_render::kOldColorHolderOffset, legacyHolderPointer);
+
+    void* playerRendererPointer = playerRenderer.data();
+    writeAt(levelRenderer, LevelRenderer::mLevelRendererPlayer, playerRendererPointer);
+    const Vec3 camera{10.5f, 65.5f, 2.0f};
+    writeAt(playerRenderer, LevelRendererPlayer::mCamPos, camera);
+    // The embedded selection-overlay MaterialPtr must look populated to be used.
+    std::uint64_t fakeMaterialData = 0;
+    void* fakeMaterialPointer = &fakeMaterialData;
+    writeAt(playerRenderer, LevelRendererPlayer::mSelectionOverlayMaterial, fakeMaterialPointer);
+
+    {
+        BlockOutlineModule module;
+        module.onInit();
+        module.setMasterEnabled(true);
+        updateTarget(player.data());
+
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2, "default thick outline submits quad and crisp-line batches");
+        check(g_batches.size() >= 1 && g_batches[0].mode == 1 &&
+              g_batches[0].reservedVertices == 160 && g_batches[0].emittedVertices == 160,
+              "12 thick edge quads + 8 corner joint dots emit 160 vertices");
+        check(g_batches.size() >= 2 && g_batches[1].mode == 4 &&
+              g_batches[1].reservedVertices == 24 && g_batches[1].emittedVertices == 24,
+              "hairline pass emits all 12 block edges");
+        check(near(colorHolder.rgba[0], 0.2f) && near(colorHolder.rgba[1], 0.3f) &&
+              near(colorHolder.rgba[2], 0.4f) && near(colorHolder.rgba[3], 0.5f),
+              "renderer restores ScreenContext color state");
+
+        module.outline = false;
+        module.fill = true;
+        module.fillFaceOnly = true;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && g_batches[0].mode == 1 &&
+              g_batches[0].emittedVertices == 4,
+              "face-only fill emits exactly one selected face");
+
+        module.fillFaceOnly = false;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && g_batches[0].emittedVertices == 24,
+              "full fill emits all six block faces");
+
+        // An unpopulated embedded material must be skipped, never submitted to
+        // the game's mesh renderer (this used to crash when Fill was enabled).
+        void* nullMaterialData = nullptr;
+        writeAt(playerRenderer, LevelRendererPlayer::mSelectionOverlayMaterial, nullMaterialData);
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.empty(), "fill never renders with an unpopulated material");
+        writeAt(playerRenderer, LevelRendererPlayer::mSelectionOverlayMaterial, fakeMaterialPointer);
+
+        const int entityType = HitResult::TypeEntity;
+        writeAt(hit, HitResult::mType, entityType);
+        updateTarget(player.data());
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.empty(), "entity/no-block hit clears the block overlay immediately");
+
+        writeAt(hit, HitResult::mType, blockType);
+        updateTarget(player.data());
+        module.setMasterEnabled(false);
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.empty(), "disabling the module clears its cached target");
+    }
+
+    std::printf("block outline blending material\n");
+    {
+        BlockOutlineModule module;
+        module.onInit();
+        module.setMasterEnabled(true);
+        updateTarget(player.data());
+
+        // Pretend the game's material group exposed both special materials.
+        // The production renderer only swaps materials; which names resolve is
+        // covered by the real material group on device.
+        s_translucentMaterial.data[0] = &s_translucentMaterial;
+        s_throughWallsMaterial.data[0] = &s_throughWallsMaterial;
+        // With no material group, the renderer falls back to the embedded
+        // selection-overlay material: the address of the member inside the
+        // player renderer (its look-like-a-pointer value gates the use).
+        const void* vanillaMaterial =
+            playerRenderer.data() + LevelRendererPlayer::mSelectionOverlayMaterial;
+
+        module.outline = true;
+        module.fill = false;
+
+        // A fully opaque outline keeps the vanilla selection material.
+        module.outlineOpacity = 1.0f;
+        module.pulse = false;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2 &&
+              g_batches[0].material == vanillaMaterial &&
+              g_batches[1].material == vanillaMaterial,
+              "opaque outline keeps the vanilla selection material");
+
+        // A translucent outline must not use selection_box: it has no
+        // Blending state, so the alpha (and with it the Opacity slider and
+        // Pulse) would be silently ignored.
+        module.outlineOpacity = 0.5f;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2 &&
+              g_batches[0].material == &s_translucentMaterial &&
+              g_batches[1].material == &s_translucentMaterial,
+              "translucent outline renders with the blending material");
+
+        // Pulse modulates opacity, so it needs blending even at opacity 1.
+        module.outlineOpacity = 1.0f;
+        module.pulse = true;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2 &&
+              g_batches[0].material == &s_translucentMaterial &&
+              g_batches[1].material == &s_translucentMaterial,
+              "pulsing outline always renders with the blending material");
+        module.pulse = false;
+
+        // Fill picks its material independently of the outline.
+        module.outline = false;
+        module.fill = true;
+        module.fillOpacity = 0.3f;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && g_batches[0].material == &s_translucentMaterial,
+              "translucent fill renders with the blending material");
+
+        // Through Walls keeps using the no-depth blending material.
+        module.throughWalls = true;
+        module.fillOpacity = 1.0f;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && g_batches[0].material == &s_throughWallsMaterial,
+              "through-walls fill keeps the no-depth material");
+        module.throughWalls = false;
+
+        // Without a blending material the renderer must fall back to the
+        // vanilla material instead of rendering nothing.
+        s_translucentMaterial = {};
+        module.outline = true;
+        module.fill = false;
+        module.outlineOpacity = 0.5f;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 2 && g_batches[0].material == vanillaMaterial &&
+              g_batches[0].emittedVertices == 160,
+              "missing blending material falls back to the vanilla material");
+
+        s_translucentMaterial = {};
+        s_throughWallsMaterial = {};
+        module.setMasterEnabled(false);
+    }
+
+    std::printf("block outline colors across camera modes\n");
+    {
+        check(ScreenContext::mColorHolder == fake_render::kColorHolderOffset,
+              "supported build uses the corrected shader-color pointer");
+        check(LevelRendererPlayer::mSelectionOverlayMaterial == 0x10A0,
+              "supported build uses the corrected selection-material fallback");
+
+        BlockOutlineModule module;
+        module.onInit();
+        module.setMasterEnabled(true);
+        updateTarget(player.data());
+        module.outlineColor = 0xFF3399CCu;
+        module.fillColor = 0xFFEF7C20u;
+        module.outlineOpacity = 1.0f;
+        module.fillOpacity = 0.3f;
+        const fake_render::Color outline{51.0f / 255.0f, 153.0f / 255.0f,
+                                         204.0f / 255.0f, 1.0f};
+        const fake_render::Color fill{239.0f / 255.0f, 124.0f / 255.0f,
+                                      32.0f / 255.0f, 0.3f};
+        const fake_render::Color white{1.0f, 1.0f, 1.0f, 1.0f};
+        const fake_render::Color black{0.0f, 0.0f, 0.0f, 1.0f};
+
+        // First-person: a hairline with the game's previously white tint.
+        writeAt(playerRenderer, LevelRendererPlayer::mCamPos, Vec3{10.5f, 65.5f, -1.0f});
+        module.lineThickness = 1.0f;
+        module.fill = false;
+        colorHolder = {white, 0};
+        g_gpu.rgba = white;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && colorNear(g_batches[0].outputColor, outline),
+              "first-person hairline uses the chosen outline color");
+        check(!g_batches.empty() && g_batches[0].legacyHolderUntouched,
+              "draw never overwrites the object at the old offset");
+
+        // Third-person player rendering may leave a black shader tint cached
+        // on the GPU. Both filled and thick/hairline passes need the selected
+        // vertex colors, even though the incoming holder is not white.
+        writeAt(playerRenderer, LevelRendererPlayer::mCamPos, Vec3{10.5f, 65.5f, 3.0f});
+        module.lineThickness = 3.0f;
+        module.fill = true;
+        s_translucentMaterial.data[0] = &s_translucentMaterial;
+        colorHolder = {black, 0};
+        g_gpu.rgba = black;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 3 && colorNear(g_batches[0].outputColor, fill),
+              "third-person translucent fill retains its RGB and opacity");
+        check(g_batches.size() == 3 && colorNear(g_batches[1].outputColor, outline) &&
+              colorNear(g_batches[2].outputColor, outline),
+              "third-person thick and hairline edges retain the selected RGB");
+        check(g_batches.size() == 3 && g_batches[0].legacyHolderUntouched &&
+              g_batches[1].legacyHolderUntouched && g_batches[2].legacyHolderUntouched,
+              "all block passes leave the old offset untouched");
+        check(colorNear(colorHolder.rgba, black) && colorHolder.dirty == 1,
+              "the game's prior tint is restored and scheduled for GPU upload");
+        g_gpu.upload(colorHolder);
+        check(colorNear(g_gpu.rgba, black) && colorHolder.dirty == 0,
+              "the next game draw receives its restored tint");
+
+        // Even if the holder already says white, its cached GPU value may be
+        // stale. Entering the overlay must still force a white upload.
+        module.fill = false;
+        module.lineThickness = 1.0f;
+        colorHolder = {white, 0};
+        g_gpu.rgba = black;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && colorNear(g_batches[0].outputColor, outline),
+              "a stale black GPU tint is refreshed even when the holder is already white");
+
+        // The same color state applies to the optional no-depth material.
+        module.throughWalls = true;
+        module.fill = true;
+        module.outline = false;
+        s_throughWallsMaterial.data[0] = &s_throughWallsMaterial;
+        colorHolder = {black, 0};
+        g_gpu.rgba = black;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 && colorNear(g_batches[0].outputColor, fill) &&
+              g_batches[0].material == &s_throughWallsMaterial,
+              "through-walls fill also retains its selected color and opacity");
+
+        // Animated colors and alpha still come from the tessellator, not the
+        // previous black GPU tint, while using the depth-tested blend material.
+        module.throughWalls = false;
+        module.rainbow = true;
+        module.pulse = true;
+        colorHolder = {black, 0};
+        g_gpu.rgba = black;
+        g_batches.clear();
+        renderBlockOutline(levelRenderer.data(), screenContext.data());
+        check(g_batches.size() == 1 &&
+              colorNear(g_batches[0].outputColor, g_batches[0].vertexColor) &&
+              (g_batches[0].outputColor[0] + g_batches[0].outputColor[1] +
+               g_batches[0].outputColor[2]) > 0.9f &&
+              g_batches[0].outputColor[3] >= 0.125f &&
+              g_batches[0].outputColor[3] <= 0.301f,
+              "rainbow and pulsing fill keep their animated RGB and opacity");
+
+        s_translucentMaterial = {};
+        s_throughWallsMaterial = {};
+        module.setMasterEnabled(false);
+    }
+
+    std::printf("block outline config\n");
+    {
+        BlockOutlineModule source;
+        source.outline = false;
+        source.outlineColor = 0xFF123456u;
+        source.outlineOpacity = 0.65f;
+        source.lineThickness = 7.0f;
+        source.fill = true;
+        source.fillColor = 0xFFABCDEFu;
+        source.fillOpacity = 0.35f;
+        source.fillFaceOnly = true;
+        source.rainbow = true;
+        source.rainbowSpeed = 0.8f;
+        source.pulse = true;
+        source.pulseSpeed = 0.6f;
+        source.throughWalls = true;
+
+        nlohmann::json saved;
+        source.saveConfig(saved);
+        check(saved["outlineColor"].get<std::string>() == "#123456",
+              "outline color saves as menu-compatible RGB");
+        check(saved["fillColor"].get<std::string>() == "#ABCDEF",
+              "fill color saves independently");
+
+        BlockOutlineModule loaded;
+        loaded.loadConfig(saved);
+        check(!loaded.outline && loaded.fill && loaded.fillFaceOnly,
+              "outline/fill mode round-trips");
+        check((loaded.outlineColor & 0xFFFFFFu) == 0x123456u &&
+              (loaded.fillColor & 0xFFFFFFu) == 0xABCDEFu,
+              "both colors round-trip");
+        check(near(loaded.outlineOpacity, 0.65f) && near(loaded.fillOpacity, 0.35f) &&
+              near(loaded.lineThickness, 7.0f),
+              "opacity and thickness round-trip");
+        check(loaded.rainbow && near(loaded.rainbowSpeed, 0.8f) &&
+              loaded.pulse && near(loaded.pulseSpeed, 0.6f) && loaded.throughWalls,
+              "animation and depth settings round-trip");
+    }
+
+    {
+        nlohmann::json legacy;
+        legacy["Color"] = "#0A1B2C";
+        legacy["Opacity"] = 2.0f;
+        legacy["Thickness"] = 0.2f;
+        legacy["overlay"] = true;
+        legacy["overlayColor"] = "#FFEEDD";
+        legacy["overlayOpacity"] = -1.0f;
+        legacy["fullOverlay"] = false;
+        legacy["renderThrough"] = true;
+
+        BlockOutlineModule migrated;
+        migrated.loadConfig(legacy);
+        check((migrated.outlineColor & 0xFFFFFFu) == 0x0A1B2Cu,
+              "legacy Color key migrates");
+        check(near(migrated.outlineOpacity, 1.0f) && near(migrated.fillOpacity, 0.0f) &&
+              near(migrated.lineThickness, 1.0f),
+              "legacy numeric settings clamp to safe renderer ranges");
+        check(migrated.fill && migrated.fillFaceOnly && migrated.throughWalls,
+              "legacy overlay/depth flags migrate");
+    }
+
+    std::printf("\n");
+    if (g_failures != 0) {
+        std::printf("%d block outline integration check(s) FAILED\n", g_failures);
+        return 1;
+    }
+    std::printf("all block outline integration checks passed\n");
+    return 0;
+}
