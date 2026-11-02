@@ -52,10 +52,19 @@
 // moving) and glide (spread wings while descending) based on the player's
 // horizontal/vertical speed measured from consecutive player AABBs:
 //
-//   moveT    = clamp(horizontalSpeed / kWalkSpeedFull, 0, 1)
-//   glideT   = 1 while sustained descent (vy < -1.5 for > 0.35 s), else 0
+//   moveT    = smoothstep(horizontal speed) max smoothstep(rise speed)
+//   glideT   = smoothstep of sustained descent time (short hops never glide)
 //   target   = moveT * (1 - glideT)
-//   intensity smoothly lerps to target; glide lerps to glideT.
+//   intensity / glide approach their targets with a real time constant, and
+//   the render thread lerps each weight between the previous and current tick
+//   values by the partial-tick fraction.
+//
+// Every one of those targets used to be a 0/1 step with an instant (clamped to
+// 1) lerp at 20 Hz: one jump flipped idle -> flap -> glide -> idle, and each
+// flip popped the wings by tens of degrees in a single rendered frame. Now the
+// pose is continuous at the tick boundary and at any frame rate, which is what
+// removes the general stutter and the jump stutter. See
+// tests/wings_patch_test.cpp ("render-thread pose continuity").
 //
 // flapSpeed is exposed as "Flap Speed" in the launcher menu in [0.1, 10.0].
 // On init the module writes the embedded geometry/animation/controller JSON
@@ -117,8 +126,16 @@ public:
     // and glide factor.
     WingBoneAngles currentBoneAngles() const;
     // Interpolated version that adds time since last tick for ultra-low
-    // latency rendering (called from the RenderLevel hook).
+    // latency rendering (called from the RenderLevel hook). It also lerps the
+    // idle/flap/glide blend weights between the last two tick samples, so a
+    // weight change can never arrive as a one-frame pose pop.
     WingBoneAngles currentBoneAnglesInterpolated() const;
+
+    // Clock-free counterpart of currentBoneAnglesInterpolated(): the pose for
+    // a render frame `elapsedSinceTickSeconds` after the last animation tick
+    // (tickIntervalSeconds is normally 0.05). Host tests drive a jump frame by
+    // frame through this and assert the pose stays continuous.
+    WingBoneAngles boneAnglesAt(float elapsedSinceTickSeconds, float tickIntervalSeconds) const;
 
     // Directory the module writes its assets to; kept for menu description
     // compatibility.
@@ -180,15 +197,20 @@ public:
     static constexpr float kFeatherLagBase = 2.4434610f;  // 140 deg
     static constexpr float kFeatherLagStep = 0.3490659f;  // 20 deg
 
-    // Speed-driven blending - tuned for minimal latency (instant response).
-    static constexpr float kWalkSpeedFull = 4.3f;     // blocks/s: vanilla walk
-    static constexpr float kRiseSpeedFlap = 0.5f;     // vy above => flap hard (lower = faster jump response, was 1.5)
-    static constexpr float kGlideFallSpeed = -1.5f;   // vy below => count airtime
-    static constexpr float kGlideAirTime = 0.25f;     // seconds before gliding (reduced from 0.35 for faster response, but >0.2 to avoid hop gliding)
-    static constexpr float kIntensityAttackRate = 30.0f;  // 1/s lerp rate up (was 6.0 - now ultra-fast)
-    static constexpr float kIntensityDecayRate = 25.0f;   // 1/s lerp rate down (was 2.5)
-    static constexpr float kGlideAttackRate = 30.0f;      // was 4.0
-    static constexpr float kGlideDecayRate = 25.0f;       // was 3.0
+    // Speed-driven blending. Targets are smooth ramps, never binary steps:
+    // a jump no longer flips the pose between idle / flap / glide in one tick.
+    static constexpr float kWalkSpeedFull = 4.3f;      // blocks/s: vanilla walk
+    static constexpr float kRiseSpeedFlap = 0.5f;      // vy where jump flapping starts
+    static constexpr float kRiseSpeedFull = 3.5f;      // vy where jump flapping is at full strength
+    static constexpr float kGlideFallSpeed = -1.5f;    // vy below => count airtime
+    static constexpr float kGlideAirTime = 0.45f;      // descent before glide starts (a vanilla hop is ~0.3 s)
+    static constexpr float kGlideRampTime = 0.35f;     // fade-in time for the glide pose
+    static constexpr float kIntensityAttackRate = 8.0f;  // 1/s exponential rate up (was 30 = instant step)
+    static constexpr float kIntensityDecayRate = 6.0f;   // 1/s exponential rate down (was 25)
+    static constexpr float kGlideAttackRate = 7.0f;      // was 30
+    static constexpr float kGlideDecayRate = 6.0f;       // was 25
+    static constexpr float kSpeedFilterRate = 12.0f;     // low-pass on AABB-derived speeds (tick quantisation)
+    static constexpr float kMaxFrameExtrapolate = 0.25f; // cap for render-side phase extrapolation after a hitch
 
     // Face palette shared with the generated texture (see wings_default.hpp);
     // Demon Wings edition: black frame #000000, red glowing membrane #FF0000/#E60000 -> #800000
@@ -201,6 +223,9 @@ public:
 private:
     void applyPatch();
 
+    // Render-frame pose solver; caller must hold m_animationMutex.
+    WingBoneAngles poseAtLocked(float elapsedSinceTick, float tickInterval) const;
+
     std::string m_wingsDir;
 
     // Animation state (clock driven per tick). The render hook runs on a
@@ -210,6 +235,11 @@ private:
     float m_flapTime = 0.0f;
     float m_intensity = 0.0f;   // smoothed idle->flight blend
     float m_glide = 0.0f;       // smoothed glide blend
+    float m_prevIntensity = 0.0f; // blend weights at the previous tick (render lerp)
+    float m_prevGlide = 0.0f;
+    float m_tickInterval = 0.05f;          // measured tick interval (20 Hz in game)
+    float m_horizontalSpeed = 0.0f;        // low-pass filtered AABB-derived speeds
+    float m_verticalSpeed = 0.0f;
     float m_airTime = 0.0f;     // sustained descent time used for glide
     bool m_flapClockStarted = false;
     std::chrono::steady_clock::time_point m_lastFlapTick;

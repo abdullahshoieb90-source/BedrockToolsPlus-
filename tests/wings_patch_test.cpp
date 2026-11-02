@@ -22,6 +22,8 @@
 //   * constants are sane
 //   * speed-driven blending: intensity ramps up while moving, decays to idle
 //     pose at rest; sustained descent engages glide; glide suppresses flap
+//   * render-thread pose continuity: a jump must never pop the wings by tens
+//     of degrees in one frame (regression for the recorded jump stutter)
 //   * bone angles follow the shoulder->tip->feather lag wave
 //   * embedded geo/animation/controller JSON contain the new bone hierarchy
 //     (bone_wing_right / bone_wing_left and children) and speed queries
@@ -497,6 +499,82 @@ int main() {
     riseMod.onInit();
     for (int i = 0; i < 60; ++i) riseMod.advanceWingAnimation(0.05f, 0.0f, 4.0f);
     check(riseMod.flightIntensity() > 0.5f, "rising rapidly also triggers flapping");
+
+    // ==================================================================
+    // Render-thread pose continuity (the "wing stutter on jump" regression)
+    // ==================================================================
+    // The recorded gameplay clip showed the wings jumping from a raised V to
+    // flat in a single frame around every jump (e.g. 6.70s -> 6.75s). The old
+    // driver used binary 0/1 targets plus min(1, dt * 30) smoothing at 20 Hz,
+    // so one jump flipped idle -> flap -> glide -> idle, and the render hook
+    // read those weights straight from the last tick. Measuring the shoulder
+    // angle at 60 fps over a vanilla jump used to produce a 36 deg/frame pop.
+    std::printf("render-thread pose continuity\n");
+    {
+        WingsModule jumpMod;
+        jumpMod.onInit();
+        constexpr float kDt = 0.05f;               // 20 Hz tick
+        constexpr float kGravity = 32.0f;         // blocks/s^2
+        float y = 0.0f;
+        float vy = 8.4f;                          // vanilla jump impulse
+        float prevShoulder = 0.0f;
+        bool havePrev = false;
+        float maxStep = 0.0f;
+        for (int tick = 0; tick < 40; ++tick) {  // jump + a second hop
+            if (tick == 20) vy = 8.4f;            // jump again
+            float dy = vy * kDt - 0.5f * kGravity * kDt * kDt;
+            vy -= kGravity * kDt;
+            if (y + dy < 0.0f) { dy = -y; vy = 0.0f; }
+            y += dy;
+            jumpMod.advanceWingAnimation(kDt, 0.0f, dy / kDt);
+            for (int frame = 1; frame <= 3; ++frame) { // 60 fps render
+                WingBoneAngles a = jumpMod.boneAnglesAt(kDt * frame / 3.0f, kDt);
+                if (havePrev) maxStep = std::max(maxStep, std::fabs(a.shoulderDeg - prevShoulder));
+                prevShoulder = a.shoulderDeg;
+                havePrev = true;
+            }
+        }
+        std::printf("       max shoulder step over a jump = %.2f deg/frame\n", maxStep);
+        // The natural flap wave at 60 fps moves ~3.5 deg/frame; anything much
+        // larger is a discontinuity, not motion.
+        check(maxStep < 6.0f, "jump: no single-frame wing pop (shoulder < 6 deg/frame)");
+    }
+    {
+        // The blend weights must be continuous exactly at the tick boundary:
+        // the last render of one tick and the first render of the next agree.
+        WingsModule m;
+        m.onInit();
+        m.advanceWingAnimation(0.05f, 6.0f, 0.0f);
+        const float endOfTick = m.boneAnglesAt(0.05f, 0.05f).intensity;
+        m.advanceWingAnimation(0.05f, 6.0f, 0.0f);
+        const float startOfNextTick = m.boneAnglesAt(0.0f, 0.05f).intensity;
+        check(approxEqual(endOfTick, startOfNextTick, 1e-4f),
+              "idle->flap weight is continuous across the tick boundary");
+
+        const WingBoneAngles first = m.boneAnglesAt(0.0f, 0.05f);
+        const WingBoneAngles last = m.boneAnglesAt(0.05f, 0.05f);
+        check(last.intensity > first.intensity + 1e-3f &&
+              std::fabs(last.shoulderDeg - first.shoulderDeg) > 0.1f,
+              "the pose advances inside a tick instead of being held for 50 ms");
+        const WingBoneAngles stalled = m.boneAnglesAt(10.0f, 0.05f);
+        check(std::isfinite(stalled.shoulderDeg) && std::fabs(stalled.shoulderDeg) < 200.0f,
+              "a long stall clamps the extrapolated phase instead of flinging the wings");
+    }
+    {
+        // A vanilla hop descends for ~0.3 s: it must never snap into the
+        // spread glide pose on the way down.
+        WingsModule hop;
+        hop.onInit();
+        for (int i = 0; i < 8; ++i) hop.advanceWingAnimation(0.05f, 0.0f, -6.0f);
+        check(hop.glideFactor() < 0.05f, "a short hop does not snap into the glide pose");
+    }
+    {
+        // A small AABB bob (quantisation noise) must not read as a full jump.
+        WingsModule bob;
+        bob.onInit();
+        for (int i = 0; i < 10; ++i) bob.advanceWingAnimation(0.05f, 0.0f, 1.0f);
+        check(bob.flightIntensity() < 0.6f, "a small upward bob does not slam the wings to full flap");
+    }
 
     // ==================================================================
     // Embedded geo / animation / controller JSON assets
