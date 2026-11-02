@@ -39,6 +39,17 @@ static const ExplicitDependency kExplicitDependencies[] = {
     // Effect Display: the potion-icon size only matters while the icons are
     // shown at all.
     {"m_iconScale", "m_showIcons"},
+
+    // Java Animations: everything about the generated third-person pack sits
+    // under the pack toggle, and none of these names begin with it.
+    {"m_modelPath", "m_modelPack"},
+    {"m_rebuildButton", "m_modelPack"},
+    {"m_modelMoveArms", "m_modelPack"},
+    {"m_modelAttack", "m_modelPack"},
+    {"m_modelBob", "m_modelPack"},
+    {"m_modelSneak", "m_modelPack"},
+    {"m_modelUseItem", "m_modelPack"},
+    {"m_modelHolding", "m_modelPack"},
 };
 
 static const char* explicitParentFor(const std::string& key) {

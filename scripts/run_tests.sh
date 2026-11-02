@@ -96,6 +96,16 @@ for source in "${root}"/tests/*_test.cpp; do
             extra+=(-I "${root}/third_party" -I "${root}/tests/fakepl"
                     -I "${root}/tests/fakejson" -pthread)
             ;;
+        javaanimations_pack_test)
+            # The third-person pack builder emits JSON, so it needs the real
+            # nlohmann_json headers; the host fake only covers the config
+            # slice of the API.
+            if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
+                extra+=(-I "${json_inc}")
+            else
+                skip="nlohmann_json headers (set JSON_INCLUDE)"
+            fi
+            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the

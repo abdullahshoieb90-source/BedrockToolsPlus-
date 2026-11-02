@@ -14,7 +14,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace {
@@ -265,7 +268,8 @@ JavaAnimationsModule* JavaAnimationsModule::s_instance = nullptr;
 
 JavaAnimationsModule::JavaAnimationsModule()
     : Module("Java Animations",
-             "Java 1.7-style first-person animation: held-item pose, swing arc, swing speed and eat/drink raise.") {
+             "Java 1.7-style animation: first-person swing, held-item pose and eat/drink raise, plus a generated "
+        "resource pack that brings the same feel to the player model.") {
     hideInHudEditor = true;
     s_instance = this;
 }
@@ -319,6 +323,11 @@ void JavaAnimationsModule::onInit() {
 
 void JavaAnimationsModule::onEnable() {
     resetState();
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_modelPack) return;
+    }
+    writeModelPack();
 }
 
 void JavaAnimationsModule::onDisable() {
@@ -424,6 +433,32 @@ void JavaAnimationsModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_useRaise")) {
         try { m_settings.useRaise = j["m_useRaise"].get<bool>(); } catch (...) {}
     }
+
+    if (j.contains("m_modelPack")) {
+        try { m_modelPack = j["m_modelPack"].get<bool>(); } catch (...) {}
+    }
+    if (j.contains("m_modelPath") && j["m_modelPath"].is_string()) {
+        const std::string path = j["m_modelPath"].get<std::string>();
+        if (!path.empty()) m_modelPath = path;
+    }
+    if (j.contains("m_modelMoveArms")) {
+        try { m_model.moveArms = j["m_modelMoveArms"].get<bool>(); } catch (...) {}
+    }
+    if (j.contains("m_modelAttack")) {
+        try { m_model.attack = j["m_modelAttack"].get<bool>(); } catch (...) {}
+    }
+    if (j.contains("m_modelBob")) {
+        try { m_model.bob = j["m_modelBob"].get<bool>(); } catch (...) {}
+    }
+    if (j.contains("m_modelSneak")) {
+        try { m_model.sneak = j["m_modelSneak"].get<bool>(); } catch (...) {}
+    }
+    if (j.contains("m_modelUseItem")) {
+        try { m_model.useItem = j["m_modelUseItem"].get<bool>(); } catch (...) {}
+    }
+    if (j.contains("m_modelHolding")) {
+        try { m_model.holding = j["m_modelHolding"].get<bool>(); } catch (...) {}
+    }
 }
 
 void JavaAnimationsModule::saveConfig(nlohmann::json& j) {
@@ -437,4 +472,60 @@ void JavaAnimationsModule::saveConfig(nlohmann::json& j) {
     j["m_swingScale"] = javaanim::clampRange(m_settings.swingScale, 0.0f, 5.0f);
     j["m_itemPose"] = m_settings.itemPose;
     j["m_useRaise"] = m_settings.useRaise;
+
+    // Third-person pack. "m_rebuildButton" renders as a button in the launcher
+    // menu (keys containing "button" do) and is never persisted - pressing it
+    // rewrites the pack with whatever the toggles below say.
+    j["m_modelPack"] = m_modelPack;
+    j["m_modelPath"] = m_modelPath;
+    j["m_rebuildButton"] = false;
+    j["m_modelMoveArms"] = m_model.moveArms;
+    j["m_modelAttack"] = m_model.attack;
+    j["m_modelBob"] = m_model.bob;
+    j["m_modelSneak"] = m_model.sneak;
+    j["m_modelUseItem"] = m_model.useItem;
+    j["m_modelHolding"] = m_model.holding;
+}
+
+bool JavaAnimationsModule::onMenuConfigChanged(std::string_view key, std::string_view value) {
+    (void)value;
+    if (key == "m_rebuildButton") {
+        writeModelPack();
+        return true;
+    }
+    if (key.rfind("m_model", 0) == 0) {
+        // Changing the pack or the folder rewrites it right away, so a toggle
+        // takes effect the next time the world reloads its resources.
+        writeModelPack();
+    }
+    return false;
+}
+
+int JavaAnimationsModule::writeModelPack() {
+    javaanim::pack::ModelSettings settings{};
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        settings = m_modelPack ? m_model : javaanim::pack::ModelSettings{};
+        path = m_modelPath;
+    }
+    if (path.empty()) path = javaanim::pack::defaultPackPath();
+
+    std::error_code ec;
+    const std::filesystem::path root(path);
+    std::filesystem::create_directories(root, ec);
+    if (ec) return -1;
+
+    int written = 0;
+    for (const auto& file : javaanim::pack::buildPack(settings)) {
+        const auto target = root / file.path;
+        std::filesystem::create_directories(target.parent_path(), ec);
+        if (ec) continue;
+        std::ofstream out(target, std::ios::binary | std::ios::trunc);
+        if (!out) continue;
+        out.write(file.content.data(), static_cast<std::streamsize>(file.content.size()));
+        if (!out) continue;
+        ++written;
+    }
+    return written;
 }

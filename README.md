@@ -140,7 +140,9 @@ The change is fully client-side and visual only; it does not affect servers, acc
 
 ## Java Animations
 
-The **Java Animations** module gives your own hand and held item the Java Edition 1.7 animation feel in first person. It needs no resource pack: enable it and it applies immediately.
+The **Java Animations** module brings the Java Edition 1.7 animation feel to your player. It works in two halves, because the two halves of the player are animated by two different systems.
+
+**First person — your own hand and item.** No pack, no setup: enable the module and it applies immediately.
 
 - **Swing Style** picks the profile: **Java 1.7** (the default), **Java 1.8**, or **Vanilla** (leaves the game's own animation completely untouched).
 - **Swing Ticks** sets how long one swing lasts, in game ticks (2–20). The Java 1.7 attack animation is six ticks, which is the default; the module reports that length to the game, so the swing animation is retimed to match the arc it draws.
@@ -150,9 +152,17 @@ The **Java Animations** module gives your own hand and held item the Java Editio
 
 How it is animated: `LocalPlayer::swing` arms a timer, `Mob::getModifiedSwingDuration` supplies the length of that swing, and the pose is sampled from the timer on the render thread, so the arc plays out smoothly at any frame rate instead of stepping between poses — the same continuity rule the Wings module follows, and `tests/javaanimations_test.cpp` walks a six-tick swing at 60 and 144 fps to pin it. Both halves of the arc are smoothsteps, so a swing leaves and re-enters the rest pose at zero velocity rather than popping, and attacking again mid-swing resumes the arc from the height it is already at instead of snapping back to the rest pose first.
 
-Scope, stated plainly: this is a **first-person** module — it moves the hand, arm and item you see. The third-person player model is driven by resource-pack animations, which a native module cannot replace, so the 1.7 look on your character seen from the outside still needs an animation resource pack. The pose is applied in the hand's own space and the matrix is restored afterwards, so nothing else inherits it, and the swing-length override is scoped to the local player, so mobs keep their own swing length. The curves are our own implementation of the 1.7 feel; nothing from a third-party animation pack is bundled.
+**Player model (third person) — a generated resource pack.** The player model is posed by resource-pack animations, which a native module cannot replace, so the module builds a small pack instead:
 
-Like every rendering module, this depends on the supported Bedrock version's native signatures: if one cannot be resolved the module simply does nothing.
+1. Turn on **Model Pack** and pick the animations you want under it — **Move Arms** (the wider 1.7 walk swing), **Attack** (the 1.7 overhead chop: 68.75° of lift with the 22.9° roll, against Bedrock's 30°), **Bob** (arms hang straight, the chest breathes), **Sneak** (the 1.7 crouch), **Use Item** (eat/drink raises the arm to the mouth), and **Holding** (1.7 holds items with a straight arm instead of Bedrock's 18° bend; off by default because it changes how every held item sits).
+2. The pack is written to **Model Path** — by default `/sdcard/games/com.mojang/resource_packs/BedrockToolsPlusJavaAnimations`. **Rebuild** rewrites it on demand; changing any option rewrites it too.
+3. Activate it once in Minecraft under **Settings → Global Resources**. That step is the game's, not the mod's: Bedrock only loads resource packs the player has switched on.
+
+Turning **Model Pack** off does not delete anything — it rewrites the pack with the vanilla bindings, which makes the installed copy inert, so you can leave it active in the pack list without it changing your animations. Swimming, crawling, riding, the spear, shields, bows and every other vanilla animation are deliberately left alone.
+
+Why the generated pack has to contain a full player entity file: a resource pack overrides a client entity by identifier *absolutely*, so a partial `player.entity.json` silently drops every vanilla animation it fails to list — that is why packs that ship one break swimming or attacking. The generator writes the complete binding table for the supported build, with only the animations you enabled pointed at its own ids; `tests/javaanimations_pack_test.cpp` asserts every vanilla binding survives and that nothing dangles. The table and the variable setup mirror Mojang's official `bedrock-samples` for 1.26.60.5, the version this mod targets; the animation content — the Molang expressions for the swing, the chop, the idle, the crouch and the eat/drink raise — is ours.
+
+Like every rendering module, the first-person half depends on the supported Bedrock version's native signatures: if one cannot be resolved the module simply does nothing there. The pack half needs no signatures at all.
 
 ## Hit Sound
 

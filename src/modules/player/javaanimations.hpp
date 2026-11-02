@@ -2,10 +2,12 @@
 
 #include "../Module.hpp"
 #include "javaanimations_curve.hpp"
+#include "javaanimations_pack.hpp"
 
 #include <chrono>
 #include <cstdint>
 #include <mutex>
+#include <string>
 
 // Java Animations
 //
@@ -32,9 +34,13 @@
 // afterwards so nothing else inherits it. The arm and the item are both
 // transformed, so the hand does not slide out from under the item.
 //
-// Scope, stated plainly: this is a first-person (your own hand) module. The
-// third-person player model is driven by resource-pack animations, which a
-// native module cannot replace - changing it still needs an animation pack.
+// The same module also builds the third-person side, which a native module
+// cannot pose directly: it writes a small resource pack (javaanimations_pack.hpp)
+// that re-binds a handful of vanilla player animations - the walk swing, the
+// attack, the idle, the crouch and the eat/drink raise - to Java 1.7 versions.
+// The pack has to be switched on once under Settings > Global Resources; the
+// module only writes and updates it, and turning the option off rewrites it
+// with the vanilla bindings so it stops changing anything.
 class JavaAnimationsModule final : public Module {
 public:
     JavaAnimationsModule();
@@ -45,6 +51,24 @@ public:
     void onDisable() override;
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j) override;
+    bool onMenuConfigChanged(std::string_view key, std::string_view value) override;
+
+    // Which Java animations the generated pack overrides.
+    javaanim::pack::ModelSettings modelSettings() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_model;
+    }
+
+    // Writes (or rewrites) the third-person resource pack into the configured
+    // folder and returns how many files it wrote, or -1 when the folder could
+    // not be created. With the pack option off it writes the same files with
+    // the vanilla bindings, which makes the installed pack inert.
+    int writeModelPack();
+
+    std::string packPath() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_modelPath;
+    }
 
     // Called from the LocalPlayer::swing detour. `player` is the actor that
     // swung; anything that is not the tracked local player is ignored so other
@@ -94,6 +118,11 @@ private:
     javaanim::UseState m_use{};
     int m_swingTicks = javaanim::kDefaultSwingTicks;
     void* m_localPlayer = nullptr;
+
+    // Third-person resource pack.
+    javaanim::pack::ModelSettings m_model{};
+    bool m_modelPack = false;
+    std::string m_modelPath = javaanim::pack::defaultPackPath();
 
     using Clock = std::chrono::steady_clock;
     Clock::time_point m_lastSample{};
