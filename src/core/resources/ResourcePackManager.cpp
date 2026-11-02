@@ -1,4 +1,4 @@
-#include "ResourcePackManager.hpp"
+#include "bedrocktools/resources/ResourcePackManager.hpp"
 #include <filesystem>
 #include <system_error>
 
