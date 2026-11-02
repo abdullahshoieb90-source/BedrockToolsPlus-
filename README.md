@@ -110,6 +110,13 @@ The **Wings** module renders animated 3D wings on your back that flap, idle and 
 - **Vampire Bat** — a narrower crimson membrane with deeper fingers
 - **Red Bat** — the shortest, most saturated bat wing
 
+**Motion:** the idle → flap → glide transitions are continuous ramps. Speeds measured from the player's tick-quantised AABB are low-pass filtered, the blend weights ease toward their targets with a real time constant, and the render thread lerps them between the last two ticks by the partial-tick fraction. A vanilla jump no longer flips the pose (idle → flap → glide → idle) in one 50 ms tick, which used to pop the wings by tens of degrees in a single frame. Short hops never enter the spread glide pose; gliding needs a sustained descent. The wing anchor is interpolated from the last two AABB samples the same way the game interpolates the player mesh, using the same sample history as Hitbox, so walking and jumping stay smooth at any frame rate. `tests/wings_patch_test.cpp` drives a 60 fps jump through `WingsModule::boneAnglesAt()` and asserts the shoulder angle never jumps more than 6°/frame (it was ~36°/frame before this fix).
+
+![Wing pose continuity before and after](docs/wings-animation-smoothness.png)
+
+*Shoulder angle over one jump: the old 0/1 pose switch produced a one-frame
+pop; the continuous blend stays within the natural flap speed.*
+
 The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they never touch skin memory and only appear from a third-person point of view. They are drawn with a depth-tested game material, so your body correctly occludes them when the camera swings in front of you, and the side facing the camera is auto-selected: the bright membrane from behind, a darker shadowed underside from the front. Every style is one continuous membrane instead of a chain of boxes: an articulated arm (shoulder, elbow, wrist) is bent into a smooth leading edge, and a cambered sail hangs off it with a swept, scalloped trailing edge, finger struts, a spar and wing-tip claw, a shoulder fairing and — on the feathered styles — three overlapping rows of quills. The sheet ripples while you flap and goes taut while you glide, and it is shaded per face with a headlight plus a sky lift so it keeps its volume from every angle.
 
 ![Wings before and after](docs/wings-before-after.png)
