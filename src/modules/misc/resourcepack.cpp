@@ -52,10 +52,9 @@ void ResourcePackModule::registerResources() {
     for (const auto& pack : packs) {
         // تسجيل الـ Resource Pack في الـ Launcher Mod Menu
         // ملاحظة: نستخدم pl::modmenu::registerResourcePack إذا كان متاحاً في الإصدار
-        // أو نقوم بتسجيله كـ Resource Pack داخلي في الـ Mod
         // الـ Launcher (LeviLauncher) يدعم تحميل الـ Resource Packs من المجلد الخاص بالـ Mod
-        // لذا نقوم بتسجيله هنا ليتم تطبيقه على اللعبة الأصلية.
-        pl::modmenu::registerResourcePack(packDir / pack, pack);
+        // نستخدم .string() لضمان التوافق مع دالة الـ SDK التي تتوقع std::string وليس path
+        pl::modmenu::registerResourcePack((packDir / pack).string(), pack);
     }
 
     m_resourcesRegistered = true;
