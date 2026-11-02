@@ -25,7 +25,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **Visual:** Hitbox, Block Outline, Wings, Jump Circle, Damage Circle
 
-**HUD:** Effect Display, Crosshair, Hotbar Slots, Inventory HUD, Armor
+**HUD:** Effect Display, Crosshair, Inventory HUD, Armor
 
 **Player:** Custom Capes
 

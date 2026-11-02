@@ -10,7 +10,6 @@
 #include "misc/commandhotkey.hpp"
 #include "hud/crosshair.hpp"
 #include <bedrocktools/modules/visual/wings.hpp>
-#include "hud/hotbarslots.hpp"
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
 
@@ -77,7 +76,6 @@ void registerAllModules() {
     registry.emplace<CommandHotkeyModule>();
     registry.emplace<CrosshairModule>();
     registry.emplace<WingsModule>();
-    registry.emplace<HotbarSlotsModule>();
     registry.emplace<InventoryHudModule>();
     registry.emplace<ArmorModule>();
     registry.emplace<JumpCircleModule>();
