@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/Runtime.hpp"
-#include "resources/ResourcePackManager.hpp"
+#include "bedrocktools/resources/ResourcePackManager.hpp"
 #include "launcher/ModuleMenu.hpp"
 #include <bedrocktools/sdk/client/ClientInstance.hpp>
 #include <filesystem>
