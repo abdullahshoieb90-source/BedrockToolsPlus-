@@ -14,6 +14,10 @@ public:
     bool unload(pl::mod::ModContext& context);
     void minecraftLoaded();
     const std::filesystem::path& resourceDirectory() const noexcept;
+    
+    // يرجع مجلد الـ Resource Pack الخاص بـ BedrockToolsPlus داخل مجلد الـ Launcher
+    // (عادةً يكون <resourceDir>/resource_packs أو <configDir>/resource_packs)
+    const std::filesystem::path& resourcePackDirectory() const noexcept;
 
 private:
     bool resolveSignatures();
@@ -21,6 +25,7 @@ private:
     bool launcherContext() const;
     void wireEvents();
     std::filesystem::path mResourceDirectory;
+    std::filesystem::path mResourcePackDirectory;
 };
 
 }

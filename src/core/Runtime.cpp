@@ -129,6 +129,15 @@ void Runtime::minecraftLoaded() {
 bool Runtime::load(pl::mod::ModContext& context) {
     bedrocktools::launcher::setJavaVm(context.javaVm());
     mResourceDirectory = context.resourceDir();
+    
+    // إنشاء مجلد الـ Resource Pack الخاص بـ BedrockToolsPlus داخل مجلد الموارد الخاص بالـ Launcher
+    // بحيث يمكن للمستخدم وضع ملفات الـ Resource Pack فيه ويتم تطبيقها تلقائياً.
+    mResourcePackDirectory = mResourceDirectory / "resource_packs";
+    std::error_code ec;
+    if (!std::filesystem::exists(mResourcePackDirectory, ec)) {
+        std::filesystem::create_directories(mResourcePackDirectory, ec);
+    }
+
     bedrocktools::config::ConfigManager::get().setConfigPath((context.configDir() / "config.json").string());
     if (!launcherContext()) return true;
     void* minecraft = dlopen("libminecraftpe.so", RTLD_NOW | RTLD_NOLOAD);
