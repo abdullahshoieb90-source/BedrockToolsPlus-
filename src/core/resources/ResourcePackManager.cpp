@@ -1,4 +1,4 @@
-#include \"ResourcePackManager.hpp\"
+#include "ResourcePackManager.hpp"
 #include <filesystem>
 #include <system_error>
 
