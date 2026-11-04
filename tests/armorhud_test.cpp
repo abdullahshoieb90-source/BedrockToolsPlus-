@@ -656,6 +656,37 @@ int main() {
     frame();
     check(findText("220/363") && findIcon(heldStack.bytes), "closing container restores icons and numbers");
 
+    // The strongest-armor highlight: with the option on, opening a container
+    // keeps the column visible and draws a box around the strongest piece
+    // (chestplate, 528 max durability, slot index 1 at y = 200 + 36).
+    nlohmann::json highlightConfig;
+    highlightConfig["m_highlightStrongest"] = true;
+    highlightConfig["m_highlightColor"] = "#FFD700";
+    module.loadConfig(highlightConfig);
+    const auto isHighlightEdge = [&](const auto& command) {
+        return command.type == pl::modmenu::DrawCommandType::RectFilled &&
+               command.color == 0xFFFFD700u && command.w != 34.0f; // border bar, not the wash
+    };
+    screen.phase = ScreenPhase::Opened;
+    bus().publish(screen);
+    frame();
+    check(findIcon(armor.stack(1)) && findText("528/528"),
+          "highlight keeps the armor column visible while the container is open");
+    check(std::count_if(commands.begin(), commands.end(), isHighlightEdge) == 4,
+          "container open draws a four-edge box around the strongest armor");
+    check(std::any_of(commands.begin(), commands.end(), [&](const auto& command) {
+        return command.type == pl::modmenu::DrawCommandType::RectFilled &&
+               near(command.x, 24.0f) && near(command.y, 236.0f) &&
+               near(command.w, 32.0f) && near(command.h, 32.0f);
+    }), "the highlight box is centered on the chestplate slot");
+    screen.phase = ScreenPhase::Closed;
+    bus().publish(screen);
+    frame();
+    check(std::none_of(commands.begin(), commands.end(), isHighlightEdge),
+          "closing the container removes the highlight box");
+    highlightConfig["m_highlightStrongest"] = false;
+    module.loadConfig(highlightConfig);
+
     offhand = nullptr;
     frame();
     check(!findIcon(heldStack.bytes) && findText("220/363"), "empty offhand does not hide armor or retain old icon");

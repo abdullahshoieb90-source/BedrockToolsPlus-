@@ -248,6 +248,8 @@ ArmorModule::ConfigSnapshot ArmorModule::snapshotConfig() const {
     config.durability = m_showDurability;
     config.armorDurability = m_showArmorDurability;
     config.hideInContainer = m_hideInContainer;
+    config.highlightStrongest = m_highlightStrongest;
+    config.highlightColor = huditems::parseColor(m_highlightColor, 0xFFFFD700u);
     config.slotBackground = m_slotBackground;
     config.slotBgColor = huditems::withOpacity(huditems::parseColor(m_slotBgColor, 0xFF000000u), m_slotBgOpacity);
     config.hotbarBackground = m_hotbarBackground;
@@ -266,6 +268,7 @@ ArmorModule::ConfigSnapshot ArmorModule::snapshotConfig() const {
 void ArmorModule::clearRuntime() {
     for (auto& slot : m_slots) storeRuntime(slot, nullptr, nullptr, false);
     storeRuntime(m_mainhandRuntime, nullptr, nullptr, false);
+    m_strongestSlot.store(-1, std::memory_order_release);
 }
 
 // Publishes what the render thread saw for one slot to onFrame(); a null
@@ -286,7 +289,12 @@ void ArmorModule::storeRuntime(SlotRuntime& runtime, void* stack, void* item, bo
 
 void ArmorModule::renderNative(void* context, void* client) {
     const ConfigSnapshot config = snapshotConfig();
-    const bool hidden = config.hideInContainer && hiddenByScreen();
+    const bool containerOpen = hiddenByScreen();
+    // The strongest-armor highlight is meant for open containers (inventory,
+    // chest, ...): while it is active the column stays visible so the box
+    // lands on the icon.
+    const bool highlightActive = config.highlightStrongest && containerOpen;
+    const bool hidden = config.hideInContainer && containerOpen && !highlightActive;
 
     // Even while hidden the player is still needed to keep the overlay
     // bookkeeping (counts / durability) current, so only the render setup
@@ -316,6 +324,28 @@ void ArmorModule::renderNative(void* context, void* client) {
         storeRuntime(runtime, allStacks[i], items[i], wantDurability);
     }
 
+    // Pick the strongest armor piece (helmet..boots) for the inventory-open
+    // highlight; the box itself is drawn from this index, both here (native
+    // fill, always composited with the HUD pass) and by onFrame (overlay).
+    int strongestIndex = -1;
+    if (config.highlightStrongest) {
+        std::array<bool, layout::ArmorSlotCount> has{};
+        std::array<int, layout::ArmorSlotCount> maxDamage{};
+        std::array<int, layout::ArmorSlotCount> damage{};
+        for (std::size_t i = 0; i < layout::ArmorSlotCount; ++i) {
+            has[i] = items[i] != nullptr;
+            if (has[i]) {
+                maxDamage[i] = huditems::itemMaxDamage(items[i]);
+                if (maxDamage[i] > 0) damage[i] = huditems::stackDamage(allStacks[i]);
+            }
+        }
+        strongestIndex = static_cast<int>(layout::strongestArmorIndex(has.data(), maxDamage.data(), damage.data()));
+        if (strongestIndex >= static_cast<int>(layout::ArmorSlotCount)) strongestIndex = -1;
+        m_strongestSlot.store(strongestIndex, std::memory_order_release);
+    } else {
+        m_strongestSlot.store(-1, std::memory_order_release);
+    }
+
     if (!painter.ready()) return;
 
     // The slot cells are painted before the icons of the same pass, so the
@@ -328,6 +358,22 @@ void ArmorModule::renderNative(void* context, void* client) {
             const SlotRect rect = slotOrMainhandRect(config.layout, i);
             painter.fillRect(rect.x, rect.y, rect.size, rect.size, config.slotBgColor);
         }
+    }
+
+    // Native highlight box around the strongest armor piece while a container
+    // (inventory, chest, ...) is open. Filled edge bars slightly outside the
+    // icon, painted in the same pass as the slot backgrounds.
+    if (highlightActive && strongestIndex >= 0) {
+        const SlotRect rect = layout::slotRect(config.layout, static_cast<std::size_t>(strongestIndex));
+        constexpr float t = 2.0f;
+        constexpr float o = 1.0f;
+        const float x = rect.x - o;
+        const float y = rect.y - o;
+        const float s = rect.size + 2.0f * o;
+        painter.fillRect(x, y, s, t, config.highlightColor);
+        painter.fillRect(x, y + s - t, s, t, config.highlightColor);
+        painter.fillRect(x, y, t, s, config.highlightColor);
+        painter.fillRect(x + s - t, y, t, s, config.highlightColor);
     }
 
     // The vanilla hotbar cells are painted behind the occupied slots of the
@@ -422,7 +468,9 @@ void ArmorModule::onFrame() {
     pl::modmenu::submitHudEditorElements(moduleId, elements);
 
     std::vector<pl::modmenu::DrawCommand> commands;
-    const bool hidden = config.hideInContainer && hiddenByScreen();
+    const bool containerOpen = hiddenByScreen();
+    const bool highlightActive = config.highlightStrongest && containerOpen;
+    const bool hidden = config.hideInContainer && containerOpen && !highlightActive;
     if (!hidden && (config.stackCount || config.durability || config.armorDurability)) {
         auto decorate = [&](const SlotRuntime& runtime, const SlotRect& rect, bool armorSlot) {
             if (!runtime.hasItem.load(std::memory_order_acquire) || rect.size <= 0.0f) return;
@@ -490,6 +538,47 @@ void ArmorModule::onFrame() {
             decorate(m_slots[i], layout::slotRect(config.layout, i), i < layout::OffhandIndex);
         }
         if (config.showMainhand) decorate(m_mainhandRuntime, mainhandRect(config.layout), false);
+    }
+
+    // Box around the strongest armor piece while the inventory is open. Drawn
+    // as four filled edge bars (slightly outside the icon) because the overlay
+    // renderer draws RectFilled reliably; a Rect outline can come out hairline.
+    if (highlightActive) {
+        const int strongest = m_strongestSlot.load(std::memory_order_acquire);
+        if (strongest >= 0 && static_cast<std::size_t>(strongest) < layout::ArmorSlotCount) {
+            const SlotRect rect = layout::slotRect(config.layout, static_cast<std::size_t>(strongest));
+            // Soft translucent wash over the icon so the highlight reads even
+            // when the border is thin on a small slot.
+            pl::modmenu::DrawCommand wash;
+            wash.type = pl::modmenu::DrawCommandType::RectFilled;
+            wash.x = rect.x;
+            wash.y = rect.y;
+            wash.w = rect.size;
+            wash.h = rect.size;
+            wash.color = config.highlightColor & 0x40FFFFFFu; // keep hue, drop to ~25% alpha
+            commands.push_back(std::move(wash));
+            constexpr float t = 2.0f;   // edge thickness
+            constexpr float o = 1.0f;   // gap between icon and box
+            const float x = rect.x - o;
+            const float y = rect.y - o;
+            const float s = rect.size + 2.0f * o;
+            const std::array<std::array<float, 4>, 4> edges{{
+                {x, y, s, t},               // top
+                {x, y + s - t, s, t},       // bottom
+                {x, y, t, s},               // left
+                {x + s - t, y, t, s},       // right
+            }};
+            for (const auto& e : edges) {
+                pl::modmenu::DrawCommand edge;
+                edge.type = pl::modmenu::DrawCommandType::RectFilled;
+                edge.x = e[0];
+                edge.y = e[1];
+                edge.w = e[2];
+                edge.h = e[3];
+                edge.color = config.highlightColor;
+                commands.push_back(std::move(edge));
+            }
+        }
     }
     pl::modmenu::submitDrawCommands(moduleId, commands);
 }
@@ -614,6 +703,17 @@ void ArmorModule::onMenuRegistered() {
         hide.section = "auto_hide";
         hide.description = "Hides the armor element while the inventory, a chest or any other container screen is open.";
         schema.node(std::move(hide));
+
+        auto highlight = node("m_highlightStrongest", "Highlight Strongest Armor", "visibility", ConfigControlTypeV2::Toggle);
+        highlight.section = "auto_hide";
+        highlight.description = "While the inventory (or any container) is open, draws a box around your strongest armor piece and keeps the armor column visible for it.";
+        schema.node(std::move(highlight));
+
+        auto highlightColor = node("m_highlightColor", "Highlight Color", "visibility", ConfigControlTypeV2::Color);
+        highlightColor.section = "auto_hide";
+        highlightColor.defaultValue = "#FFD700";
+        highlightColor.visibleWhen = {{"m_highlightStrongest", ConfigConditionOpV2::Truthy, {}}};
+        schema.node(std::move(highlightColor));
     }
 
     auto help = node("editor_help", "An Element Of Its Own", "editor", ConfigControlTypeV2::Info);
@@ -692,6 +792,8 @@ void ArmorModule::loadConfig(const nlohmann::json& j) {
     if (j.contains("m_showDurability")) m_showDurability = j["m_showDurability"].get<bool>();
     if (j.contains("m_showArmorDurability")) m_showArmorDurability = j["m_showArmorDurability"].get<bool>();
     if (j.contains("m_hideInContainer")) m_hideInContainer = j["m_hideInContainer"].get<bool>();
+    if (j.contains("m_highlightStrongest")) m_highlightStrongest = j["m_highlightStrongest"].get<bool>();
+    if (j.contains("m_highlightColor")) m_highlightColor = j["m_highlightColor"].get<std::string>();
     if (j.contains("m_slotBackground")) m_slotBackground = j["m_slotBackground"].get<bool>();
     if (j.contains("m_slotBgOpacity")) m_slotBgOpacity = std::clamp(j["m_slotBgOpacity"].get<float>(), 0.05f, 1.0f);
     if (j.contains("m_slotBgColor")) m_slotBgColor = j["m_slotBgColor"].get<std::string>();
@@ -721,6 +823,8 @@ void ArmorModule::saveConfig(nlohmann::json& j) {
     j["m_showDurability"] = m_showDurability;
     j["m_showArmorDurability"] = m_showArmorDurability;
     j["m_hideInContainer"] = m_hideInContainer;
+    j["m_highlightStrongest"] = m_highlightStrongest;
+    j["m_highlightColor"] = m_highlightColor;
     j["m_slotBackground"] = m_slotBackground;
     j["m_slotBgOpacity"] = m_slotBgOpacity;
     j["m_slotBgColor"] = m_slotBgColor;

@@ -64,6 +64,8 @@ private:
         bool durability = true;
         bool armorDurability = true;
         bool hideInContainer = true;
+        bool highlightStrongest = false;
+        std::uint32_t highlightColor = 0xFFFFD700u; // gold
         bool slotBackground = true;
         bool hotbarBackground = true;
         std::uint32_t slotBgColor = 0x73000000u; // "#000000" at 45%
@@ -85,6 +87,7 @@ private:
     std::array<SlotRuntime, SlotCount> m_slots;
     SlotRuntime m_mainhandRuntime; // the right hand, shown past the column's end
     std::atomic_int m_containerDepth{0};
+    std::atomic_int m_strongestSlot{-1}; // armor index picked by the highlight, -1 = none
 
     float hudPosX = 24.0f;
     float hudPosY = 200.0f;
@@ -97,6 +100,8 @@ private:
     bool m_showDurability = true;
     bool m_showArmorDurability = true;
     bool m_hideInContainer = true;
+    bool m_highlightStrongest = false;
+    std::string m_highlightColor = "#FFD700";
     bool m_slotBackground = true;
     bool m_hotbarBackground = true;
     float m_slotBgOpacity = 0.45f; 

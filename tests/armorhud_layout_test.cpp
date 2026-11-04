@@ -87,6 +87,31 @@ int main() {
     expectNear("labeled row width", columnWidth(labeledRow), 5 * 120.0f + 4 * 4.0f);
     expectNear("labeled row height", columnHeight(labeledRow), 32.0f);
 
+    // Strongest armor: highest max durability wins (armor tier), ties break by
+    // remaining durability, empty or unbreakable slots are skipped.
+    {
+        const bool has[ArmorSlotCount] = {true, true, true, true};
+        const int maxD[ArmorSlotCount] = {55, 240, 528, 75};   // leather helm, iron chest, diamond legs, leather boots
+        const int dmg[ArmorSlotCount] = {0, 0, 0, 0};
+        if (strongestArmorIndex(has, maxD, dmg) != 2) { std::printf("  FAIL strongest picks highest tier\n"); ++failures; }
+
+        const int worn[ArmorSlotCount] = {0, 100, 200, 0};     // same tier tie on leggings vs boots? no: diamond still wins
+        if (strongestArmorIndex(has, maxD, worn) != 2) { std::printf("  FAIL strongest ignores lower tiers\n"); ++failures; }
+
+        const int tieMax[ArmorSlotCount] = {528, 528, 528, 528};
+        const int tieDmg[ArmorSlotCount] = {500, 100, 400, 200}; // chestplate has the most remaining durability
+        if (strongestArmorIndex(has, tieMax, tieDmg) != 1) { std::printf("  FAIL strongest tie-breaks by remaining durability\n"); ++failures; }
+
+        const bool none[ArmorSlotCount] = {false, false, false, false};
+        if (strongestArmorIndex(none, maxD, dmg) != ArmorSlotCount) { std::printf("  FAIL strongest with no armor\n"); ++failures; }
+
+        const bool partial[ArmorSlotCount] = {false, false, false, true};
+        if (strongestArmorIndex(partial, maxD, dmg) != 3) { std::printf("  FAIL strongest skips empty slots\n"); ++failures; }
+
+        const int zero[ArmorSlotCount] = {0, 0, 0, 0};          // unbreakable items never count
+        if (strongestArmorIndex(has, zero, dmg) != ArmorSlotCount) { std::printf("  FAIL strongest skips unbreakable\n"); ++failures; }
+    }
+
     if (failures == 0) {
         std::printf("armorhud_layout_test: all checks passed\n");
         return 0;

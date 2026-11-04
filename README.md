@@ -78,6 +78,7 @@ The module owns a single HUD Editor element, **Inventory Grid**. Armor and the o
 - **Armor Durability Numbers** is on by default and displays each piece's remaining/maximum durability (for example, `220/363`), including fully repaired armor. It works independently of the durability bars, and its labels are part of the armor element.
 - **Slot Background** (on by default) draws a cell behind every armor and offhand slot — empty ones included — so the column reads like the inventory screen. **Background Color** and **Background Opacity** style those cells.
 - **Horizontal Layout** lays the five slots out in a row instead of a column.
+- **Highlight Strongest Armor** under **Visibility** draws a box (default gold, configurable via **Highlight Color**) around your strongest armor piece while the inventory, a chest or any other container screen is open, keeping the armor column visible so the box lands on the piece. "Strongest" means the highest armor tier (netherite > diamond > iron > ...), with ties broken by remaining durability.
 
 Configs saved while armor was still an Inventory HUD option are migrated automatically: the new module inherits the position, size and style you had, and it starts enabled only if **Armor & Offhand** was on.
 

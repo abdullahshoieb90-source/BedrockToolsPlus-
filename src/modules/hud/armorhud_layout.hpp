@@ -90,4 +90,24 @@ inline float columnHeight(const ArmorLayout& layout) {
            layout.gap * static_cast<float>(SlotCount - 1);
 }
 
+// Index of the strongest armor piece among the four armor slots (helmet,
+// chestplate, leggings, boots). Max durability stands in for the armor tier
+// (netherite > diamond > iron > chainmail > leather ...); ties are broken by
+// remaining durability. Returns ArmorSlotCount when no armor piece is worn.
+inline std::size_t strongestArmorIndex(const bool* hasItem, const int* maxDamage, const int* damage) {
+    std::size_t best = ArmorSlotCount;
+    int bestMax = -1;
+    int bestRemaining = -1;
+    for (std::size_t i = 0; i < ArmorSlotCount; ++i) {
+        if (!hasItem[i] || maxDamage[i] <= 0) continue;
+        const int remaining = maxDamage[i] - std::clamp(damage[i], 0, maxDamage[i]);
+        if (maxDamage[i] > bestMax || (maxDamage[i] == bestMax && remaining > bestRemaining)) {
+            best = i;
+            bestMax = maxDamage[i];
+            bestRemaining = remaining;
+        }
+    }
+    return best;
+}
+
 } // namespace bedrocktools::armorhud
