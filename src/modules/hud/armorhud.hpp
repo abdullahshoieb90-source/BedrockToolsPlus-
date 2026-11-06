@@ -16,11 +16,11 @@
 // is now a module of its own, with its own toggle, keybind, HUD element and
 // settings, so it can be used completely without the inventory grid.
 //
-// It shares its plumbing with Inventory HUD and Hotbar Slots (see
-// huditems.hpp): the stacks come straight from the player's equipment
-// containers and the icons are painted by the game's ItemRenderer from the
-// HudCameraRenderer hook. Counts, durability numbers and bars use launcher
-// overlay draw commands, like the other HUD modules' text.
+// It shares its plumbing with Inventory HUD (see huditems.hpp): the stacks
+// come straight from the player's equipment containers and the icons are
+// painted by the game's ItemRenderer from the HudCameraRenderer hook. Counts,
+// durability numbers and bars use launcher overlay draw commands, like the
+// other HUD modules' text.
 class ArmorModule final : public Module {
 public:
     static constexpr std::size_t SlotCount = bedrocktools::armorhud::SlotCount;

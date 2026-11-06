@@ -16,11 +16,11 @@
 // Armor and the offhand are handled by the separate Armor module: this module
 // owns nothing but the inventory grid.
 //
-// It shares its plumbing with the Armor module and Hotbar Slots (see
-// huditems.hpp): the stacks come straight from the player's FillingContainer
-// and the icons are painted by the game's ItemRenderer from the
-// HudCameraRenderer hook. Stack counts and durability bars use launcher
-// overlay draw commands, like the other HUD modules' text.
+// It shares its plumbing with the Armor module (see huditems.hpp): the stacks
+// come straight from the player's FillingContainer and the icons are painted
+// by the game's ItemRenderer from the HudCameraRenderer hook. Stack counts and
+// durability bars use launcher overlay draw commands, like the other HUD
+// modules' text.
 class InventoryHudModule final : public Module {
 public:
     static constexpr std::size_t GridSlotCount = bedrocktools::inventoryhud::GridSlotCount;

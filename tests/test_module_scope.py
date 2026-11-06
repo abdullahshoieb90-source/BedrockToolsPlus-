@@ -18,7 +18,7 @@ class ModuleScopeTest(unittest.TestCase):
             "HitSoundModule", "EffectDisplayModule", "HitboxModule",
             "BlockOutlineModule", "CustomCapesModule", "CommentKey",
             "CommandHotkeyModule", "CrosshairModule", "WingsModule",
-            "HotbarSlotsModule", "InventoryHudModule", "ArmorModule",
+            "InventoryHudModule", "ArmorModule",
             "JumpCircleModule", "DamageCircleModule",
         ])
 
@@ -31,7 +31,7 @@ class ModuleScopeTest(unittest.TestCase):
         self.assertEqual(actual, {
             "ModuleRegistry.cpp", "misc/hitsound.cpp", "misc/commentkey.cpp",
             "misc/commandhotkey.cpp", "hud/effectdisplay.cpp",
-            "hud/crosshair.cpp", "hud/hotbarslots.cpp", "hud/huditems.cpp",
+            "hud/crosshair.cpp", "hud/huditems.cpp",
             "hud/inventoryhud.cpp", "hud/armorhud.cpp", "visual/hitbox.cpp",
             "visual/blockoutline.cpp", "visual/wings.cpp", "visual/jumpcircle.cpp",
             "visual/damagecircle.cpp",

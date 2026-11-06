@@ -1,7 +1,7 @@
 #pragma once
 
 // Shared plumbing for the HUD modules that paint inventory items with the
-// game's own ItemRenderer (ArmorHUD, Hotbar Slots, Inventory HUD).
+// game's own ItemRenderer (ArmorHUD, Inventory HUD).
 //
 // Those modules only differ in *which* stacks they show and *where*. Everything
 // else lives here so it is written (and fixed for a new game version) once:
