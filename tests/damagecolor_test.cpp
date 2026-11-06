@@ -145,7 +145,7 @@ int main() {
     // Detour wiring: with fake trampolines installed, the detours forward the
     // replacement color (or the caller's own overlay when disabled) on both
     // the world and the UI paths. A fresh module becomes the global instance,
-    // so its default red is what the detours produce.
+    // so its default cyan (#00E5FF) is what the detours produce.
     DamageColorModule final;
     final.setMasterEnabled(true);
 
@@ -156,9 +156,9 @@ int main() {
         nullptr, nullptr, nullptr, nullptr, nullptr,
         0.0f, 0.0f, 0.0f, 0.0f);
     assert(g_seenEntityOverlay && g_seenEntityOverlay != &overlay);
-    assertFloatClose(g_seenEntityOverlay->r, 1.0f);
-    assertFloatClose(g_seenEntityOverlay->g, 0.0f);
-    assertFloatClose(g_seenEntityOverlay->b, 0.0f);
+    assertFloatClose(g_seenEntityOverlay->r, 0.0f);
+    assertFloatClose(g_seenEntityOverlay->g, 229.0f / 255.0f);
+    assertFloatClose(g_seenEntityOverlay->b, 1.0f);
     assertFloatClose(g_seenEntityOverlay->a, overlay.a);
 
     g_setupShaderParametersGlintOriginal = &recordSetupShaderParametersGlint;
@@ -174,8 +174,8 @@ int main() {
     setupShaderParametersGlintDetour(
         nullptr, &overlay, nullptr, nullptr, nullptr,
         0.0f, 0.0f, 0.0f, 0.0f, nullptr, nullptr, 0.0f);
-    assertFloatClose(g_seenUiOverlay.r, 1.0f);
-    assertFloatClose(g_seenUiOverlay.g, 0.0f);
+    assertFloatClose(g_seenUiOverlay.r, 0.0f);
+    assertFloatClose(g_seenUiOverlay.g, 229.0f / 255.0f);
     assertFloatClose(g_seenUiOverlay.a, overlay.a);
 
     return 0;

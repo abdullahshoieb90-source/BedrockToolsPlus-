@@ -96,7 +96,7 @@ SetupShaderParametersGlintFn g_setupShaderParametersGlintOriginal = nullptr;
 Color makeDamageColor(const Color* overlay) {
     const float alpha = overlay ? std::clamp(overlay->a, 0.0f, 1.0f) : 1.0f;
 
-    std::uint32_t rgb = 0x00FF0000u;
+    std::uint32_t rgb = 0x0000E5FFu;
     if (g_damageColor) {
         if (g_damageColor->rainbowEnabled()) {
             const double seconds = std::chrono::duration<double>(

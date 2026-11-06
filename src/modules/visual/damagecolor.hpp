@@ -26,7 +26,7 @@ public:
     float rainbowSpeedValue() const;
 
 private:
-    std::atomic<std::uint32_t> m_damageColor{0xFFFF0000u};
+    std::atomic<std::uint32_t> m_damageColor{0xFF00E5FFu};
     std::atomic<bool> m_rainbow{false};
     std::atomic<float> m_rainbowSpeed{0.20f};
 
