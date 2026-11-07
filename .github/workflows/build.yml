@@ -22,8 +22,18 @@ jobs:
 
       - name: Build and package
         run: |
-          xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }}
-          xmake -y
+          set +e
+          {
+            xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }}
+            xmake -y
+          } 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -n 30 build.log | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            exit "$status"
+          fi
 
       - name: Run host C++ tests
         run: ./scripts/run_tests.sh
