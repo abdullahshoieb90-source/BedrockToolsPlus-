@@ -14,6 +14,7 @@
 #include <limits>
 #include <mutex>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <random>
 #include <string_view>
@@ -23,9 +24,6 @@
 #include <utility>
 #include <vector>
 
-#if defined(__ANDROID__) || defined(__linux__)
-#include <sys/random.h>
-#endif
 #include <unistd.h>
 
 namespace bedrocktools::voice {
@@ -40,16 +38,9 @@ constexpr std::size_t kJitterFrames = 3;
 constexpr std::size_t kMaxBufferedFrames = 8;
 
 bool secureRandom(std::uint8_t* data, std::size_t size) {
+    // /dev/urandom is available on every supported Android version and does
+    // not depend on NDK getrandom() declarations or a particular API level.
     std::size_t offset = 0;
-#if defined(__ANDROID__) || defined(__linux__)
-    while (offset < size) {
-        const ssize_t count = getrandom(data + offset, size - offset, 0);
-        if (count > 0) offset += static_cast<std::size_t>(count);
-        else if (count < 0 && errno == EINTR) continue;
-        else break;
-    }
-    if (offset == size) return true;
-#endif
     const int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
     if (fd < 0) return false;
     while (offset < size) {
