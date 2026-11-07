@@ -12,6 +12,7 @@
 #include <bedrocktools/modules/visual/wings.hpp>
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
+#include "voice/voicechat.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -80,4 +81,5 @@ void registerAllModules() {
     registry.emplace<ArmorModule>();
     registry.emplace<JumpCircleModule>();
     registry.emplace<DamageCircleModule>();
+    registry.emplace<VoiceChatModule>();
 }

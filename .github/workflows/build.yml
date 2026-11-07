@@ -25,6 +25,12 @@ jobs:
           xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }}
           xmake -y
 
+      - name: Run host C++ tests
+        run: ./scripts/run_tests.sh
+
+      - name: Test voice relay
+        run: python3 -m unittest -v tests/test_voicechat_relay.py
+
       - uses: actions/upload-artifact@v5
         with:
           name: BedrockToolsPlus-levipack

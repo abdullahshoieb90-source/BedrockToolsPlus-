@@ -71,12 +71,16 @@ inline bool registerFont(std::string_view, std::span<const unsigned char>) {
 // (see the Zoom / Command Hotkey modules for the production usage).
 enum class ButtonBehavior {
     Click,
+    Hold,
     Toggle,
 };
 
 enum class ButtonEvent {
     Click,
+    Down,
+    Up,
     StateChanged,
+    Scroll,
 };
 
 enum class ButtonStylePreset {

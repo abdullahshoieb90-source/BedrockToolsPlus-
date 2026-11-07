@@ -17,6 +17,7 @@
 using jsize = std::int32_t;
 using jint = std::int32_t;
 using jlong = std::int64_t;
+using jshort = std::int16_t;
 using jboolean = std::uint8_t;
 
 constexpr jint JNI_OK = 0;
@@ -41,6 +42,7 @@ using jclass = _jclass *;
 using jstring = _jobject *; // real JNI strings are opaque; pointer identity is enough here
 using jarray = _jobject *;
 using jobjectArray = _jobject *;
+using jshortArray = _jobject *;
 using jmethodID = _jmethodID *;
 using jfieldID = _jfieldID *;
 
@@ -55,7 +57,12 @@ struct JNIEnv {
     jobject (*CallStaticObjectMethodVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jint (*CallStaticIntMethodVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jobject (*CallObjectMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
+    jint (*CallIntMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
     void (*CallVoidMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
+    jobject (*NewObjectVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
+    jshortArray (*NewShortArrayFn)(JNIEnv *, jsize) = nullptr;
+    void (*GetShortArrayRegionFn)(JNIEnv *, jshortArray, jsize, jsize, jshort *) = nullptr;
+    void (*SetShortArrayRegionFn)(JNIEnv *, jshortArray, jsize, jsize, const jshort *) = nullptr;
     jobject (*GetObjectFieldFn)(JNIEnv *, jobject, jfieldID) = nullptr;
     jsize (*GetArrayLengthFn)(JNIEnv *, jarray) = nullptr;
     jobject (*GetObjectArrayElementFn)(JNIEnv *, jobjectArray, jsize) = nullptr;
@@ -117,6 +124,27 @@ struct JNIEnv {
         jobject r = CallObjectMethodVFn(this, o, m, ap);
         va_end(ap);
         return r;
+    }
+    jint CallIntMethod(jobject o, jmethodID m, ...) {
+        va_list ap;
+        va_start(ap, m);
+        jint r = CallIntMethodVFn(this, o, m, ap);
+        va_end(ap);
+        return r;
+    }
+    jobject NewObject(jclass c, jmethodID m, ...) {
+        va_list ap;
+        va_start(ap, m);
+        jobject r = NewObjectVFn(this, c, m, ap);
+        va_end(ap);
+        return r;
+    }
+    jshortArray NewShortArray(jsize size) { return NewShortArrayFn(this, size); }
+    void GetShortArrayRegion(jshortArray array, jsize start, jsize length, jshort *out) {
+        GetShortArrayRegionFn(this, array, start, length, out);
+    }
+    void SetShortArrayRegion(jshortArray array, jsize start, jsize length, const jshort *values) {
+        SetShortArrayRegionFn(this, array, start, length, values);
     }
     jsize GetArrayLength(jarray a) { return GetArrayLengthFn(this, a); }
     jobject GetObjectArrayElement(jobjectArray a, jsize i) {

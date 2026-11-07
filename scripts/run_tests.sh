@@ -84,6 +84,11 @@ for source in "${root}"/tests/*_test.cpp; do
         externalbuttonrefresh_test)
             extra+=(-I "${root}/tests/fakejni")
             ;;
+        voicechat_protocol_test)
+            extra+=(-I "${root}/third_party")
+            extra_srcs+=("${root}/src/modules/voice/voicechat_protocol.cpp"
+                         "${root}/third_party/monocypher/monocypher.c")
+            ;;
         hitbox_patch_test)
             # Includes the production module; the preloader and
             # nlohmann_json headers come from the host fakes. Drives the

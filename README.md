@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 13 configurable modules
+- 14 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -30,6 +30,8 @@ The source is public so people can study how a real LeviLauncher mod is structur
 **Player:** Custom Capes
 
 **Misc:** Hit Sound, CommentKey, Command Hotkey
+
+**Voice:** Voice Chat (encrypted room and proximity modes, with a self-hosted UDP relay)
 
 ## Hitbox
 
@@ -148,6 +150,14 @@ The **Hit Sound** module plays a custom sound of your choice every time you land
 
 The sound is a purely client-side overlay: the victim's own hurt sound is not cancelled or replaced, and nothing is sent to the server. Files whose names contain a comma are ignored (the menu picker cannot represent them), and sounds that fail to decode on your device are simply skipped.
 
+## Voice Chat
+
+**Voice Chat** provides normal room calls and distance-based proximity voice, with push-to-talk or open-microphone capture, a mobile **TALK** button, keyboard shortcut, volume controls, and a movable status HUD. Voice packets and player positions are end-to-end encrypted with XChaCha20-Poly1305; the relay never receives the room key.
+
+A self-hosted UDP relay is required and no public relay is provided. Every participant needs a compatible BedrockToolsPlus build, the same relay/room/key, and LeviLaunchroid **1.6.1+** with microphone permission enabled manually. The dependency-free Python relay is included at `tools/voicechat_relay.py`.
+
+See **[docs/voice-chat.md](docs/voice-chat.md)** for relay setup, room-key generation, player settings, bandwidth, world-specific proximity rooms, security notes, and troubleshooting.
+
 ## System Requirements
 
 - Android 9 or newer
@@ -213,6 +223,8 @@ Special thanks to [dreamguxiang](https://github.com/dreamguxiang) for helping ma
 Motion blur module based on [mcpelauncher-motion-blur](https://github.com/CrackedMatter/mcpelauncher-motion-blur) by [CrackedMatter](https://github.com/CrackedMatter).
 
 Thanks to [Kashifro](https://github.com/Kashifro) for the Shulker Preview and Tablist modules.
+
+Voice Chat uses [Monocypher](https://github.com/LoupVaillant/Monocypher) 4.0.2 for XChaCha20-Poly1305; its dual BSD/CC0 notice is preserved in `third_party/monocypher/LICENCE.md`.
 
 Built for [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid).
 

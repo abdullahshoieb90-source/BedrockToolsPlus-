@@ -19,7 +19,7 @@ class ModuleScopeTest(unittest.TestCase):
             "BlockOutlineModule", "CustomCapesModule", "CommentKey",
             "CommandHotkeyModule", "CrosshairModule", "WingsModule",
             "InventoryHudModule", "ArmorModule",
-            "JumpCircleModule", "DamageCircleModule",
+            "JumpCircleModule", "DamageCircleModule", "VoiceChatModule",
         ])
 
     def test_only_plus_module_implementations_are_built(self):
@@ -36,6 +36,8 @@ class ModuleScopeTest(unittest.TestCase):
             "visual/blockoutline.cpp", "visual/wings.cpp", "visual/jumpcircle.cpp",
             "visual/damagecircle.cpp",
             "player/customcapes.cpp",
+            "voice/voicechat.cpp", "voice/voicechat_protocol.cpp",
+            "voice/voicechat_audio.cpp", "voice/voicechat_engine.cpp",
         })
         self.assertFalse((ROOT / "src/launcher/OverlayBridge.cpp").exists())
         runtime = (ROOT / "src/core/Runtime.cpp").read_text()
