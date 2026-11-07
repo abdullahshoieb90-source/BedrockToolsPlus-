@@ -3,7 +3,9 @@
 #include "blockoutline_geometry.hpp"
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/memory/Signatures.hpp>
+#include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/sdk/Types.hpp>
+#include <bedrocktools/sdk/world/Actor.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -20,8 +22,11 @@ using Clock = std::chrono::steady_clock;
 // The game passes the hurt (and fire) overlay tint as a raw Color pointer to
 // the actor shader-parameter setup functions. Entity constants and actor
 // constants travel on two near-identical paths; the foil/glint paths serve
-// the same overlay to UI (HUD/screen) draws. All four are replaced so the
-// color is consistent in the world, in hand and on the HUD.
+// the same overlay to UI (HUD/screen) draws. The hurt tint may travel through
+// the overlay channel or through the change-color channels depending on the
+// build, so every tint channel is replaced while a flash is active.
+// The fire overlay travels through the same constant as the hurt flash,
+// so an active module recolors it too.
 using SetEntityConstantsFn = void (*)(
     void*,
     void*,
@@ -115,14 +120,22 @@ Color makeDamageColor(const Color* overlay) {
     };
 }
 
-// Returns the overlay pointer the game should see: the caller's own overlay
-// when the module is disabled (or absent), otherwise a pointer to `storage`.
-// Note the fire overlay travels through the same constant as the hurt flash,
-// so an active module recolors it too.
-const Color* customOverlay(const Color* overlay, Color& storage) {
-    if (!g_damageColor || !g_damageColor->enabled) return overlay;
-    if (!overlay) return overlay;
-    storage = makeDamageColor(overlay);
+// True while the actor is inside its hurt window. The actor path is the only
+// one that receives the actor itself, so it is the one place the flash can be
+// detected directly even if the overlay alpha stays 0.
+bool actorIsHurt(void* actor) {
+    if (reinterpret_cast<std::uintptr_t>(actor) < 0x1000) return false;
+    const int hurt = reinterpret_cast<bedrocktools::sdk::Actor*>(actor)->hurtTime();
+    return hurt > 0 && hurt < 100;
+}
+
+// Returns the pointer the game should see for `color`: its own pointer when
+// the flash is not active (or the module is disabled / color is absent),
+// otherwise a pointer to `storage` holding the custom tint with the source
+// color's own alpha preserved.
+const Color* recolored(const Color* color, Color& storage, bool flashActive) {
+    if (!g_damageColor || !g_damageColor->enabled || !color || !flashActive) return color;
+    storage = makeDamageColor(color);
     return &storage;
 }
 
@@ -145,8 +158,11 @@ void setEntityConstantsDetour(
 ) {
     if (!g_setEntityConstantsOriginal) return;
 
-    Color custom{};
-    const Color* customOverlayColor = customOverlay(overlay, custom);
+    const bool flashActive = overlay && overlay->a > 0.0f;
+    Color overlayCustom{}, changeCustom{}, change2Custom{};
+    const Color* customOverlayColor = recolored(overlay, overlayCustom, flashActive);
+    const Color* customChangeColor = recolored(changeColor, changeCustom, flashActive);
+    const Color* customChange2Color = recolored(changeColor2, change2Custom, flashActive);
     g_setEntityConstantsOriginal(
         entityConstants,
         renderContext,
@@ -154,8 +170,8 @@ void setEntityConstantsDetour(
         tileLightColorUV,
         blockLightColor,
         customOverlayColor,
-        changeColor,
-        changeColor2,
+        customChangeColor,
+        customChange2Color,
         glintColor,
         glintUVScale,
         uvAnim,
@@ -186,15 +202,18 @@ void setupActorShaderParametersGlintDetour(
 ) {
     if (!g_setupActorShaderParametersGlintOriginal) return;
 
-    Color custom{};
-    const Color* customOverlayColor = customOverlay(overlay, custom);
+    const bool flashActive = (overlay && overlay->a > 0.0f) || actorIsHurt(actor);
+    Color overlayCustom{}, changeCustom{}, change2Custom{};
+    const Color* customOverlayColor = recolored(overlay, overlayCustom, flashActive);
+    const Color* customChangeColor = recolored(changeColor, changeCustom, flashActive);
+    const Color* customChange2Color = recolored(changeColor2, change2Custom, flashActive);
     g_setupActorShaderParametersGlintOriginal(
         screenContext,
         entityContext,
         actor,
         customOverlayColor,
-        changeColor,
-        changeColor2,
+        customChangeColor,
+        customChange2Color,
         glintColor,
         uvOffset1,
         uvOffset2,
@@ -217,9 +236,12 @@ void setupFoilShaderParametersDetour(
 ) {
     if (!g_setupFoilShaderParametersOriginal) return;
 
-    Color custom{};
-    const Color* customOverlayColor = customOverlay(overlay, custom);
-    g_setupFoilShaderParametersOriginal(screenContext, customOverlayColor, changeColor, changeColor2, uvScale);
+    const bool flashActive = overlay && overlay->a > 0.0f;
+    Color overlayCustom{}, changeCustom{}, change2Custom{};
+    const Color* customOverlayColor = recolored(overlay, overlayCustom, flashActive);
+    const Color* customChangeColor = recolored(changeColor, changeCustom, flashActive);
+    const Color* customChange2Color = recolored(changeColor2, change2Custom, flashActive);
+    g_setupFoilShaderParametersOriginal(screenContext, customOverlayColor, customChangeColor, customChange2Color, uvScale);
 }
 
 void setupShaderParametersGlintDetour(
@@ -238,13 +260,16 @@ void setupShaderParametersGlintDetour(
 ) {
     if (!g_setupShaderParametersGlintOriginal) return;
 
-    Color custom{};
-    const Color* customOverlayColor = customOverlay(overlay, custom);
+    const bool flashActive = overlay && overlay->a > 0.0f;
+    Color overlayCustom{}, changeCustom{}, change2Custom{};
+    const Color* customOverlayColor = recolored(overlay, overlayCustom, flashActive);
+    const Color* customChangeColor = recolored(changeColor, changeCustom, flashActive);
+    const Color* customChange2Color = recolored(changeColor2, change2Custom, flashActive);
     g_setupShaderParametersGlintOriginal(
         screenContext,
         customOverlayColor,
-        changeColor,
-        changeColor2,
+        customChangeColor,
+        customChange2Color,
         glintColor,
         uvOffset1,
         uvOffset2,

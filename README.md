@@ -66,7 +66,7 @@ Jump and landing are inferred from vertical movement, not a verified game-side g
 
 ## Damage Color
 
-**Damage Color** recolors the red hurt flash that entities—including you—show when they take damage. It hooks the same actor shader-parameter path the vanilla damage flash travels through and replaces only the RGB tint: the flash keeps the game's own timing and fade, so the intensity animation is untouched.
+**Damage Color** recolors the red hurt flash that entities—including you—show when they take damage. It hooks the same actor shader-parameter path the vanilla damage flash travels through. Which color channel carries the tint depends on the game build, so the module replaces the RGB of the overlay tint and, while a flash is active, also the change-color tints. The alpha (fade animation) is always preserved. On the actor render path the flash is detected directly from the actor's hurt timer, so the recolor works even when the overlay alpha stays at 0.
 
 - **Damage Color** sets the tint (defaults to a vivid cyan, intentionally different from the vanilla red so the effect is obvious). **Rainbow** cycles the tint through the whole wheel instead, with **Rainbow Speed** (0.05–1.0) controlling the cycle.
 - The alpha channel of the picked color is ignored on purpose: the game computes the flash strength per frame, and the module keeps that value so the fade behaves exactly like vanilla.
