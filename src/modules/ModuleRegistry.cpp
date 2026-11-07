@@ -5,6 +5,7 @@
 #include "visual/blockoutline.hpp"
 #include "visual/jumpcircle.hpp"
 #include "visual/damagecircle.hpp"
+#include "visual/damagecolor.hpp"
 #include "player/customcapes.hpp"
 #include "misc/commentkey.hpp"
 #include "misc/commandhotkey.hpp"
@@ -80,4 +81,5 @@ void registerAllModules() {
     registry.emplace<ArmorModule>();
     registry.emplace<JumpCircleModule>();
     registry.emplace<DamageCircleModule>();
+    registry.emplace<DamageColorModule>();
 }

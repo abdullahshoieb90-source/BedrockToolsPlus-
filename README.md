@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 13 configurable modules
+- 14 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -63,6 +63,15 @@ Enable **Jump Circle** to show a soft effect at takeoff and landing, including w
 In **Jump Circle**, enable **Persistent** to keep effects visible after they expand instead of fading. For mobile performance, only the most recent 24 effects are retained; disabling the module or changing worlds clears them. Turning Persistent off allows older effects to expire. The effect is depth-tested and visible in third person.
 
 Jump and landing are inferred from vertical movement, not a verified game-side ground event. Automatic jumps and walking off blocks do not depend on button input, but unusual movement, flight, water, bounce effects, jump boosts or partial-block steps may be missed or mistaken for jumps/landings. Rendering depends on the supported Bedrock version's native signatures and materials.
+
+## Damage Color
+
+**Damage Color** recolors the red hurt flash that entities—including you—show when they take damage. It hooks the same actor shader-parameter path the vanilla damage flash travels through. Which color channel carries the tint depends on the game build, so the module replaces the RGB of the overlay tint and, while a flash is active, also the change-color tints. The alpha (fade animation) is always preserved. On the actor render path the flash is detected directly from the actor's hurt timer, so the recolor works even when the overlay alpha stays at 0.
+
+- **Damage Color** sets the tint (defaults to a vivid cyan, intentionally different from the vanilla red so the effect is obvious). **Rainbow** cycles the tint through the whole wheel instead, with **Rainbow Speed** (0.05–1.0) controlling the cycle.
+- The alpha channel of the picked color is ignored on purpose: the game computes the flash strength per frame, and the module keeps that value so the fade behaves exactly like vanilla.
+- The fire overlay travels through the same shader constant, so an active module recolors the fire flash as well.
+- The module is local-only and renders nothing on its own; it only changes how the flash is tinted. Effects are skipped entirely on builds whose shader signatures cannot be resolved.
 
 ## Inventory HUD
 
