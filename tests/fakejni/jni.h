@@ -61,6 +61,7 @@ struct JNIEnv {
     jobject (*GetObjectArrayElementFn)(JNIEnv *, jobjectArray, jsize) = nullptr;
     void (*SetObjectFieldFn)(JNIEnv *, jobject, jfieldID, jobject) = nullptr;
     jstring (*NewStringUTFFn)(JNIEnv *, const char *) = nullptr;
+    jobject (*NewObjectVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jsize (*GetStringUTFLengthFn)(JNIEnv *, jstring) = nullptr;
     const char *(*GetStringUTFCharsFn)(JNIEnv *, jstring, jboolean *) = nullptr;
     void (*ReleaseStringUTFCharsFn)(JNIEnv *, jstring, const char *) = nullptr;
@@ -89,6 +90,14 @@ struct JNIEnv {
     jobject GetObjectField(jobject o, jfieldID f) { return GetObjectFieldFn(this, o, f); }
     void SetObjectField(jobject o, jfieldID f, jobject v) { return SetObjectFieldFn(this, o, f, v); }
     jstring NewStringUTF(const char *s) { return NewStringUTFFn(this, s); }
+    // Constructor call, same variadic shape as the NDK header.
+    jobject NewObject(jclass c, jmethodID m, ...) {
+        va_list ap;
+        va_start(ap, m);
+        jobject r = NewObjectVFn ? NewObjectVFn(this, c, m, ap) : nullptr;
+        va_end(ap);
+        return r;
+    }
     jsize GetStringUTFLength(jstring s) { return GetStringUTFLengthFn(this, s); }
     const char *GetStringUTFChars(jstring s, jboolean *isCopy) {
         return GetStringUTFCharsFn(this, s, isCopy);

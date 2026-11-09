@@ -5,6 +5,10 @@
 //  • Smart Crop & Aspect Ratio: preserve aspect, avoid stretch, auto-fill edges
 //  • Must support: 22×23, 88×92, 176×184, 704×736, 736×797 and any custom size
 //
+// These cover the size/aspect pipeline of resampleToCape() (the Cover fit).
+// Fit-mode selection, the area-average sampler and the large-image prefilter
+// are covered in tests/customcapes_test.cpp.
+//
 // Build: g++ -std=c++20 -I src tests/customcapes_resampler_v2_test.cpp -o /tmp/resampler_v2_test && /tmp/resampler_v2_test
 
 #include "modules/player/customcapes_files.hpp"

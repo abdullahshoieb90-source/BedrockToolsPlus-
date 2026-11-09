@@ -67,6 +67,9 @@ inline bool registerFont(std::string_view, std::span<const unsigned char>) {
     return true;
 }
 
+inline void requestOpenMenu() {}
+inline void requestCloseMenu() {}
+
 // Overlay button API, mirroring the builder calls the real header accepts
 // (see the Zoom / Command Hotkey modules for the production usage).
 enum class ButtonBehavior {

@@ -1,34 +1,56 @@
 #pragma once
 
 #include "../Module.hpp"
+#include "customcapes_files.hpp"
+
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
 // Custom Capes
 //
 // Lets the player wear any PNG as a classic cape. The module owns a "capes"
-// directory next to config.json (`<configDir>/capes`, created on first
-// launch together with a sample cape); every .png file in it shows up as an
-// option of the module's radio picker in the launcher mod menu.
+// directory next to config.json (`<configDir>/capes`, created on first launch
+// together with a sample cape); every usable .png file in it shows up as an
+// option of the module's Cape picker in the launcher mod menu.
 //
-// The selected file is decoded with stb_image and resampled onto the
-// classic-cape layout of the 64x32 canvas Minecraft uses: the image is
-// painted onto the outer back face only (x=1..11, y=1..17), the inner
-// front face is filled with a flat lining color instead of a repeat of the
-// image, and the top/bottom/side edge strips are continued from the image's
-// edge colors so the 1-voxel-thick cape mesh does not look flat. The design
-// is also mapped onto the tapered Elytra UV area used by both wings. Exact
-// 64x32 inputs keep manually-authored Elytra pixels; if that area is empty,
-// the wing fallback is generated from the cape face. The result is written
-// into the local player's SerializedSkinImpl::mCapeImage each tick. Modern game versions
-// only render the classic cape when SerializedSkinImpl::mCapeId is
-// non-empty, so a synthetic short-string id is written alongside the image
-// and restored together with it. The blob handed to the
-// game is malloc'd and tagged with free() as its deleter, so whatever the
-// engine does with the image afterwards (move, destroy, skin rebuild) is
-// memory-safe. The original cape is restored when the module is disabled or
-// "None" is picked.
+// What the module does with an image:
+//   * the file is validated (PNG signature + IHDR) before it is decoded, so a
+//     renamed JPEG, a truncated download or an absurdly large image can never
+//     reach the decoder;
+//   * it is decoded with stb_image and resampled with an area-average filter
+//     onto the outer back face (x=1..11, y=1..17) of the 64x32 cape canvas;
+//   * the inner front face is filled with a flat lining colour, the edge
+//     strips continue the image's edge colours so the 1-voxel-thick cuboid
+//     does not look flat, and the design is mapped onto the tapered Elytra UV
+//     area used by both wings;
+//   * exact 64x32 inputs keep manually authored Elytra pixels.
+//
+// Settings (all persisted in config.json):
+//   * m_cape       - the picker (None + one option per cape file)
+//   * m_capeFit    - how an arbitrary image is fitted on the cape face
+//                    (Cover / Contain / Stretch)
+//   * m_reloadButton     - re-reads the selected file from disk and re-applies
+//                          it (picks up an edited/replaced PNG without a
+//                          restart; the picker's option list itself is fixed
+//                          at launch, so a brand new file needs a menu reload)
+//   * m_copyPathButton   - copies the capes folder path to the clipboard
+//   * m_folderPath       - the folder path, shown as a text row
+//
+// Config callbacks and the in-game tick run on different threads (the launcher
+// menu versus the game's client tick), so everything they share — the file
+// list, the resampled pixels, the selection and the loaded-source cache — is
+// protected by m_mutex.
+//
+// The result is written into the local player's
+// SerializedSkinImpl::mCapeImage each tick. Modern game versions only render
+// the classic cape when SerializedSkinImpl::mCapeId is non-empty, so a
+// synthetic short-string id is written alongside the image and restored
+// together with it. The blob handed to the game is malloc'd and tagged with
+// free() as its deleter, so whatever the engine does with the image afterwards
+// (move, destroy, skin rebuild) is memory-safe. The original cape is restored
+// when the module is disabled or "None" is picked.
 //
 // Memory safety notes:
 //   * all patching happens inside the local-player tick, so the only skin
@@ -48,6 +70,8 @@
 //     its engine references WITHOUT touching the skin — the engine frees
 //     the injected blob through its deleter tag, so a teardown tick can
 //     never write freed memory or double-free the blob.
+//   * the injected blob is never freed while the skin may still reference it:
+//     the skin is repointed first and only the previous blob is released.
 class CustomCapesModule : public Module {
 public:
     CustomCapesModule();
@@ -58,6 +82,7 @@ public:
     void onDisable() override;
     void loadConfig(const nlohmann::json& j) override;
     void saveConfig(nlohmann::json& j) override;
+    bool onMenuConfigChanged(std::string_view key, std::string_view value) override;
 
     // Called from the LocalPlayerTickEvent subscription.
     void onLocalPlayerTick(void* player);
@@ -71,6 +96,41 @@ public:
     // Directory the module watches; exposed for the menu description.
     const std::string& capesDirectory() const { return m_capesDir; }
 
+    // Number of usable cape files found by the last scan.
+    std::size_t capeCount() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_files.size();
+    }
+
+    // Re-reads the folder and keeps the current selection by file name.
+    // Returns true when the file list changed. Takes m_mutex.
+    bool refreshFiles();
+
+    // Fit mode used for the next resample.
+    customcapes::FitMode fitMode() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_fitMode;
+    }
+
+    // File name currently loaded (empty when nothing is loaded). Exposed for
+    // tests and diagnostics; the option index alone cannot identify a cape.
+    std::string loadedFile() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_loadedFile;
+    }
+
+    // True once a cape file was decoded and resampled into m_pixels.
+    bool capeLoaded() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_capeLoaded;
+    }
+
+    // True when the last load attempt failed (corrupt/oversized/non-PNG file).
+    bool loadFailed() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_loadFailed;
+    }
+
 private:
     // True when the player pointer and its level link are both usable.
     // During Leave World the engine nulls Actor::mLevel before the player
@@ -79,23 +139,60 @@ private:
     static bool playerHasLiveLevel(const void* player);
 
     void ensureCapesDirectory();
+    bool refreshFilesLocked(); // m_mutex already held
+#if !defined(__ANDROID__) || defined(BEDROCKTOOLS_CUSTOMCAPES_WRITER)
+    // Only compiled where the PNG writer is (host builds). The device build
+    // creates the folder and leaves it empty rather than carrying the encoder.
     void writeSamplePng(const std::string& path) const;
-    void loadSelectedCape();
+#endif
+    bool loadSelectedCape();
     void releaseLoadedCape();
+    void rebuildCapeId();
+    void applyFitChange();
+    void copyCapesPath() const;
 
     bool applyCustomCape(void* skin);
     void restoreOriginalCape(void* skin);
     void clearPatchState();
 
     std::string m_capesDir;
-    std::vector<std::string> m_files; // refreshed by saveConfig (menu build / save)
-    int m_selectedIndex = 0;          // 0 = None, i>=1 -> m_files[i-1]
+    std::vector<std::string> m_files;   // refreshed on load/save and by refresh
+    std::vector<std::string> m_labels;  // display names for the picker
+    int m_selectedIndex = 0;            // 0 = None, i>=1 -> m_files[i-1]
 
     // Decoded, already resampled cape pixels (module-owned), w*h = 64*32.
     std::vector<std::uint8_t> m_pixels;
     bool m_capeLoaded = false;
     bool m_loadFailed = false;
     int m_retryTicks = 0;
+
+    // How arbitrary images are fitted on the cape face, and what the loaded
+    // pixels were produced with (so a fit change can re-resample the same file
+    // without touching the disk again).
+    customcapes::FitMode m_fitMode = customcapes::FitMode::Cover;
+    customcapes::FitMode m_loadedFit = customcapes::FitMode::Cover;
+
+    // Source image kept for fast fit-mode changes: only used when the file
+    // could be decoded; cleared as soon as the selection changes.
+    std::vector<std::uint8_t> m_sourcePixels;
+    std::uint32_t m_sourceWidth = 0;
+    std::uint32_t m_sourceHeight = 0;
+
+    // Name of the file whose pixels are loaded. The picker index alone cannot
+    // identify a cape: when a file is added or removed the indices shift, and
+    // two different files can occupy the same index.
+    std::string m_loadedFile;
+
+    // Guards every field the menu thread and the tick thread both touch.
+    // The engine-facing patch state (m_patchedSkin/m_injectedBlob/m_backup) is
+    // only ever touched from the tick, but it is covered by the same lock so
+    // the module has one obvious rule instead of two.
+    //
+    // Recursive on purpose: Module::loadConfig() (called under this lock) can
+    // flip masterEnabled/keybindActive, which calls updateEnabledState() and
+    // from there our onEnable()/onDisable() on the same thread. A plain
+    // std::mutex would deadlock there.
+    mutable std::recursive_mutex m_mutex;
 
     // Synthetic cape id that changes on every switch so the engine's texture
     // cache (keyed by mCapeId) is invalidated and the new pixels show up

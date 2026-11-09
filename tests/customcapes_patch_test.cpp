@@ -17,6 +17,10 @@
 //   * disabling restores the original cape image and cape id bit-for-bit
 //     before our injected blob is freed.
 //   * persona skins and unexpected skin-image layouts are left untouched.
+//   * the injected image metadata is complete: RGBA8 format, 64x32 dimensions
+//     and mDepth = 1 (an image left at depth 0 is rejected by the engine).
+//   * changing the fit mode re-resamples the cached source, swaps in a new
+//     blob, and gives the engine a new cape id so its texture cache misses.
 //   * Leave World: with the level link (Actor::mLevel) gone the tick hook
 //     writes nothing to the skin (no use-after-free), survives a null
 //     player, never double-frees the blob the engine already released via
@@ -43,6 +47,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -196,6 +201,12 @@ int main() {
               readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::SkinImage::mHeight) == 32,
           "mCapeImage dimensions are 64x32");
 
+    check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mDepth) == 1,
+          "mCapeImage depth is 1 (the engine rejects a 0-depth image)");
+    check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mUsage) ==
+              readU32(skinSnapshot.data() + off::SerializedSkinImpl::mCapeImage, off::Image::mUsage),
+          "mCapeImage usage is inherited from the vanilla cape");
+
     void* injected = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset);
     check(injected != nullptr && injected != capeBlob,
           "mCapeImage points at the injected cape pixels");
@@ -243,6 +254,107 @@ int main() {
           "mCapeId fully restored");
     check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) == capeBlob,
           "original cape blob pointer restored");
+
+    // ------------------------------------------------------------------
+    // Switching the fit mode re-resamples the cached source and forces a new
+    // blob + a new cape id (otherwise the engine's texture cache, keyed by
+    // mCapeId, would keep drawing the old pixels).
+    // ------------------------------------------------------------------
+    std::printf("fit mode change re-applies\n");
+    {
+        mod.enabled = true; // the previous block left the module disabled
+        nlohmann::json fitCfg;
+        fitCfg["m_cape"] = 1;
+        fitCfg["m_capeFit"] = "2,Cover,Contain,Stretch"; // -> Stretch
+        mod.loadConfig(fitCfg);
+        // The resample happens in loadConfig, but the skin is only touched
+        // from the tick hook.
+        mod.onLocalPlayerTick(player.data());
+        void* stretched = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage,
+                                  off::Image::mBytesOffset);
+        const std::uint8_t* stretchedId = skinBase + off::SerializedSkinImpl::mCapeId;
+        check(stretched != nullptr && stretched != capeBlob,
+              "fit change swaps in a fresh blob on the next tick");
+
+        mod.onLocalPlayerTick(player.data());
+        void* afterFit = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage,
+                                 off::Image::mBytesOffset);
+        check(afterFit == stretched,
+              "a settled fit does not reallocate the blob every tick");
+        // The cape id must have changed with the fit (serial advanced), so the
+        // engine cannot keep sampling the cached texture.
+        check(!(stretchedId[0] == static_cast<std::uint8_t>(14u << 1) &&
+                std::memcmp(stretchedId + 1, "bedrocktools-1", 14) == 0),
+              "changing the fit gives the cape a fresh id");
+
+        // Back to Cover: the pixels must match the original Cover resample again.
+        nlohmann::json coverCfg;
+        coverCfg["m_cape"] = 1;
+        coverCfg["m_capeFit"] = "0,Cover,Contain,Stretch";
+        mod.loadConfig(coverCfg);
+        mod.onLocalPlayerTick(player.data());
+        void* coverBlob = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage,
+                                  off::Image::mBytesOffset);
+        check(coverBlob != nullptr && coverBlob != capeBlob &&
+                  sameBytes(static_cast<const std::uint8_t*>(coverBlob), expectedCape.data(),
+                            expectedCape.size()),
+              "switching back to Cover restores the Cover resample");
+        check(readSize(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBlobSizeOffset) ==
+                  expectedCape.size(),
+              "the re-applied blob keeps the 64x32 byte count");
+
+        // Leave the skin pristine for the sections below, which compare
+        // against the original snapshot.
+        mod.enabled = false;
+        mod.onLocalPlayerTick(player.data());
+        check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) ==
+                  capeBlob,
+              "the vanilla cape is back after the fit experiments");
+    }
+
+    // ------------------------------------------------------------------
+    // A file that is not a real PNG is rejected before decoding, and the
+    // module keeps trying (the user may still be copying the file over).
+    // ------------------------------------------------------------------
+    std::printf("invalid file is rejected before decoding\n");
+    {
+        // "Broken.png" holds JPEG bytes: the picker lists it (extension), but
+        // the header check must refuse it without ever calling stbi_load().
+        const std::string jpeg = "\xFF\xD8\xFF\xE0not really a png";
+        {
+            std::ofstream out(root + "/capes/Broken.png", std::ios::binary);
+            out.write(jpeg.data(), static_cast<std::streamsize>(jpeg.size()));
+        }
+        // Listing order: Broken.png, Red.png  ->  option 2 is still Red.png.
+        nlohmann::json brokenCfg;
+        brokenCfg["m_cape"] = "2,None,Broken,Red";
+        mod.enabled = true;
+        mod.loadConfig(brokenCfg);
+        mod.onLocalPlayerTick(player.data());
+        check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) !=
+                  capeBlob,
+              "selecting the valid cape next to a broken file still patches");
+
+        // Now select the broken file itself: nothing must be patched, and the
+        // vanilla cape must come back.
+        nlohmann::json badCfg;
+        badCfg["m_cape"] = "1,None,Broken,Red";
+        mod.loadConfig(badCfg);
+        mod.onLocalPlayerTick(player.data());
+        check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) ==
+                  capeBlob,
+              "a renamed JPEG never reaches the skin (vanilla cape restored)");
+
+        // Back to the real cape: it loads again immediately.
+        mod.loadConfig(brokenCfg);
+        mod.onLocalPlayerTick(player.data());
+        check(readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset) !=
+                  capeBlob,
+              "switching away from the broken file recovers immediately");
+        mod.enabled = false;
+        mod.onLocalPlayerTick(player.data());
+        std::filesystem::remove(root + "/capes/Broken.png");
+    }
 
     // ------------------------------------------------------------------
     // Persona skins are never patched.

@@ -4,7 +4,13 @@
 #include "modules/ModuleRegistry.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/events/EventBus.hpp>
+#include <pl/ModMenu.hpp>
 #include "../../config/ConfigManager.hpp"
+#include "../../launcher/ExternalButtonRefresh.hpp"
+
+#if defined(__ANDROID__)
+#include <jni.h>
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_JPEG
@@ -17,12 +23,21 @@
 #define STBI_NO_PNM
 #include <stb/stb_image.h>
 
+// The writer is only needed for the sample cape. It is kept out of the device
+// build (the sample is shipped in the module package) to save flash; the host
+// tests, which generate PNGs, define STB_IMAGE_WRITE_IMPLEMENTATION
+// themselves and link against this file.
+#if !defined(__ANDROID__) || defined(BEDROCKTOOLS_CUSTOMCAPES_WRITER)
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#endif
 #include <stb/stb_image_write.h>
 
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <system_error>
 #include <vector>
 
@@ -36,13 +51,29 @@ void freeBlobDeleter(unsigned char* data) {
     std::free(data);
 }
 
+// mce::ImageFormat::RGBA8Unorm (see mce/ImageFormat.h: Unknown=0, R8Unorm=1,
+// RG8Unorm=2, RGB8Unorm=3, RGBA8Unorm=4). Skin and cape images are RGBA8.
 constexpr std::uint32_t kCapeImageFormat = 4;
+
 constexpr int kLoadRetryTicks = 120;
+
+// The (possibly prefiltered) source is kept in memory so switching
+// Cover/Contain/Stretch re-resamples instantly. The prefilter caps the source
+// at 1024 pixels on its longer side, i.e. at most 4 MB for a square image, so
+// this budget effectively always fits and stays a hard guarantee for odd
+// aspect ratios (a 1024x4096 source is still 16 MB and is not cached).
+constexpr std::size_t kMaxCachedSourceBytes = 4u * 1024u * 1024u;
 constexpr const char* kCapeIdBase = "bedrocktools";
-constexpr std::size_t kCapeIdBaseLen = 12;
+constexpr const char* kSampleCapeName = "Sample Cape.png";
+
+// libc++ std::string is 24 bytes with the short-string bit in the low bit of
+// byte 0 (length << 1). 22 characters fit inline; longer ids would switch the
+// object to the heap representation and require allocating a libc++ string,
+// which this module refuses to do across the engine boundary.
+constexpr std::size_t kShortStringCapacity = 22;
 
 void writeShortStdString(uintptr_t addr, const char* text, std::size_t len) {
-    if (len > 22) return; // libc++ short-string capacity inside 24 bytes
+    if (len > kShortStringCapacity) return;
     unsigned char* p = reinterpret_cast<unsigned char*>(addr);
     std::memset(p, 0, 24);
     p[0] = static_cast<unsigned char>(len << 1);
@@ -50,7 +81,7 @@ void writeShortStdString(uintptr_t addr, const char* text, std::size_t len) {
 }
 
 bool shortStdStringEquals(uintptr_t addr, const char* text, std::size_t len) {
-    if (len > 22) return false;
+    if (len > kShortStringCapacity) return false;
     const unsigned char* p = reinterpret_cast<const unsigned char*>(addr);
     return p[0] == static_cast<unsigned char>(len << 1) &&
            std::memcmp(p + 1, text, len) == 0;
@@ -80,10 +111,24 @@ void* resolvePlayerSkin(void* player) {
         reinterpret_cast<uintptr_t>(threadOwner) + ThreadOwner::mObject);
 }
 
+// Reads the PNG header without decoding. Rejecting a non-PNG early keeps the
+// decoder from being handed arbitrary data, and rejecting an oversized one
+// before stbi_load() is what stops a 4096x4096 "cape" (64 MB decoded) from
+// exhausting the phone's memory.
+bool readPngFileHeader(const std::string& path, std::uint32_t& width, std::uint32_t& height) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    unsigned char header[33] = {};
+    file.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (file.gcount() < static_cast<std::streamsize>(sizeof(header))) return false;
+    return customcapes::readPngHeader(header, sizeof(header), width, height);
+}
+
 } // namespace
 
 CustomCapesModule::CustomCapesModule()
-    : Module("Custom Capes", "Wear any PNG from the BedrockTools capes folder as your cape (local only).") {
+    : Module("Custom Capes",
+             "Wear any PNG from the BedrockTools capes folder as your cape (local only).") {
     g_customCapes = this;
 }
 
@@ -95,6 +140,7 @@ void CustomCapesModule::onInit() {
     m_capesDir = capeDirectoryForConfig();
     ensureCapesDirectory();
     m_files = customcapes::scanCapeFiles(m_capesDir);
+    m_labels = customcapes::makeCapeLabels(m_files);
 
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>(
         [](auto& event) {
@@ -103,20 +149,29 @@ void CustomCapesModule::onInit() {
 }
 
 void CustomCapesModule::onEnable() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_selectedIndex > 0 && !m_capeLoaded && !m_loadFailed) loadSelectedCape();
     m_needsApply = true;
 }
 
 void CustomCapesModule::onDisable() {
+    // The tick hook restores the vanilla cape on the next tick (the skin must
+    // only be touched from the tick path, never from the menu thread).
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    m_needsApply = true;
+    m_retryTicks = 0;
 }
 
 void CustomCapesModule::ensureCapesDirectory() {
     std::error_code ec;
     if (std::filesystem::is_directory(m_capesDir, ec)) return;
     if (!std::filesystem::create_directories(m_capesDir, ec) || ec) return;
-    writeSamplePng(m_capesDir + "/Sample Cape.png");
+#if !defined(__ANDROID__) || defined(BEDROCKTOOLS_CUSTOMCAPES_WRITER)
+    writeSamplePng(m_capesDir + "/" + kSampleCapeName);
+#endif
 }
 
+#if !defined(__ANDROID__) || defined(BEDROCKTOOLS_CUSTOMCAPES_WRITER)
 void CustomCapesModule::writeSamplePng(const std::string& path) const {
     std::vector<std::uint8_t> src(customcapes::kCapeBackWidth * customcapes::kCapeBackHeight * 4u);
     for (std::uint32_t y = 0; y < customcapes::kCapeBackHeight; ++y) {
@@ -141,12 +196,38 @@ void CustomCapesModule::writeSamplePng(const std::string& path) const {
     stbi_write_png(path.c_str(), customcapes::kCapeWidth, customcapes::kCapeHeight, 4,
                    px.data(), customcapes::kCapeWidth * 4);
 }
+#endif
 
 void CustomCapesModule::loadConfig(const nlohmann::json& j) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     Module::loadConfig(j);
 
     if (m_capesDir.empty()) m_capesDir = capeDirectoryForConfig();
-    const int previousIndex = m_selectedIndex;
+    const customcapes::FitMode previousFit = m_fitMode;
+
+    // Fit mode is read first: a config that changes both the fit and the
+    // selection must decode the new file only once, with the new fit.
+    if (j.contains("m_capeFit")) {
+        int fit = static_cast<int>(m_fitMode);
+        if (j["m_capeFit"].is_number_integer()) {
+            fit = j["m_capeFit"].get<int>();
+        } else if (j["m_capeFit"].is_string()) {
+            int parsedIndex = fit;
+            std::string parsedName;
+            if (customcapes::parseRadioValue(j["m_capeFit"].get<std::string>(), parsedIndex, parsedName)) {
+                fit = parsedIndex;
+            }
+            if (!parsedName.empty()) {
+                for (int i = 0; i < customcapes::kFitModeCount; ++i) {
+                    if (parsedName == customcapes::fitModeLabel(customcapes::fitModeFromInt(i))) {
+                        fit = i;
+                        break;
+                    }
+                }
+            }
+        }
+        m_fitMode = customcapes::fitModeFromInt(fit);
+    }
 
     if (j.contains("m_cape")) {
         int parsedIndex = m_selectedIndex;
@@ -157,59 +238,319 @@ void CustomCapesModule::loadConfig(const nlohmann::json& j) {
             parsedIndex = j["m_cape"].get<int>();
         }
         m_files = customcapes::scanCapeFiles(m_capesDir);
-        m_selectedIndex = customcapes::resolveSelectionIndex(parsedIndex, parsedName, m_files);
+        m_labels = customcapes::makeCapeLabels(m_files);
+        m_selectedIndex = customcapes::resolveSelectionIndex(parsedIndex, parsedName, m_files, m_labels);
     }
 
-    if (m_selectedIndex != previousIndex || (m_selectedIndex > 0 && !m_capeLoaded)) {
+    // Compare the *file name* against what is loaded, not the option index:
+    // m_files was just re-listed, so an index can point at a different file
+    // than the one whose pixels are in memory (a cape added or removed above
+    // the selection shifts every index). That stale-image case is exactly the
+    // "my cape did not change" bug.
+    const std::string wanted =
+        (m_selectedIndex > 0 && m_selectedIndex <= static_cast<int>(m_files.size()))
+            ? m_files[static_cast<std::size_t>(m_selectedIndex - 1)]
+            : std::string();
+    const bool selectionChanged = wanted != m_loadedFile;
+    const bool fitChanged = m_fitMode != previousFit;
+    if (selectionChanged) {
         releaseLoadedCape();
         if (m_selectedIndex > 0) loadSelectedCape();
         m_needsApply = true;
+    } else if (fitChanged) {
+        applyFitChange();
     }
 }
 
 void CustomCapesModule::saveConfig(nlohmann::json& j) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     Module::saveConfig(j);
     if (m_capesDir.empty()) m_capesDir = capeDirectoryForConfig();
     m_files = customcapes::scanCapeFiles(m_capesDir);
+    m_labels = customcapes::makeCapeLabels(m_files);
     if (m_selectedIndex > static_cast<int>(m_files.size())) m_selectedIndex = 0;
-    j["m_cape"] = customcapes::makeRadioValue(m_selectedIndex, m_files);
+    j["m_cape"] = customcapes::makeRadioValue(m_selectedIndex, m_files, m_labels);
+
+    // Radio value for the fit picker: "<index>,Cover,Contain,Stretch".
+    std::string fitValue = std::to_string(static_cast<int>(m_fitMode));
+    for (int i = 0; i < customcapes::kFitModeCount; ++i) {
+        fitValue += ',';
+        fitValue += customcapes::fitModeLabel(customcapes::fitModeFromInt(i));
+    }
+    j["m_capeFit"] = fitValue;
+
+    // Action entries. The launcher shows a boolean whose key contains "button"
+    // as a Button and reports a press as the string "true" through
+    // onMenuConfigChanged, which is handled below.
+    j["m_reloadButton"] = false;
+    j["m_copyPathButton"] = false;
+
+    // Human readable status shown as a text row: how many capes were found and
+    // which one is loaded. Written only while a save runs, which is when the
+    // launcher reads the module's settings again.
+    char status[160];
+    std::snprintf(status, sizeof(status), "%zu capes found - %s",
+                  m_files.size(),
+                  m_loadedFile.empty() ? "none applied" : m_loadedFile.c_str());
+    j["m_status"] = std::string(status);
+    // The folder path itself, so it can be read (or copied with the button)
+    // without digging through a file manager.
+    j["m_folderPath"] = m_capesDir;
+}
+
+bool CustomCapesModule::onMenuConfigChanged(std::string_view key, std::string_view value) {
+    if (key == "m_reloadButton") {
+        if (value != "true") return true; // released / false: nothing to do
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_mutex);
+            refreshFilesLocked();
+            // Re-read the file from disk: it may have been edited in place,
+            // which a pixel cache would otherwise hide.
+            if (m_selectedIndex > 0) {
+                loadSelectedCape();
+                m_needsApply = true;
+            }
+        }
+        return true;
+    }
+    if (key == "m_copyPathButton") {
+        if (value != "true") return true;
+        copyCapesPath();
+        return true;
+    }
+    if (key == "m_status" || key == "m_folderPath") {
+        // Read-only info rows. The launcher renders them as text fields, but
+        // the values are owned by the module (they are regenerated on every
+        // save), so edits are simply ignored instead of overwriting the folder
+        // path the module actually uses.
+        return true;
+    }
+    return false;
+}
+
+bool CustomCapesModule::refreshFiles() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return refreshFilesLocked();
+}
+
+bool CustomCapesModule::refreshFilesLocked() {
+    if (m_capesDir.empty()) m_capesDir = capeDirectoryForConfig();
+    const std::vector<std::string> before = m_files;
+    std::vector<std::string> files = customcapes::scanCapeFiles(m_capesDir);
+    std::vector<std::string> labels = customcapes::makeCapeLabels(files);
+    m_files = std::move(files);
+    m_labels = std::move(labels);
+
+    // Keep the current cape selected by name; the index may have moved when a
+    // file was added or removed.
+    if (m_selectedIndex > 0 && !before.empty()) {
+        const std::size_t previous = static_cast<std::size_t>(m_selectedIndex - 1);
+        const std::string current = previous < before.size() ? before[previous] : std::string();
+        m_selectedIndex = customcapes::resolveSelectionIndex(0, current, m_files, m_labels);
+    }
+    if (m_selectedIndex > static_cast<int>(m_files.size())) m_selectedIndex = 0;
+
+    // The selected file itself may have been edited on disk, so drop the
+    // cached pixels: the next load re-reads it.
+    if (m_selectedIndex > 0) releaseLoadedCape();
+    return before != m_files;
 }
 
 void CustomCapesModule::releaseLoadedCape() {
     m_pixels.clear();
     m_pixels.shrink_to_fit();
+    m_sourcePixels.clear();
+    m_sourcePixels.shrink_to_fit();
+    m_sourceWidth = 0;
+    m_sourceHeight = 0;
+    m_loadedFile.clear();
     m_capeLoaded = false;
     m_loadFailed = false;
     m_retryTicks = 0;
 }
 
-void CustomCapesModule::loadSelectedCape() {
+bool CustomCapesModule::loadSelectedCape() {
     releaseLoadedCape();
-    if (m_selectedIndex <= 0 || m_selectedIndex > static_cast<int>(m_files.size())) return;
+    if (m_selectedIndex <= 0 || m_selectedIndex > static_cast<int>(m_files.size())) return false;
 
-    const std::string path = m_capesDir + "/" + m_files[static_cast<std::size_t>(m_selectedIndex - 1)];
+    const std::string path =
+        m_capesDir + "/" + m_files[static_cast<std::size_t>(m_selectedIndex - 1)];
+
+    // Validate before decoding: signature + IHDR + a sane size.
+    std::uint32_t headerWidth = 0;
+    std::uint32_t headerHeight = 0;
+    if (!readPngFileHeader(path, headerWidth, headerHeight) ||
+        !customcapes::isSupportedSourceSize(headerWidth, headerHeight)) {
+        m_loadFailed = true;
+        return false;
+    }
 
     int width = 0, height = 0, channels = 0;
     stbi_uc* decoded = stbi_load(path.c_str(), &width, &height, &channels, 4);
     if (!decoded || width <= 0 || height <= 0 ||
-        width > static_cast<int>(customcapes::kMaxSourceDimension) ||
-        height > static_cast<int>(customcapes::kMaxSourceDimension)) {
+        !customcapes::isSupportedSourceSize(static_cast<std::uint32_t>(width),
+                                            static_cast<std::uint32_t>(height))) {
         if (decoded) stbi_image_free(decoded);
         m_loadFailed = true;
+        return false;
+    }
+
+    // Very large images are reduced once with an area downscale first: the
+    // cape-face sampler is exact but walks every source texel, which is too
+    // slow for a 16 MB image on the client tick.
+    std::vector<std::uint8_t> reduced;
+    const std::uint8_t* source = decoded;
+    std::uint32_t sourceWidth = static_cast<std::uint32_t>(width);
+    std::uint32_t sourceHeight = static_cast<std::uint32_t>(height);
+    if (customcapes::sourceNeedsPrefilter(sourceWidth, sourceHeight)) {
+        std::uint32_t targetWidth = 0;
+        std::uint32_t targetHeight = 0;
+        customcapes::prefilterSize(sourceWidth, sourceHeight, targetWidth, targetHeight);
+        reduced = customcapes::downscaleArea(decoded, sourceWidth, sourceHeight,
+                                             targetWidth, targetHeight);
+        if (!reduced.empty()) {
+            source = reduced.data();
+            sourceWidth = targetWidth;
+            sourceHeight = targetHeight;
+        }
+    }
+
+    // The decoded source is cached (when it fits the budget) so switching
+    // Cover/Contain/Stretch can re-resample without touching the disk again.
+    const std::size_t byteCount =
+        static_cast<std::size_t>(sourceWidth) * static_cast<std::size_t>(sourceHeight) * 4u;
+    if (byteCount <= kMaxCachedSourceBytes) {
+        m_sourcePixels.assign(source, source + byteCount);
+        m_sourceWidth = sourceWidth;
+        m_sourceHeight = sourceHeight;
+    }
+    m_pixels = customcapes::resampleToCapeEx(source, sourceWidth, sourceHeight, m_fitMode);
+    stbi_image_free(decoded);
+    m_loadedFit = m_fitMode;
+    m_loadedFile = m_files[static_cast<std::size_t>(m_selectedIndex - 1)];
+    m_capeLoaded = true;
+    rebuildCapeId();
+    return true;
+}
+
+// The engine caches the cape texture by mCapeId, so every change gets a fresh
+// id. Anything that replaces the pixels (new file, edited file, new fit mode)
+// must call this or the old cape keeps rendering.
+void CustomCapesModule::rebuildCapeId() {
+    ++m_capeIdSerial;
+    m_activeCapeId = std::string(kCapeIdBase) + "-" + std::to_string(m_capeIdSerial);
+    if (m_activeCapeId.size() > kShortStringCapacity) {
+        m_activeCapeId = std::string(kCapeIdBase) + "-" +
+                         std::to_string(m_capeIdSerial % 1000000u);
+        if (m_activeCapeId.size() > kShortStringCapacity) {
+            m_activeCapeId.resize(kShortStringCapacity);
+        }
+    }
+}
+
+// Re-resamples the already decoded source with the new fit mode, so changing
+// Cover/Contain/Stretch is instant and does not hit the disk again.
+void CustomCapesModule::applyFitChange() {
+    if (!m_capeLoaded || m_loadedFit == m_fitMode) return;
+    if (m_sourcePixels.empty() || m_sourceWidth == 0 || m_sourceHeight == 0) {
+        // Nothing cached (enabled late / decode failed): fall back to a reload.
+        if (m_selectedIndex > 0) loadSelectedCape();
+        return;
+    }
+    m_pixels = customcapes::resampleToCapeEx(m_sourcePixels.data(), m_sourceWidth,
+                                             m_sourceHeight, m_fitMode);
+    m_loadedFit = m_fitMode;
+    rebuildCapeId();
+    m_needsApply = true;
+}
+
+// Copies the capes folder path to the system clipboard, so it can be pasted
+// into a file manager or a download prompt on the device.
+//
+// This deliberately does NOT try to launch a file manager: handing another app
+// a file:// URI extracted from a File (Uri.fromFile) throws
+// FileUriExposedException on Android 7+ and would crash the game, while
+// FileProvider needs manifest access this mod does not have. The clipboard
+// only needs an Application context and cannot throw across apps. Any failure
+// is swallowed — the folder path is also shown as a text row in the menu.
+void CustomCapesModule::copyCapesPath() const {
+#if defined(__ANDROID__)
+    void* vm = bedrocktools::launcher::javaVm();
+    if (!vm) return;
+    auto* javaVm = static_cast<JavaVM*>(vm);
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    const jint state = javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (state == JNI_EDETACHED) {
+        JavaVMAttachArgs args{JNI_VERSION_1_6,
+                              const_cast<char*>("BedrockToolsPlus/CustomCapes"), nullptr};
+        if (javaVm->AttachCurrentThread(&env, &args) != JNI_OK) return;
+        attached = true;
+    } else if (state != JNI_OK) {
+        return;
+    }
+    if (!env) {
+        if (attached) javaVm->DetachCurrentThread();
         return;
     }
 
-    m_pixels = customcapes::resampleToCape(decoded, static_cast<std::uint32_t>(width),
-                                           static_cast<std::uint32_t>(height));
-    stbi_image_free(decoded);
-    m_capeLoaded = true;
+    const auto clear = [&]() {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    };
 
-    ++m_capeIdSerial;
-    m_activeCapeId = std::string(kCapeIdBase) + "-" + std::to_string(m_capeIdSerial);
-    if (m_activeCapeId.size() > 22) {
-        m_activeCapeId = std::string(kCapeIdBase) + "-" + std::to_string(m_capeIdSerial % 1000000);
-        if (m_activeCapeId.size() > 22) m_activeCapeId.resize(22);
+    jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
+    jclass contextClass = env->FindClass("android/content/Context");
+    jclass clipDataClass = env->FindClass("android/content/ClipData");
+    jclass clipboardClass = env->FindClass("android/content/ClipboardManager");
+    if (activityThreadClass && contextClass && clipDataClass && clipboardClass && !env->ExceptionCheck()) {
+        jmethodID currentApplication = env->GetStaticMethodID(
+            activityThreadClass, "currentApplication", "()Landroid/app/Application;");
+        jmethodID getSystemService = env->GetMethodID(
+            contextClass, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
+        jmethodID newPlainText = env->GetStaticMethodID(
+            clipDataClass, "newPlainText",
+            "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;");
+        jmethodID setPrimaryClip = env->GetMethodID(
+            clipboardClass, "setPrimaryClip", "(Landroid/content/ClipData;)V");
+        clear();
+
+        jobject application = currentApplication
+                                  ? env->CallStaticObjectMethod(activityThreadClass,
+                                                                currentApplication)
+                                  : nullptr;
+        jobject clipboard = nullptr;
+        if (application && getSystemService && !env->ExceptionCheck()) {
+            jstring service = env->NewStringUTF("clipboard");
+            clipboard = env->CallObjectMethod(application, getSystemService, service);
+            if (service) env->DeleteLocalRef(service);
+            clear();
+        }
+        if (clipboard && newPlainText && setPrimaryClip && !env->ExceptionCheck()) {
+            jstring label = env->NewStringUTF("BedrockToolsPlus capes folder");
+            jstring text = env->NewStringUTF(m_capesDir.c_str());
+            jobject clip = (label && text)
+                               ? env->CallStaticObjectMethod(clipDataClass, newPlainText, label, text)
+                               : nullptr;
+            if (label) env->DeleteLocalRef(label);
+            if (text) env->DeleteLocalRef(text);
+            if (clip && !env->ExceptionCheck()) {
+                env->CallVoidMethod(clipboard, setPrimaryClip, clip);
+                clear(); // a locked clipboard is not worth a crash
+            }
+            if (clip) env->DeleteLocalRef(clip);
+        }
+        if (clipboard) env->DeleteLocalRef(clipboard);
+        if (application) env->DeleteLocalRef(application);
     }
+    if (activityThreadClass) env->DeleteLocalRef(activityThreadClass);
+    if (contextClass) env->DeleteLocalRef(contextClass);
+    if (clipDataClass) env->DeleteLocalRef(clipDataClass);
+    if (clipboardClass) env->DeleteLocalRef(clipboardClass);
+    clear();
+    if (attached) javaVm->DetachCurrentThread();
+#else
+    // Host build: nothing to copy to; the path is reported in the status row.
+#endif
 }
 
 void CustomCapesModule::clearPatchState() {
@@ -250,6 +591,7 @@ void CustomCapesModule::onWorldExit() {
 }
 
 void CustomCapesModule::onLocalPlayerTick(void* player) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     // --- World-exit guard (Leave World crash fix) -----------------------
     // While the engine tears down the world it (1) detaches the player
     // from its level and then (2) destroys the player and its skin. Any
@@ -262,10 +604,12 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
         return;
     }
 
-    if (m_selectedIndex > 0 && !m_capeLoaded && enabled) {
+    const bool wantCape = enabled && m_selectedIndex > 0;
+    if (wantCape && !m_capeLoaded) {
         if (m_retryTicks <= 0) {
-            loadSelectedCape();
-            if (!m_capeLoaded) m_retryTicks = kLoadRetryTicks;
+            // Either the first attempt, or a file the user just fixed on disk.
+            if (!loadSelectedCape()) m_retryTicks = kLoadRetryTicks;
+            else m_needsApply = true;
         } else {
             --m_retryTicks;
         }
@@ -273,7 +617,7 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
 
     void* skin = resolvePlayerSkin(player);
 
-    if (!enabled || m_selectedIndex <= 0 || !m_capeLoaded || !skin) {
+    if (!wantCape || !m_capeLoaded || !skin) {
         restoreOriginalCape(skin);
         return;
     }
@@ -282,6 +626,8 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
 }
 
 bool CustomCapesModule::applyCustomCape(void* skin) {
+    if (m_pixels.empty()) return false;
+
     if (*reinterpret_cast<bool*>(
             reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mIsPersona)) {
         return false;
@@ -337,6 +683,7 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
     if (!m_needsApply && m_injectedBlob != nullptr &&
         *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) == m_injectedBlob &&
         *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth) == customcapes::kCapeWidth &&
+        *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight) == customcapes::kCapeHeight &&
         idIntact) {
         return true;
     }
@@ -352,6 +699,10 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
     *reinterpret_cast<uint32_t*>(capeImage + Image::mImageFormat) = kCapeImageFormat;
     *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth) = customcapes::kCapeWidth;
     *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight) = customcapes::kCapeHeight;
+    // The engine derives the texture description (and the sampled byte count)
+    // from these, so both must be explicit for a 64x32 RGBA8 cape.
+    *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth) = 1;
+    *reinterpret_cast<uint32_t*>(capeImage + Image::mUsage) = m_backup.usage;
     *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) = newBlob;
     *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset) =
         reinterpret_cast<void*>(&freeBlobDeleter);
@@ -400,4 +751,3 @@ void CustomCapesModule::restoreOriginalCape(void* skin) {
 
     clearPatchState();
 }
-

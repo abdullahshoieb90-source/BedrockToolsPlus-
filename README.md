@@ -128,15 +128,28 @@ Developers can preview every style offline with `./scripts/gen_wings_preview.sh`
 
 ## Custom Capes
 
-The **Custom Capes** module lets you wear any PNG as a classic cape.
+The **Custom Capes** module lets you wear any PNG as a classic cape. It is local-only: only you see it, nothing is sent to the server, and your account is untouched.
 
-1. Put cape images (`.png`, ideally 64x32 — any other size is scaled automatically) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a sample cape).
-2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Custom Capes**.
-3. Pick a file in the module's **Cape** selector — the cape updates in-game immediately. Choose `None` to bring your vanilla cape back.
+1. Put cape images (`.png`) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a `Sample Cape.png`). The menu shows the exact **Capes Folder** path, and **Copy Folder Path** puts it on the clipboard so you can paste it into your file manager or browser download prompt.
+2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Custom Capes**. The picker lists every cape in the folder by name (the `.png` suffix is hidden).
+3. Pick a cape in the **Cape** selector — it applies on the next tick, no rejoin needed. Choose `None` to get your vanilla cape back.
+4. Added or replaced a file while the game was running? Press **Reload** to re-read the folder and the selected file. A *new* file also needs a menu reload, because the picker's option list is built when the menu is registered.
 
-Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
+**Image fitting.** The cape's visible face is a 10×16 pixel portrait, so an arbitrary image has to be mapped onto it. **Fit** decides how:
 
-The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
+- **Cover** (default) — fill the face and crop the overflow. Nothing is distorted; the outer edges of the image are lost.
+- **Contain** — keep the whole image and pad the leftover with its edge colours. Nothing is lost; wide images get bars.
+- **Stretch** — scale both axes independently. Fills the face but distorts faces and text.
+
+Large images are *area-averaged* down to the cape face instead of point-sampled, so a 700×800 photo stays readable instead of turning into noise, and thin details (text, logo outlines) do not shimmer. Transparent areas are averaged premultiplied, so a logo on a transparent background keeps its colour instead of darkening towards black. A 10×16 source is also a perfectly valid cape and maps pixel-for-pixel.
+
+**What the module writes.** The image goes onto the outer back face (`x=1..11, y=1..17`) of the 64×32 cape canvas. The inner front face gets one flat lining colour (the design's average at half brightness) instead of a repeat of the image, and the top/bottom/side edge strips continue the image's edge colours so the one-voxel-thick cape keeps its thickness. The design is also mapped onto the tapered Elytra wing UV (`22,0`), so a cape keeps looking like your design when you fly. An exact 64×32 image is used pixel-for-pixel, including any Elytra wings you drew yourself; wings are only generated when that area is empty.
+
+**Validation.** Every file is checked against the PNG signature and its IHDR before it is decoded, and images above 2048×2048 (or with a corrupt header) are refused, so a renamed JPEG or a huge PNG cannot reach the decoder and exhaust memory. A file that fails simply stays unapplied — the vanilla cape remains, and **Reload** retries after you fix it. File names containing a comma are skipped, because the launcher's picker cannot represent them.
+
+**Safety.** The cape pixels are injected into the live `SerializedSkinImpl::mCapeImage` (never into the skin texture, which is what made older builds fall back to Steve) with a freshly generated cape id, since modern builds only render a classic cape when one is set. The injected blob is `malloc`'d and tagged with `free()`, so the engine can safely destroy or replace it, and the original cape pointer and id are restored bit-for-bit when you pick `None` or disable the module. Leaving the world detaches the module from the skin before the engine frees it, which is what keeps Leave World crash-free. Menu callbacks and the game tick share the module state behind a mutex.
+
+Persona skins are not affected — capes are persona pieces there.
 
 ## Hit Sound
 
@@ -178,6 +191,18 @@ xmake -y
 ```
 
 The release build produces `libBedrockToolsPlus.so` and `BedrockToolsPlus.levipack` in the xmake target directory.
+
+Host-side unit tests (no game or NDK needed) run with:
+
+```sh
+./scripts/run_tests.sh
+```
+
+That covers the pure logic — cape resampling and fitting, the picker format, the skin-patch state machine, block-outline geometry, wing shapes, HUD layout and more. A few tests need the preloader/nlohmann_json headers from the xmake cache; point `PRE_LOADER_INCLUDE`, `JSON_INCLUDE` and `ENTT_INCLUDE` at them (or run `xmake f` once) and they stop being skipped. The Custom Capes tests are:
+
+- `tests/customcapes_test.cpp` — folder scanning, picker labels/format, PNG header validation, fit modes and the sampler.
+- `tests/customcapes_patch_test.cpp` — the in-game skin patch, fit changes, corrupt files and the Leave World teardown.
+- `tests/customcapes_menu_test.cpp` — what the module registers in the launcher menu (picker, fit radio, buttons, status row), and that a config which toggles the module can be loaded without deadlocking.
 
 Public SDK headers are under `include/bedrocktools`. Shared runtime code lives under `src/core`, while features are kept under `src/modules` by category. Minecraft signatures and offsets are version-specific, so those are the main pieces that normally need updating for a new game build.
 

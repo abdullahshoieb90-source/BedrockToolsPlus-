@@ -41,6 +41,27 @@ static const ExplicitDependency kExplicitDependencies[] = {
     {"m_iconScale", "m_showIcons"},
 };
 
+// Some string settings hold a comma separated *selector* value even though the
+// module also reads them as a plain number (or the value is a plain string).
+// Listing them here keeps the launcher from rendering them as a free text
+// field, which would let a user type a non-existent option.
+struct KnownRadio {
+    const char* key;
+    const char* options; // "<option0>,<option1>,..."
+};
+
+static const KnownRadio kKnownRadioSettings[] = {
+    // Custom Capes: how a non-cape image is fitted onto the cape face.
+    {"m_capeFit", "Cover,Contain,Stretch"},
+};
+
+static const char* knownRadioOptionsFor(const std::string& key) {
+    for (const auto& radio : kKnownRadioSettings) {
+        if (key == radio.key) return radio.options;
+    }
+    return nullptr;
+}
+
 static const char* explicitParentFor(const std::string& key) {
     for (const auto& dep : kExplicitDependencies) {
         if (key == dep.child) return dep.parent;
@@ -191,11 +212,15 @@ void registerModulesWithLauncher() {
                 std::string kLower = k;
                 std::transform(kLower.begin(), kLower.end(), kLower.begin(), ::tolower);
                 if (kLower.find("button") != std::string::npos) {
+                    // An action button reports a press as the string "true"
+                    // through onConfigChanged; its default must be "false" so
+                    // the button never starts in a pressed state.
                     entry.type = pl::modmenu::ConfigType::Button;
+                    entry.default_value = "false";
                 } else {
                     entry.type = pl::modmenu::ConfigType::Toggle;
+                    entry.default_value = v.get<bool>() ? "true" : "false";
                 }
-                entry.default_value = v.get<bool>() ? "true" : "false";
             } else if (v.is_number_integer()) {
                 entry.type = pl::modmenu::ConfigType::SliderInt;
                 entry.default_value = std::to_string(v.get<int>());
@@ -300,7 +325,11 @@ void registerModulesWithLauncher() {
                 entry.max_value = std::to_string(maxVal);
             } else if (v.is_string()) {
                 std::string str = v.get<std::string>();
-                if (str.find(',') != std::string::npos) {
+                if (const char* knownOptions = knownRadioOptionsFor(k)) {
+                    entry.type = pl::modmenu::ConfigType::Radio;
+                    entry.default_value = str.substr(0, str.find(','));
+                    entry.min_value = knownOptions;
+                } else if (str.find(',') != std::string::npos) {
                     entry.type = pl::modmenu::ConfigType::Radio;
                     size_t firstComma = str.find(',');
                     entry.default_value = str.substr(0, firstComma);
@@ -309,6 +338,10 @@ void registerModulesWithLauncher() {
                     entry.type = pl::modmenu::ConfigType::Color;
                     entry.default_value = str;
                 } else {
+                    // Plain text field. Modules that only want a read-only
+                    // summary (e.g. Custom Capes' "3 capes found - Cape.png")
+                    // emit it as a text key and ignore any change reported
+                    // back for it. This API has no dedicated info entry.
                     entry.type = pl::modmenu::ConfigType::Text;
                     entry.default_value = str;
                 }

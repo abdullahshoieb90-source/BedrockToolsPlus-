@@ -96,6 +96,20 @@ for source in "${root}"/tests/*_test.cpp; do
             extra+=(-I "${root}/third_party" -I "${root}/tests/fakepl"
                     -I "${root}/tests/fakejson" -pthread)
             ;;
+        customcapes_menu_test)
+            # Builds the real module *and* the launcher registration path, so
+            # the settings the user sees in the menu are verified end to end.
+            # That path needs the full preloader API (ModuleBuilder) and a real
+            # nlohmann_json, which the host fakes do not provide.
+            if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
+               [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
+                extra+=(-I "${root}/third_party" -I "${preloader_inc}" -I "${json_inc}")
+                extra_srcs+=("${root}/src/modules/player/customcapes.cpp"
+                             "${root}/src/launcher/ModuleMenu.cpp")
+            else
+                skip="preloader/nlohmann_json headers (set PRE_LOADER_INCLUDE and JSON_INCLUDE)"
+            fi
+            ;;
         customcapes_patch_test|wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the

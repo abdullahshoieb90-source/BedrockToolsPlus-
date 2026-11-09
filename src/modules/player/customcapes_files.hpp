@@ -4,13 +4,17 @@
 //
 // Everything in this header is plain C++ with no Minecraft, launcher or
 // mod-menu dependencies so it can be unit-tested on the host (see
-// tests/customcapes_test.cpp). It covers the three "dumb data" problems of
-// the module:
+// tests/customcapes_test.cpp). It covers the "dumb data" problems of the
+// module:
 //
-//   * scanning the capes directory for usable PNG files
-//   * (de)serializing the launcher "radio" config value used for the picker
-//   * resampling an arbitrary RGBA image into the visible classic-cape face
-//     and the Elytra UV area of the 64x32 canvas Minecraft expects
+//   * scanning the capes directory for usable PNG files, and validating a
+//     file's PNG header before the decoder ever sees it
+//   * (de)serializing the launcher "radio" config value used for the picker,
+//     including friendly and collision-free display labels
+//   * fitting and resampling an arbitrary RGBA image into the visible
+//     classic-cape face, the lining, the thickness strips and the Elytra UV
+//     area of the 64x32 canvas Minecraft expects
+//   * reducing very large sources before they reach the cape-face sampler
 
 #include <algorithm>
 #include <array>
@@ -157,11 +161,180 @@ inline std::vector<std::string> scanCapeFiles(const std::string& directory) {
     return files;
 }
 
+// --- PNG validation -------------------------------------------------------
+// The picker lists files by extension, but an extension proves nothing: a
+// .png that is really a JPEG, a truncated download or a 0-byte placeholder
+// would still show up as an option and then silently fail to load. Every file
+// is therefore checked against the PNG signature and its IHDR before it is
+// offered. Reading the header first also means an oversized image is rejected
+// *before* the decoder allocates w*h*4 bytes, which is what used to let a
+// 4096x4096 PNG (64 MB decoded) exhaust memory on a phone.
+
+inline constexpr std::uint32_t kMaxSourcePixels = 2048u * 2048u;
+
+// Bit depth / colour type combinations a PNG may legally use. Anything else is
+// a corrupt header, not a file worth handing to the decoder.
+inline bool isLegalPngDepthAndColorType(std::uint8_t bitDepth, std::uint8_t colorType) {
+    switch (colorType) {
+        case 0: // greyscale
+        case 3: // palette
+            return bitDepth == 1 || bitDepth == 2 || bitDepth == 4 || bitDepth == 8;
+        case 2: // truecolour
+        case 4: // greyscale + alpha
+        case 6: // truecolour + alpha
+            return bitDepth == 8 || bitDepth == 16;
+        default:
+            return false;
+    }
+}
+
+// Width/height of a PNG file read from its IHDR chunk, without decoding it.
+inline bool readPngHeader(const std::uint8_t* data, std::size_t size,
+                          std::uint32_t& outWidth, std::uint32_t& outHeight) {
+    static constexpr std::uint8_t kSignature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    outWidth = 0;
+    outHeight = 0;
+    if (!data || size < 33) return false;
+    if (std::memcmp(data, kSignature, sizeof(kSignature)) != 0) return false;
+    // 8 signature + 4 chunk length + 4 "IHDR" + 13 data bytes.
+    if (std::memcmp(data + 12, "IHDR", 4) != 0) return false;
+    const std::uint32_t width = (static_cast<std::uint32_t>(data[16]) << 24) |
+                                (static_cast<std::uint32_t>(data[17]) << 16) |
+                                (static_cast<std::uint32_t>(data[18]) << 8) |
+                                static_cast<std::uint32_t>(data[19]);
+    const std::uint32_t height = (static_cast<std::uint32_t>(data[20]) << 24) |
+                                 (static_cast<std::uint32_t>(data[21]) << 16) |
+                                 (static_cast<std::uint32_t>(data[22]) << 8) |
+                                 static_cast<std::uint32_t>(data[23]);
+    const std::uint8_t bitDepth = data[24];
+    const std::uint8_t colorType = data[25];
+    if (width == 0 || height == 0) return false;
+    if (!isLegalPngDepthAndColorType(bitDepth, colorType)) return false;
+    outWidth = width;
+    outHeight = height;
+    return true;
+}
+
+// True when an image of this size is small enough to decode safely and worth
+// decoding at all (the cape face is 10x16 texels).
+inline bool isSupportedSourceSize(std::uint32_t width, std::uint32_t height) {
+    if (width == 0 || height == 0) return false;
+    if (width > kMaxSourceDimension || height > kMaxSourceDimension) return false;
+    return static_cast<std::uint64_t>(width) * height <= kMaxSourcePixels;
+}
+
+// Declared early: the prefilter below and sampleFace() later both route
+// through it, and it is defined with the rest of the sampling code.
+inline void boxSample(const std::uint8_t* rgba, std::uint32_t W, std::uint32_t H,
+                      double x0, double y0, double x1, double y1, std::uint8_t out[4]);
+
+// --- large-image prefilter ------------------------------------------------
+// The area-average sampler walks every source texel that overlaps a
+// destination texel, so it is linear in the source size for each of the 160
+// destination texels. On a 2048x2048 source (16 MB) that is a few hundred
+// million texel reads, which visibly stalls the client tick on a phone.
+// Sources above kDirectSampleDimension are therefore reduced once with the
+// exact area downscale below, and the cape face is then sampled from the (at
+// most 1024-pixel) reduced image. On the host that pass takes ~34 ms for
+// 2048x2048 with -O2, versus several hundred ms in one tick without it.
+
+inline constexpr std::uint32_t kDirectSampleDimension = 1024;
+
+inline bool sourceNeedsPrefilter(std::uint32_t width, std::uint32_t height) {
+    return width > kDirectSampleDimension || height > kDirectSampleDimension;
+}
+
+// Largest size with the same aspect ratio, capped on its longer side.
+inline void prefilterSize(std::uint32_t width, std::uint32_t height,
+                          std::uint32_t& outWidth, std::uint32_t& outHeight) {
+    if (width == 0 || height == 0) {
+        outWidth = outHeight = 1;
+        return;
+    }
+    if (width >= height) {
+        outWidth = std::min(width, kDirectSampleDimension);
+        outHeight = std::max<std::uint32_t>(
+            1u, static_cast<std::uint32_t>(
+                    (static_cast<std::uint64_t>(height) * outWidth + width / 2) / width));
+    } else {
+        outHeight = std::min(height, kDirectSampleDimension);
+        outWidth = std::max<std::uint32_t>(
+            1u, static_cast<std::uint32_t>(
+                    (static_cast<std::uint64_t>(width) * outHeight + height / 2) / height));
+    }
+}
+
+// Exact area-average downscale (alpha-weighted, same math as boxSample).
+// Returns an empty vector when the request is degenerate, so the caller keeps
+// using the original image.
+inline std::vector<std::uint8_t> downscaleArea(const std::uint8_t* rgba,
+                                               std::uint32_t width, std::uint32_t height,
+                                               std::uint32_t targetWidth,
+                                               std::uint32_t targetHeight) {
+    std::vector<std::uint8_t> out;
+    if (!rgba || width == 0 || height == 0 || targetWidth == 0 || targetHeight == 0) return out;
+    out.resize(static_cast<std::size_t>(targetWidth) * targetHeight * 4u, 0);
+
+    const double scaleX = static_cast<double>(width) / static_cast<double>(targetWidth);
+    const double scaleY = static_cast<double>(height) / static_cast<double>(targetHeight);
+    for (std::uint32_t y = 0; y < targetHeight; ++y) {
+        const double sy0 = static_cast<double>(y) * scaleY;
+        const double sy1 = static_cast<double>(y + 1) * scaleY;
+        for (std::uint32_t x = 0; x < targetWidth; ++x) {
+            const double sx0 = static_cast<double>(x) * scaleX;
+            const double sx1 = static_cast<double>(x + 1) * scaleX;
+            boxSample(rgba, width, height, sx0, sy0, sx1, sy1,
+                      &out[(static_cast<std::size_t>(y) * targetWidth + x) * 4u]);
+        }
+    }
+    return out;
+}
+
+// --- picker labels --------------------------------------------------------
+// The picker shows the file name without its ".png" suffix, which is what the
+// user typed in their file manager. Two files whose names differ only by the
+// extension case ("Cape.png" / "Cape.PNG") would collide, so a colliding label
+// falls back to the exact file name.
+
+inline std::string stripPngExtension(const std::string& name) {
+    if (!hasPngExtension(name)) return name;
+    return name.substr(0, name.size() - 4);
+}
+
+// Builds one display label per file, in the same order as `files`, keeping
+// every label unique (the launcher radio list is comma separated and a
+// duplicate label would make the selection ambiguous).
+inline std::vector<std::string> makeCapeLabels(const std::vector<std::string>& files) {
+    std::vector<std::string> labels;
+    labels.reserve(files.size());
+    for (const std::string& file : files) {
+        std::string label = stripPngExtension(file);
+        if (label.empty()) label = file;
+        bool duplicate = false;
+        for (const std::string& used : labels) {
+            if (used == label) { duplicate = true; break; }
+        }
+        labels.push_back(duplicate ? file : label);
+    }
+    return labels;
+}
+
 // Serializes the picker value in the launcher's radio format:
 // "<currentIndex>,<None>,<file1>,<file2>,..." — the menu renders the part
 // after the first comma as the option list and treats the part before it as
 // the selected index (same convention the Crosshair module uses).
+inline std::string makeRadioValue(int selectedIndex, const std::vector<std::string>& files,
+                                  const std::vector<std::string>& labels);
+
 inline std::string makeRadioValue(int selectedIndex, const std::vector<std::string>& files) {
+    return makeRadioValue(selectedIndex, files, makeCapeLabels(files));
+}
+
+// Same, with explicit display labels (one per file). A label list of the wrong
+// size is ignored and the file names are used instead.
+inline std::string makeRadioValue(int selectedIndex, const std::vector<std::string>& files,
+                                  const std::vector<std::string>& labels) {
+    const bool useLabels = labels.size() == files.size();
     const int optionCount = 1 + static_cast<int>(files.size());
     if (selectedIndex < 0) selectedIndex = 0;
     if (selectedIndex >= optionCount) selectedIndex = optionCount - 1;
@@ -169,9 +342,9 @@ inline std::string makeRadioValue(int selectedIndex, const std::vector<std::stri
     std::string value = std::to_string(selectedIndex);
     value += ',';
     value += kNoneLabel;
-    for (const std::string& file : files) {
+    for (std::size_t i = 0; i < files.size(); ++i) {
         value += ',';
-        value += file;
+        value += useLabels ? labels[i] : files[i];
     }
     return value;
 }
@@ -228,11 +401,31 @@ inline bool parseRadioValue(const std::string& value, int& outIndex, std::string
 // files[0] never exists (index 0 == None). Returns the index within the
 // "None + files" option space: 0 when nothing is selected/found.
 inline int resolveSelectionIndex(int parsedIndex, const std::string& parsedName,
+                                 const std::vector<std::string>& files,
+                                 const std::vector<std::string>& labels);
+
+inline int resolveSelectionIndex(int parsedIndex, const std::string& parsedName,
                                  const std::vector<std::string>& files) {
-    // Prefer the recovered file name; it survives list reordering.
+    return resolveSelectionIndex(parsedIndex, parsedName, files, makeCapeLabels(files));
+}
+
+// As above, but the recovered option text may be either a display label
+// ("My Cape") or a raw file name ("My Cape.png"), so both are matched. The
+// name always wins over the numeric index: the list is re-scanned on every
+// save, and a file added or removed above the selection would otherwise
+// silently shift the user onto a different cape.
+inline int resolveSelectionIndex(int parsedIndex, const std::string& parsedName,
+                                 const std::vector<std::string>& files,
+                                 const std::vector<std::string>& labels) {
+    const bool useLabels = labels.size() == files.size();
     if (!parsedName.empty() && parsedName != kNoneLabel) {
         for (std::size_t i = 0; i < files.size(); ++i) {
             if (files[i] == parsedName) return static_cast<int>(i) + 1;
+        }
+        if (useLabels) {
+            for (std::size_t i = 0; i < labels.size(); ++i) {
+                if (labels[i] == parsedName) return static_cast<int>(i) + 1;
+            }
         }
         // The file was deleted/renamed since the value was written.
         return 0;
@@ -311,33 +504,120 @@ inline void paintElytraFromCape(std::vector<std::uint8_t>& canvas) {
 }
 
 // ---------------------------------------------------------------
-// Resampler v2 — Dynamic Resolution + Bilinear + Smart Crop
+// Fit modes — how an arbitrary image is laid onto the 10x16 back face
 // ---------------------------------------------------------------
-// Requirements from the task:
-//  • Dynamic Resolution Detection: read W×H dynamically
-//  • Bilinear Resampling: any weird/custom size -> 64×32 UV Map
-//  • Smart Crop & Aspect Ratio: preserve aspect, avoid stretch,
-//    auto-fill edges/thickness from image edge colors.
+// The cape back face is a 10:16 (0.625) portrait, while most artwork is
+// square, landscape or a different portrait ratio. Scaling both axes
+// independently (the old behavior) distorts faces and text, so the fit mode
+// decides what happens instead:
 //
-// Supported custom sizes (and any other):
-//   22×23, 88×92, 176×184, 704×736, 736×797
-//
-// Pipeline:
-//   1) Detect source W,H dynamically (parameters width,height)
-//   2) Compute aspect-preserving crop rectangle (cover mode):
-//        targetAspect = 10/16 = 0.625 (cape back face)
-//        if sourceAspect > targetAspect => crop width, keep full height
-//        else => crop height, keep full width
-//      The crop is centered.
-//   3) Bilinear resample the cropped region onto the outer BACK face
-//      (1,1) 10×16 of the 64×32 canvas.
-//   4) Inner FRONT face (12,1) gets a flat lining color (half-bright avg)
-//   5) Thickness strips (top/bottom/side) copy adjacent edge pixels
-//   6) Elytra UV (22,0) generated from the same artwork with tapered mask.
-//
-// An exact 64×32 input keeps its manually-authored Elytra pixels.
-// If that UV area is fully transparent, the fallback is generated.
+//   Cover    fill the face completely and crop the overflow. No distortion,
+//            but the image's outer edges are lost — the module default,
+//            because a cape with empty bars looks broken in game.
+//   Contain  keep the whole design at its own aspect ratio and pad the
+//            leftover with the image's edge pixels.
+//   Stretch  scale both axes independently (distortion, legacy behavior).
+enum class FitMode : int {
+    Cover = 0,
+    Contain = 1,
+    Stretch = 2,
+};
+
+inline constexpr int kFitModeCount = 3;
+
+inline FitMode fitModeFromInt(int value) {
+    if (value < 0 || value >= kFitModeCount) return FitMode::Cover;
+    return static_cast<FitMode>(value);
+}
+
+inline const char* fitModeLabel(FitMode mode) {
+    switch (mode) {
+        case FitMode::Contain: return "Contain";
+        case FitMode::Stretch: return "Stretch";
+        case FitMode::Cover: break;
+    }
+    return "Cover";
+}
+
+// The source region mapped onto the destination face, in source pixel
+// coordinates. For Contain the region is *larger* than the image on one axis;
+// the sampler clamps outside coordinates to the nearest edge texel, which is
+// exactly the padding.
+struct CropRect {
+    double x = 0.0;
+    double y = 0.0;
+    double width = 1.0;
+    double height = 1.0;
+};
+
+inline CropRect computeCrop(std::uint32_t width, std::uint32_t height,
+                            std::uint32_t targetW, std::uint32_t targetH,
+                            FitMode mode) {
+    CropRect crop;
+    if (width == 0 || height == 0 || targetW == 0 || targetH == 0) return crop;
+
+    const double srcW = static_cast<double>(width);
+    const double srcH = static_cast<double>(height);
+    const double targetAspect = static_cast<double>(targetW) / static_cast<double>(targetH);
+    const double srcAspect = srcW / srcH;
+
+    if (mode == FitMode::Stretch) {
+        crop.width = srcW;
+        crop.height = srcH;
+        return crop;
+    }
+
+    if (mode == FitMode::Contain) {
+        // The whole image must stay visible, so the sampled region is the
+        // source grown until it has the target aspect ratio.
+        if (srcAspect > targetAspect) {
+            crop.width = srcW;
+            crop.height = srcW / targetAspect;
+        } else {
+            crop.width = srcH * targetAspect;
+            crop.height = srcH;
+        }
+        crop.x = (srcW - crop.width) * 0.5;
+        crop.y = (srcH - crop.height) * 0.5;
+        return crop;
+    }
+
+    // Cover: the largest centred region that already has the target aspect.
+    if (srcAspect > targetAspect) {
+        crop.height = srcH;
+        crop.width = srcH * targetAspect;
+        crop.x = (srcW - crop.width) * 0.5;
+    } else {
+        crop.width = srcW;
+        crop.height = srcW / targetAspect;
+        crop.y = (srcH - crop.height) * 0.5;
+    }
+
+    // A crop thinner than one texel would sample a sliver of the artwork and
+    // throw the rest away; for tiny images keep the full axis instead (the
+    // sampler upsamples it, which looks far better than a 0.4-pixel strip).
+    if (crop.width < 1.0 || crop.width <= 0.0) {
+        crop.width = srcW;
+        crop.x = 0.0;
+    }
+    if (crop.height < 1.0 || crop.height <= 0.0) {
+        crop.height = srcH;
+        crop.y = 0.0;
+    }
+    return crop;
+}
+
 // ---------------------------------------------------------------
+// Image sampling
+// ---------------------------------------------------------------
+// The cape face is only 10x16 texels, so nearly every source is shrunk.
+// Reading a single bilinear sample per destination pixel aliased badly: a
+// 736x797 photo turned into noise, and thin details (text, logo outlines)
+// either vanished or shimmered. boxSample() averages every source texel that
+// overlaps the destination pixel, which is an exact area average when
+// downscaling and a smooth blend when upscaling. Colors are averaged
+// premultiplied by alpha, so a transparent border cannot bleed black into a
+// logo.
 
 inline void bilinearSample(const std::uint8_t* rgba, std::uint32_t W, std::uint32_t H,
                            double fx, double fy, std::uint8_t out[4]) {
@@ -345,7 +625,6 @@ inline void bilinearSample(const std::uint8_t* rgba, std::uint32_t W, std::uint3
         out[0] = out[1] = out[2] = out[3] = 0;
         return;
     }
-    // Clamp to valid texel range for sampling
     if (fx < 0) fx = 0;
     if (fy < 0) fy = 0;
     if (fx > static_cast<double>(W - 1)) fx = static_cast<double>(W - 1);
@@ -368,22 +647,142 @@ inline void bilinearSample(const std::uint8_t* rgba, std::uint32_t W, std::uint3
                            wx * static_cast<double>(rgba[i10 + c]);
         const double bottom = (1.0 - wx) * static_cast<double>(rgba[i01 + c]) +
                               wx * static_cast<double>(rgba[i11 + c]);
-        const double value = (1.0 - wy) * top + wy * bottom;
-        // Round to nearest
-        double clamped = value;
-        if (clamped < 0) clamped = 0;
-        if (clamped > 255) clamped = 255;
-        out[c] = static_cast<std::uint8_t>(clamped + 0.5);
+        double value = (1.0 - wy) * top + wy * bottom;
+        if (value < 0) value = 0;
+        if (value > 255) value = 255;
+        out[c] = static_cast<std::uint8_t>(value + 0.5);
     }
 }
 
-inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::uint32_t width,
-                                                std::uint32_t height) {
-    std::vector<std::uint8_t> out;
-    out.resize(static_cast<std::size_t>(kCapeWidth) * kCapeHeight * 4u, 0);
+// Area-averages the source region [x0,x1) x [y0,y1) into one RGBA texel.
+// Region edges that only partly cover a source texel weight it proportionally
+// (so a 0.4-texel strip is not rounded up to a full texel), and coordinates
+// outside the image are treated as the nearest edge texel.
+inline void boxSample(const std::uint8_t* rgba, std::uint32_t W, std::uint32_t H,
+                      double x0, double y0, double x1, double y1,
+                      std::uint8_t out[4]) {
+    out[0] = out[1] = out[2] = out[3] = 0;
+    if (!rgba || W == 0 || H == 0) return;
+    if (x1 < x0) std::swap(x0, x1);
+    if (y1 < y0) std::swap(y0, y1);
+
+    const auto clampRect = [](double& a0, double& a1, std::uint32_t limit) {
+        const double hi = static_cast<double>(limit);
+        if (a0 < 0.0) a0 = 0.0;
+        if (a0 > hi) a0 = hi;
+        if (a1 < 0.0) a1 = 0.0;
+        if (a1 > hi) a1 = hi;
+    };
+    clampRect(x0, x1, W);
+    clampRect(y0, y1, H);
+
+    // Region entirely outside the image (Contain padding) or too thin to have
+    // area: clamp to the nearest edge texel.
+    if (x1 - x0 <= 1e-9 || y1 - y0 <= 1e-9) {
+        bilinearSample(rgba, W, H, (x0 + x1) * 0.5 - 0.5, (y0 + y1) * 0.5 - 0.5, out);
+        return;
+    }
+
+    const std::uint32_t ix0 = static_cast<std::uint32_t>(std::floor(x0));
+    const std::uint32_t iy0 = static_cast<std::uint32_t>(std::floor(y0));
+    const std::uint32_t ix1 = std::min(W, static_cast<std::uint32_t>(std::ceil(x1)));
+    const std::uint32_t iy1 = std::min(H, static_cast<std::uint32_t>(std::ceil(y1)));
+
+    double acc[4] = {0.0, 0.0, 0.0, 0.0};
+    double totalWeight = 0.0;
+    for (std::uint32_t y = iy0; y < iy1; ++y) {
+        const double cy0 = std::max(y0, static_cast<double>(y));
+        const double cy1 = std::min(y1, static_cast<double>(y) + 1.0);
+        const double wy = cy1 - cy0;
+        if (wy <= 0.0) continue;
+        for (std::uint32_t x = ix0; x < ix1; ++x) {
+            const double cx0 = std::max(x0, static_cast<double>(x));
+            const double cx1 = std::min(x1, static_cast<double>(x) + 1.0);
+            const double wx = cx1 - cx0;
+            if (wx <= 0.0) continue;
+            const double weight = wx * wy;
+            const std::size_t i = (static_cast<std::size_t>(y) * W + x) * 4u;
+            const double alpha = static_cast<double>(rgba[i + 3]) / 255.0;
+            acc[0] += rgba[i + 0] * alpha * weight;
+            acc[1] += rgba[i + 1] * alpha * weight;
+            acc[2] += rgba[i + 2] * alpha * weight;
+            acc[3] += rgba[i + 3] * weight;
+            totalWeight += weight;
+        }
+    }
+
+    if (totalWeight <= 0.0) {
+        bilinearSample(rgba, W, H, (x0 + x1) * 0.5 - 0.5, (y0 + y1) * 0.5 - 0.5, out);
+        return;
+    }
+
+    const double alphaAvg = acc[3] / totalWeight;
+    const double alphaNorm = alphaAvg / 255.0;
+    for (int c = 0; c < 3; ++c) {
+        double value = 0.0;
+        if (alphaNorm > 1e-6) value = (acc[c] / totalWeight) / alphaNorm;
+        if (value < 0.0) value = 0.0;
+        if (value > 255.0) value = 255.0;
+        out[c] = static_cast<std::uint8_t>(value + 0.5);
+    }
+    out[3] = static_cast<std::uint8_t>(alphaAvg + 0.5);
+}
+
+// Samples one destination texel that covers [x0,x1) x [y0,y1) of the source.
+//
+// Minification (the common case: a photo onto a 10x16 face) uses the area
+// average, which is what keeps large sources from turning into aliasing noise.
+// Magnification (a tiny 2x2 or 10x16 source) has no area to average, and box
+// averaging would just repeat texels; a bilinear tap at the coverage centre
+// keeps small images smooth instead of blocky.
+inline void sampleFace(const std::uint8_t* rgba, std::uint32_t W, std::uint32_t H,
+                       double x0, double y0, double x1, double y1,
+                       std::uint8_t out[4]) {
+    const bool magnifying = (x1 - x0) <= 1.0 && (y1 - y0) <= 1.0;
+    if (magnifying) {
+        // Centre of the destination texel in source *texel* space. Clamping
+        // to the image keeps the bilinear tap (and Contain padding) sane.
+        const double fx = (x0 + x1) * 0.5 - 0.5;
+        const double fy = (y0 + y1) * 0.5 - 0.5;
+        bilinearSample(rgba, W, H, fx, fy, out);
+        return;
+    }
+    boxSample(rgba, W, H, x0, y0, x1, y1, out);
+}
+
+// ---------------------------------------------------------------
+// Resampler — any image -> the 64x32 classic-cape canvas
+// ---------------------------------------------------------------
+// Pipeline (identical for every source size, so an image looks the same
+// whether it was authored at 22x23 or 736x797):
+//
+//   1) Map the source onto the outer BACK face (1,1) 10x16 using the fit
+//      mode and the area-average sampler.
+//   2) Fill the inner FRONT face (12,1) with one flat lining colour derived
+//      from the back face — this is what is seen as the cape swings away.
+//   3) Continue the image's edge colours onto the top/bottom/side strips so
+//      the one-voxel-thick cuboid does not read as a paper-thin sheet.
+//   4) Generate the Elytra wing UV (22,0) from the same design, clipped to
+//      the vanilla tapered silhouette.
+//
+// A complete, manually authored 64x32 canvas is passed through untouched
+// (pixel-perfect) unless its Elytra strip is empty and needs a fallback.
+
+// Lining brightness relative to the average design colour: the inner face is
+// the design's average colour at half brightness, which reads as a lining
+// instead of a second design.
+inline constexpr double kLiningScale = 0.5;
+
+inline std::vector<std::uint8_t> resampleToCapeEx(const std::uint8_t* rgba,
+                                                  std::uint32_t width,
+                                                  std::uint32_t height,
+                                                  FitMode mode = FitMode::Cover) {
+    std::vector<std::uint8_t> out(
+        static_cast<std::size_t>(kCapeWidth) * kCapeHeight * 4u, 0);
     if (!rgba || width == 0 || height == 0) return out;
 
-    // Exact 64×32 canvas — keep pixel-perfect, preserve custom Elytra if present
+    // Exact 64x32 canvas: keep it pixel-perfect, and only synthesize wings
+    // when the author did not draw any.
     if (width == kCapeWidth && height == kCapeHeight) {
         out.assign(rgba, rgba + out.size());
         if (!hasElytraArtwork(out)) paintElytraFromCape(out);
@@ -395,81 +794,50 @@ inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::u
         return &canvas[(static_cast<std::size_t>(y) * kCapeWidth + x) * 4u];
     };
 
-    // --- 1) Dynamic Resolution Detection & Smart Crop ---
-    // Target aspect is the cape back face (10×16)
-    const double targetAspect = static_cast<double>(kCapeBackWidth) /
-                                static_cast<double>(kCapeBackHeight); // 0.625
-    const double srcW = static_cast<double>(width);
-    const double srcH = static_cast<double>(height);
-    const double srcAspect = srcW / srcH;
+    const CropRect crop = computeCrop(width, height, kCapeBackWidth, kCapeBackHeight, mode);
 
-    double cropW, cropH, cropX, cropY;
-    if (srcAspect > targetAspect) {
-        // Source wider than target -> crop width, keep full height
-        cropH = srcH;
-        cropW = srcH * targetAspect;
-        cropX = (srcW - cropW) * 0.5;
-        cropY = 0.0;
-    } else {
-        // Source taller than target -> crop height, keep full width
-        cropW = srcW;
-        cropH = srcW / targetAspect;
-        cropX = 0.0;
-        cropY = (srcH - cropH) * 0.5;
-    }
-
-    // Guard against degenerate crops (tiny images)
-    if (cropW < 1.0) {
-        cropW = srcW;
-        cropX = 0.0;
-    }
-    if (cropH < 1.0) {
-        cropH = srcH;
-        cropY = 0.0;
-    }
-
-    // --- 2) Bilinear Resampling onto outer back face (1,1) 10×16 ---
+    // --- 1) Outer back face ---
     for (std::uint32_t y = 0; y < kCapeBackHeight; ++y) {
+        const double sy0 = crop.y + static_cast<double>(y) * crop.height /
+                                        static_cast<double>(kCapeBackHeight);
+        const double sy1 = crop.y + static_cast<double>(y + 1) * crop.height /
+                                        static_cast<double>(kCapeBackHeight);
         for (std::uint32_t x = 0; x < kCapeBackWidth; ++x) {
-            // Map destination pixel center to source crop space
-            // Standard half-pixel center mapping: (dx+0.5)*crop / dst -0.5
-            const double srcXf = cropX + (static_cast<double>(x) + 0.5) * cropW /
-                                              static_cast<double>(kCapeBackWidth) -
-                                          0.5;
-            const double srcYf = cropY + (static_cast<double>(y) + 0.5) * cropH /
-                                              static_cast<double>(kCapeBackHeight) -
-                                          0.5;
-
-            std::uint8_t sampled[4];
-            bilinearSample(rgba, width, height, srcXf, srcYf, sampled);
-            std::uint8_t* dst = px(out, kCapeBackX + x, kCapeBackY + y);
-            dst[0] = sampled[0];
-            dst[1] = sampled[1];
-            dst[2] = sampled[2];
-            dst[3] = sampled[3];
+            const double sx0 = crop.x + static_cast<double>(x) * crop.width /
+                                            static_cast<double>(kCapeBackWidth);
+            const double sx1 = crop.x + static_cast<double>(x + 1) * crop.width /
+                                            static_cast<double>(kCapeBackWidth);
+            sampleFace(rgba, width, height, sx0, sy0, sx1, sy1,
+                       px(out, kCapeBackX + x, kCapeBackY + y));
         }
     }
 
-    // --- 3) Inner front face: flat lining color (half-bright average) ---
-    std::uint32_t sum[4] = {0, 0, 0, 0};
+    // --- 2) Inner front face: one flat lining colour ---
+    double sum[3] = {0.0, 0.0, 0.0};
+    double weightSum = 0.0;
     for (std::uint32_t y = 0; y < kCapeBackHeight; ++y) {
         for (std::uint32_t x = 0; x < kCapeBackWidth; ++x) {
             const std::uint8_t* p = px(out, kCapeBackX + x, kCapeBackY + y);
-            for (int c = 0; c < 4; ++c) sum[c] += p[c];
+            const double alpha = static_cast<double>(p[3]) / 255.0;
+            for (int c = 0; c < 3; ++c) sum[c] += static_cast<double>(p[c]) * alpha;
+            weightSum += alpha;
         }
     }
-    const std::uint32_t area = kCapeBackWidth * kCapeBackHeight;
-    std::uint8_t liner[4];
-    for (int c = 0; c < 3; ++c) liner[c] = static_cast<std::uint8_t>((sum[c] / area) / 2u);
-    liner[3] = static_cast<std::uint8_t>(sum[3] / area);
+    std::uint8_t liner[4] = {0, 0, 0, 255};
+    if (weightSum > 1e-6) {
+        for (int c = 0; c < 3; ++c) {
+            const double value = std::min(255.0, std::max(0.0, (sum[c] / weightSum) * kLiningScale));
+            liner[c] = static_cast<std::uint8_t>(value + 0.5);
+        }
+    }
     for (std::uint32_t y = 0; y < kCapeBackHeight; ++y) {
         for (std::uint32_t x = 0; x < kCapeBackWidth; ++x) {
             std::uint8_t* p = px(out, kCapeFrontX + x, kCapeFrontY + y);
-            for (int c = 0; c < 4; ++c) p[c] = liner[c];
+            std::memcpy(p, liner, 4);
         }
     }
 
-    // --- 4) Thickness: edge strips auto-filled from image edge colors ---
+    // --- 3) Thickness: edge strips continue the image's edge colours ---
     for (std::uint32_t x = 0; x < kCapeBackWidth; ++x) {
         std::memcpy(px(out, kCapeTopX + x, kCapeTopY),
                     px(out, kCapeBackX + x, kCapeBackY), 4);
@@ -483,10 +851,16 @@ inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::u
                     px(out, kCapeBackX + kCapeBackWidth - 1, kCapeBackY + y), 4);
     }
 
-    // --- 5) Elytra: reuse the cape design with tapered alpha mask ---
+    // --- 4) Elytra wings ---
     paintElytraFromCape(out);
 
     return out;
+}
+
+// Backwards-compatible entry point (Cover fit), used by the module and tests.
+inline std::vector<std::uint8_t> resampleToCape(const std::uint8_t* rgba, std::uint32_t width,
+                                                std::uint32_t height) {
+    return resampleToCapeEx(rgba, width, height, FitMode::Cover);
 }
 
 } // namespace customcapes
