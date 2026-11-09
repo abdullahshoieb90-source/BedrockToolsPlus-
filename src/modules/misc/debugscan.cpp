@@ -3,7 +3,6 @@
 #include <android/log.h>
 
 #include <algorithm>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cinttypes>
@@ -18,11 +17,22 @@ constexpr const char* kTag = "BTScan";
 constexpr std::size_t kMaxHits = 24;
 
 struct Segment {
-    std::uintptr_t vaddr = 0;   // relative to base
+    std::uintptr_t vaddr = 0;   // relative to base (absolute start when stored in `loads`)
     std::uintptr_t filesz = 0;  // mapping size
     std::uint32_t flags = 0;    // ELF PF_R=4 / PF_W=2 / PF_X=1
 };
 
+// True when [addr, addr+4) lies entirely inside one of the mapped segments.
+bool wordInSegments(const std::vector<Segment>& loads, std::uintptr_t base,
+                    std::uintptr_t addr) {
+    for (const auto& seg : loads) {
+        const std::uintptr_t start = base + seg.vaddr;
+        if (addr >= start && addr + 4 <= start + seg.filesz) return true;
+    }
+    return false;
+}
+
+// memmem does not exist in bionic, so locate `needle` manually.
 const std::uint8_t* findBytes(const std::uint8_t* hay, std::size_t hayLen,
                               const char* needle, std::size_t needleLen) {
     if (needleLen == 0 || hayLen < needleLen) return nullptr;
@@ -54,9 +64,16 @@ std::vector<std::uintptr_t> findOccurrences(const std::uint8_t* base,
     return hits;
 }
 
-void dumpHex(std::uintptr_t addr, int words) {
+// Every dump goes through this bounded reader — no read may cross a mapping end.
+void dumpHex(const std::vector<Segment>& loads, std::uintptr_t base,
+             std::uintptr_t addr, int words) {
     for (int i = 0; i < words; ++i) {
-        const std::uint32_t insn = *reinterpret_cast<const volatile std::uint32_t*>(addr + 4 * i);
+        const std::uintptr_t at = addr + 4 * static_cast<std::uintptr_t>(i);
+        if (!wordInSegments(loads, base, at)) {
+            __android_log_print(ANDROID_LOG_INFO, kTag, "     +0x%02x: <out of range>", i * 4);
+            break;
+        }
+        const std::uint32_t insn = *reinterpret_cast<const volatile std::uint32_t*>(at);
         __android_log_print(ANDROID_LOG_INFO, kTag, "     +0x%02x: %08x", i * 4, insn);
     }
 }
@@ -68,50 +85,52 @@ bool isPrologue(std::uint32_t insn) {
         || insn == 0xD503249Fu; // bti j
 }
 
-void scanText(std::uintptr_t textStart, std::uintptr_t textEnd, std::uintptr_t base,
+void scanText(const std::vector<Segment>& loads, std::uintptr_t base,
               std::uintptr_t target) {
     int found = 0;
-    for (std::uintptr_t pc = textStart; pc + 4 <= textEnd && found < 12; pc += 4) {
-        const std::uint32_t insn = *reinterpret_cast<const volatile std::uint32_t*>(pc);
-        if ((insn & 0x9F000000u) != 0x90000000u) continue; // ADRP
-        const std::int64_t immhi = static_cast<std::int64_t>((insn >> 5) & 0x7FFFF);
-        const std::int64_t immlo = static_cast<std::int64_t>((insn >> 29) & 0x3);
-        std::int64_t imm21 = (immhi << 2) | immlo;
-        if (imm21 & (1 << 20)) imm21 |= ~((static_cast<std::int64_t>(1) << 21) - 1);
-        const std::uintptr_t page = (pc & ~0xFFFULL) + static_cast<std::uintptr_t>(imm21 << 12);
-        const std::uint32_t rd = insn & 0x1F;
-        for (int j = 1; j <= 8; ++j) {
-            const std::uintptr_t at = pc + 4 * j;
-            if (at + 4 > textEnd) break;
-            const std::uint32_t add = *reinterpret_cast<const volatile std::uint32_t*>(at);
-            if ((add & 0x7F800000u) != 0x11000000u) continue;             // ADD (64-bit imm)
-            if (((add >> 5) & 0x1F) != rd || (add & 0x1F) != rd) continue; // ADD Xd, Xd, #imm
-            std::uint32_t imm12 = (add >> 10) & 0xFFF;
-            if (add & (1u << 22)) imm12 <<= 12;
-            if (page + imm12 != static_cast<std::uintptr_t>(base + target)) continue;
+    for (const auto& seg : loads) {
+        if ((seg.flags & 1u) == 0) continue;  // executable mappings only
+        const std::uintptr_t segStart = base + seg.vaddr;
+        const std::uintptr_t segEnd = segStart + seg.filesz;
+        for (std::uintptr_t pc = segStart; pc + 4 <= segEnd && found < 12; pc += 4) {
+            const std::uint32_t insn = *reinterpret_cast<const volatile std::uint32_t*>(pc);
+            if ((insn & 0x9F000000u) != 0x90000000u) continue; // ADRP
+            const std::int64_t immhi = static_cast<std::int64_t>((insn >> 5) & 0x7FFFF);
+            const std::int64_t immlo = static_cast<std::int64_t>((insn >> 29) & 0x3);
+            std::int64_t imm21 = (immhi << 2) | immlo;
+            if (imm21 & (1 << 20)) imm21 |= ~((static_cast<std::int64_t>(1) << 21) - 1);
+            const std::uintptr_t page = (pc & ~0xFFFULL) + static_cast<std::uintptr_t>(imm21 << 12);
+            const std::uint32_t rd = insn & 0x1F;
+            for (int j = 1; j <= 8; ++j) {
+                const std::uintptr_t at = pc + 4 * static_cast<std::uintptr_t>(j);
+                if (at + 4 > segEnd) break;  // never leave the mapping
+                const std::uint32_t add = *reinterpret_cast<const volatile std::uint32_t*>(at);
+                if ((add & 0x7F800000u) != 0x11000000u) continue;             // ADD (64-bit imm)
+                if (((add >> 5) & 0x1F) != rd || (add & 0x1F) != rd) continue; // ADD Xd, Xd, #imm
+                std::uint32_t imm12 = (add >> 10) & 0xFFF;
+                if (add & (1u << 22)) imm12 <<= 12;
+                if (page + imm12 != static_cast<std::uintptr_t>(base + target)) continue;
 
-            __android_log_print(ANDROID_LOG_INFO, kTag, "   xref @ +0x%llx (adrp insn at distance %d)",
-                                static_cast<unsigned long long>(pc - base), j);
-            // Walk backwards for a prologue marker.
-            std::uintptr_t prologue = 0;
-            for (std::uintptr_t p = pc; p >= textStart && pc - p <= 0x800; p -= 4) {
-                const std::uint32_t back = *reinterpret_cast<const volatile std::uint32_t*>(p);
-                if (isPrologue(back)) { prologue = p; break; }
-            }
-            if (prologue) {
-                __android_log_print(ANDROID_LOG_INFO, kTag, "   prologue @ +0x%llx, first 20 words:",
-                                    static_cast<unsigned long long>(prologue - base));
-                for (int k = 0; k < 20; ++k) {
-                    const std::uint32_t w = *reinterpret_cast<const volatile std::uint32_t*>(prologue + 4 * k);
-                    __android_log_print(ANDROID_LOG_INFO, kTag, "     +0x%02x: %08x", k * 4, w);
+                __android_log_print(ANDROID_LOG_INFO, kTag, "   xref @ +0x%llx (adrp insn at distance %d)",
+                                    static_cast<unsigned long long>(pc - base), j);
+                // Walk backwards for a prologue marker (bounded by the segment).
+                std::uintptr_t prologue = 0;
+                for (std::uintptr_t p = pc; p >= segStart && pc - p <= 0x800; p -= 4) {
+                    const std::uint32_t back = *reinterpret_cast<const volatile std::uint32_t*>(p);
+                    if (isPrologue(back)) { prologue = p; break; }
                 }
-            } else {
-                __android_log_print(ANDROID_LOG_INFO, kTag, "   no prologue in 2KB window; dumping xref bytes:");
-                dumpHex(pc - 0x40, 10);
-                dumpHex(pc, 24);
+                if (prologue) {
+                    __android_log_print(ANDROID_LOG_INFO, kTag, "   prologue @ +0x%llx, first 20 words:",
+                                        static_cast<unsigned long long>(prologue - base));
+                    dumpHex(loads, base, prologue, 20);
+                } else {
+                    __android_log_print(ANDROID_LOG_INFO, kTag, "   no prologue in 2KB window; dumping xref bytes:");
+                    dumpHex(loads, base, pc >= segStart + 0x40 ? pc - 0x40 : segStart, 10);
+                    dumpHex(loads, base, pc, 24);
+                }
+                ++found;
+                break;
             }
-            ++found;
-            break;
         }
     }
     if (!found) __android_log_print(ANDROID_LOG_INFO, kTag, "   no adrp+add xref found");
@@ -185,11 +204,6 @@ void DebugScanModule::onInit() {
             textEnd = std::max(textEnd, base + seg.vaddr + seg.filesz);
         }
     }
-    if (textStart == ~static_cast<std::uintptr_t>(0)) {
-        // No executable mapping found — scanning would read garbage, so skip.
-        textStart = base;
-        textEnd = base;
-    }
     __android_log_print(ANDROID_LOG_INFO, kTag, "base=+0x%llx text range +0x%llx..+0x%llx",
                         static_cast<unsigned long long>(base),
                         static_cast<unsigned long long>(textStart - base),
@@ -234,7 +248,7 @@ void DebugScanModule::onInit() {
     for (const std::uintptr_t hit : overlayHits) {
         __android_log_print(ANDROID_LOG_INFO, kTag, "xrefs to string @ +0x%llx:",
                             static_cast<unsigned long long>(hit));
-        scanText(textStart, textEnd, base, hit);
+        scanText(loads, base, hit);
     }
 
     if (handle) dlclose(handle);
