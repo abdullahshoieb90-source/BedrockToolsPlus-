@@ -140,11 +140,10 @@ private:
 
     void ensureCapesDirectory();
     bool refreshFilesLocked(); // m_mutex already held
-#if !defined(__ANDROID__) || defined(BEDROCKTOOLS_CUSTOMCAPES_WRITER)
-    // Only compiled where the PNG writer is (host builds). The device build
-    // creates the folder and leaves it empty rather than carrying the encoder.
+    // Writes the built-in sample cape so a fresh install has something to
+    // pick. The encoder lives in customcapes.cpp, which owns the single
+    // STB_IMAGE_WRITE_IMPLEMENTATION of the shared object (Wings needs it too).
     void writeSamplePng(const std::string& path) const;
-#endif
     bool loadSelectedCape();
     void releaseLoadedCape();
     void rebuildCapeId();

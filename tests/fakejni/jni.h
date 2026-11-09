@@ -15,6 +15,7 @@
 #include <cstdint>
 
 using jsize = std::int32_t;
+using jchar = std::uint16_t; // JNI's UTF-16 code unit; used by the Hit Sound text helpers
 using jint = std::int32_t;
 using jlong = std::int64_t;
 using jboolean = std::uint8_t;
@@ -52,6 +53,7 @@ struct JNIEnv {
     jfieldID (*GetFieldIDFn)(JNIEnv *, jclass, const char *, const char *) = nullptr;
     jclass (*GetSuperclassFn)(JNIEnv *, jclass) = nullptr;
     jobject (*NewLocalRefFn)(JNIEnv *, jobject) = nullptr;
+    jobject (*NewGlobalRefFn)(JNIEnv *, jobject) = nullptr;
     jobject (*CallStaticObjectMethodVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jint (*CallStaticIntMethodVFn)(JNIEnv *, jclass, jmethodID, va_list) = nullptr;
     jobject (*CallObjectMethodVFn)(JNIEnv *, jobject, jmethodID, va_list) = nullptr;
@@ -83,6 +85,18 @@ struct JNIEnv {
     }
     jclass GetSuperclass(jclass c) { return GetSuperclassFn(this, c); }
     jobject NewLocalRef(jobject o) { return NewLocalRefFn(this, o); }
+    // Only used by the full-build link check; the unit tests do not call it.
+    jboolean CallBooleanMethod(jobject o, jmethodID m, ...) {
+        (void)o; (void)m; return 0;
+    }
+    jint CallIntMethod(jobject o, jmethodID m, ...) { (void)o; (void)m; return 0; }
+    jstring NewString(const jchar *chars, jsize len) { (void)chars; (void)len; return nullptr; }
+    void DeleteGlobalRef(jobject o) { (void)o; }
+    void DeleteWeakGlobalRef(jobject o) { (void)o; }
+    jboolean CallStaticBooleanMethod(jclass c, jmethodID m, ...) {
+        (void)c; (void)m; return 0;
+    }
+    jobject NewGlobalRef(jobject o) { return NewGlobalRefFn ? NewGlobalRefFn(this, o) : nullptr; }
     jboolean ExceptionCheck() { return ExceptionCheckFn(this); }
     void ExceptionClear() { ExceptionClearFn(this); }
     void DeleteLocalRef(jobject o) { DeleteLocalRefFn(this, o); }

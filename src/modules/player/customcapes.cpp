@@ -23,13 +23,13 @@
 #define STBI_NO_PNM
 #include <stb/stb_image.h>
 
-// The writer is only needed for the sample cape. It is kept out of the device
-// build (the sample is shipped in the module package) to save flash; the host
-// tests, which generate PNGs, define STB_IMAGE_WRITE_IMPLEMENTATION
-// themselves and link against this file.
-#if !defined(__ANDROID__) || defined(BEDROCKTOOLS_CUSTOMCAPES_WRITER)
+// The PNG writer must have exactly one definition in the shared object. Wings
+// calls stbi_write_png() in the device build too (it regenerates wings.png when
+// the asset is missing), so this cannot be dropped from Android: doing that
+// left libBedrockToolsPlus.so with an undefined stbi_write_png, and the
+// preloader's dlopen(RTLD_NOW) then failed - which made every module disappear
+// from the launcher menu instead of just the one that needed the writer.
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#endif
 #include <stb/stb_image_write.h>
 
 #include <algorithm>
@@ -166,12 +166,9 @@ void CustomCapesModule::ensureCapesDirectory() {
     std::error_code ec;
     if (std::filesystem::is_directory(m_capesDir, ec)) return;
     if (!std::filesystem::create_directories(m_capesDir, ec) || ec) return;
-#if !defined(__ANDROID__) || defined(BEDROCKTOOLS_CUSTOMCAPES_WRITER)
     writeSamplePng(m_capesDir + "/" + kSampleCapeName);
-#endif
 }
 
-#if !defined(__ANDROID__) || defined(BEDROCKTOOLS_CUSTOMCAPES_WRITER)
 void CustomCapesModule::writeSamplePng(const std::string& path) const {
     std::vector<std::uint8_t> src(customcapes::kCapeBackWidth * customcapes::kCapeBackHeight * 4u);
     for (std::uint32_t y = 0; y < customcapes::kCapeBackHeight; ++y) {
@@ -196,7 +193,6 @@ void CustomCapesModule::writeSamplePng(const std::string& path) const {
     stbi_write_png(path.c_str(), customcapes::kCapeWidth, customcapes::kCapeHeight, 4,
                    px.data(), customcapes::kCapeWidth * 4);
 }
-#endif
 
 void CustomCapesModule::loadConfig(const nlohmann::json& j) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
