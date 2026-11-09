@@ -195,6 +195,25 @@ void DebugScanModule::onInit() {
                         static_cast<unsigned long long>(textStart - base),
                         static_cast<unsigned long long>(textEnd - base));
 
+    // 0) Are the client RenderController methods exported as dynamic symbols?
+    //    (pl::memory::resolveSignature tries dlsym first, then byte patterns.)
+    const char* candidates[] = {
+        "_ZNK16RenderController15getOverlayColorER12RenderParams",
+        "_ZN16RenderController15getOverlayColorER12RenderParams",
+        "_ZNK16RenderController12getTintColorER12RenderParams",
+        "_ZN16RenderController12getTintColorER12RenderParams",
+        "_ZNK16RenderController14getOnFireColorER12RenderParams",
+        "_ZN16RenderController14getOnFireColorER12RenderParams",
+        "_ZNK16RenderController9getUVAnimER12RenderParamsRK4Vec4",
+        "_ZTI16RenderController",
+        "_ZTS16RenderController",
+        "_ZTV16RenderController",
+    };
+    for (const char* name : candidates) {
+        void* sym = dlsym(handle, name);
+        __android_log_print(ANDROID_LOG_INFO, kTag, "dlsym %s -> %p", name, sym);
+    }
+
     // 1) Sanity: does the binary contain the symbol string at all?
     const char* probeStrings[] = {"getOverlayColor", "OverlayColor", "RenderController"};
     for (const char* needle : probeStrings) {
