@@ -6,6 +6,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cinttypes>
 #include <cstring>
 #include <dlfcn.h>
 #include <string>
@@ -16,30 +17,12 @@ namespace {
 constexpr const char* kTag = "BTScan";
 constexpr std::size_t kMaxHits = 24;
 
-void logLine(const char* fmt, ...) {
-    char buf[512];
-    va_list args;
-    va_start(args, fmt);
-    std::vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    __android_log_print(ANDROID_LOG_INFO, kTag, "%s", buf);
-}
-
-struct LinkMap {
-    std::uintptr_t l_addr;
-    char* l_name;
-    void* l_ld;
-    LinkMap* l_next;
-    LinkMap* l_prev;
-};
-
 struct Segment {
-    std::uintptr_t vaddr = 0;
-    std::uintptr_t filesz = 0;
-    std::uint32_t flags = 0;
+    std::uintptr_t vaddr = 0;   // relative to base
+    std::uintptr_t filesz = 0;  // mapping size
+    std::uint32_t flags = 0;    // ELF PF_R=4 / PF_W=2 / PF_X=1
 };
 
-// memmem does not exist in bionic, so locate `needle` manually.
 const std::uint8_t* findBytes(const std::uint8_t* hay, std::size_t hayLen,
                               const char* needle, std::size_t needleLen) {
     if (needleLen == 0 || hayLen < needleLen) return nullptr;
@@ -134,6 +117,40 @@ void scanText(std::uintptr_t textStart, std::uintptr_t textEnd, std::uintptr_t b
     if (!found) __android_log_print(ANDROID_LOG_INFO, kTag, "   no adrp+add xref found");
 }
 
+// Parse /proc/self/maps for the mappings of `module`. Fills `base` (minimum
+// mapping start) and a list of readable segments relative to it. This mirrors
+// what the LeviLauncher preloader does — bionic's dlopen() does NOT return a
+// link_map, so we never dereference the handle it gives us (we only feed it
+// to dlsym).
+bool parseMapsFor(const char* module, std::uintptr_t& base, std::vector<Segment>& loads) {
+    base = ~static_cast<std::uintptr_t>(0);
+    loads.clear();
+    FILE* maps = std::fopen("/proc/self/maps", "r");
+    if (!maps) return false;
+
+    char line[4096];
+    while (std::fgets(line, sizeof(line), maps)) {
+        if (std::strstr(line, module) == nullptr) continue;
+        std::uintptr_t start = 0, end = 0;
+        char perms[5] = {};
+        if (std::sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %4s", &start, &end, perms) != 3) continue;
+        if (end <= start || perms[0] != 'r') continue;
+        Segment seg;
+        seg.vaddr = start;
+        seg.filesz = end - start;
+        seg.flags = 4;                               // PF_R
+        if (perms[1] == 'w') seg.flags |= 2;         // PF_W
+        if (perms[2] == 'x') seg.flags |= 1;         // PF_X
+        loads.push_back(seg);
+    }
+    std::fclose(maps);
+
+    if (loads.empty()) return false;
+    for (const auto& seg : loads) base = std::min(base, seg.vaddr);
+    for (auto& seg : loads) seg.vaddr -= base;
+    return true;
+}
+
 } // namespace
 
 DebugScanModule::DebugScanModule()
@@ -145,73 +162,60 @@ DebugScanModule::DebugScanModule()
 void DebugScanModule::onInit() {
     __android_log_print(ANDROID_LOG_INFO, kTag, "BTScan: begin");
 
+    // Kept for dlsym only; the handle is opaque on bionic and never dereferenced.
     void* handle = dlopen("libminecraftpe.so", RTLD_NOW | RTLD_NOLOAD);
-    if (!handle) {
-        __android_log_print(ANDROID_LOG_INFO, kTag, "libminecraftpe.so is not loaded");
-        __android_log_print(ANDROID_LOG_INFO, kTag, "BTScan: end");
-        return;
-    }
 
-    const auto base = reinterpret_cast<LinkMap*>(handle)->l_addr;
-    if (!base) {
-        __android_log_print(ANDROID_LOG_INFO, kTag, "link_map has no base address");
+    std::uintptr_t base = 0;
+    std::vector<Segment> loads;
+    if (!parseMapsFor("libminecraftpe.so", base, loads)) {
+        __android_log_print(ANDROID_LOG_INFO, kTag, "libminecraftpe.so not found in /proc/self/maps");
         __android_log_print(ANDROID_LOG_INFO, kTag, "BTScan: end");
         return;
     }
     const auto* eh = reinterpret_cast<const std::uint8_t*>(base);
-    if (eh[0] != 0x7F || eh[1] != 'E' || eh[2] != 'L' || eh[3] != 'F') {
-        __android_log_print(ANDROID_LOG_INFO, kTag, "not an ELF at the reported base");
-        __android_log_print(ANDROID_LOG_INFO, kTag, "BTScan: end");
-        return;
-    }
 
-    const std::uint64_t phoff = *reinterpret_cast<const std::uint64_t*>(eh + 0x20);
-    const std::uint16_t phentsize = *reinterpret_cast<const std::uint16_t*>(eh + 0x36);
-    const std::uint16_t phnum = *reinterpret_cast<const std::uint16_t*>(eh + 0x38);
-    __android_log_print(ANDROID_LOG_INFO, kTag, "base=+0x%llx phnum=%u",
-                        static_cast<unsigned long long>(base), phnum);
-
-    std::vector<Segment> loads;
     std::uintptr_t textStart = ~static_cast<std::uintptr_t>(0);
     std::uintptr_t textEnd = 0;
-    for (std::uint16_t i = 0; i < phnum; ++i) {
-        const std::uint8_t* ph = eh + phoff + static_cast<std::uint64_t>(i) * phentsize;
-        if (*reinterpret_cast<const std::uint32_t*>(ph) != 1) continue; // PT_LOAD
-        Segment seg;
-        seg.flags = *reinterpret_cast<const std::uint32_t*>(ph + 0x04);
-        seg.filesz = *reinterpret_cast<const std::uint64_t*>(ph + 0x20);
-        const std::uint64_t vaddr = *reinterpret_cast<const std::uint64_t*>(ph + 0x10);
-        seg.vaddr = static_cast<std::uintptr_t>(vaddr);
-        __android_log_print(ANDROID_LOG_INFO, kTag, "PT_LOAD vaddr=+0x%llx filesz=+0x%llx flags=0x%x",
+    for (const auto& seg : loads) {
+        __android_log_print(ANDROID_LOG_INFO, kTag, "mapping vaddr=+0x%llx size=+0x%llx flags=0x%x",
                             static_cast<unsigned long long>(seg.vaddr),
                             static_cast<unsigned long long>(seg.filesz), seg.flags);
         if (seg.flags & 1u) {
             textStart = std::min(textStart, base + seg.vaddr);
             textEnd = std::max(textEnd, base + seg.vaddr + seg.filesz);
         }
-        loads.push_back(seg);
     }
-    __android_log_print(ANDROID_LOG_INFO, kTag, "text range +0x%llx..+0x%llx",
+    if (textStart == ~static_cast<std::uintptr_t>(0)) {
+        // No executable mapping found — scanning would read garbage, so skip.
+        textStart = base;
+        textEnd = base;
+    }
+    __android_log_print(ANDROID_LOG_INFO, kTag, "base=+0x%llx text range +0x%llx..+0x%llx",
+                        static_cast<unsigned long long>(base),
                         static_cast<unsigned long long>(textStart - base),
                         static_cast<unsigned long long>(textEnd - base));
 
     // 0) Are the client RenderController methods exported as dynamic symbols?
     //    (pl::memory::resolveSignature tries dlsym first, then byte patterns.)
-    const char* candidates[] = {
-        "_ZNK16RenderController15getOverlayColorER12RenderParams",
-        "_ZN16RenderController15getOverlayColorER12RenderParams",
-        "_ZNK16RenderController12getTintColorER12RenderParams",
-        "_ZN16RenderController12getTintColorER12RenderParams",
-        "_ZNK16RenderController14getOnFireColorER12RenderParams",
-        "_ZN16RenderController14getOnFireColorER12RenderParams",
-        "_ZNK16RenderController9getUVAnimER12RenderParamsRK4Vec4",
-        "_ZTI16RenderController",
-        "_ZTS16RenderController",
-        "_ZTV16RenderController",
-    };
-    for (const char* name : candidates) {
-        void* sym = dlsym(handle, name);
-        __android_log_print(ANDROID_LOG_INFO, kTag, "dlsym %s -> %p", name, sym);
+    if (handle) {
+        const char* candidates[] = {
+            "_ZNK16RenderController15getOverlayColorER12RenderParams",
+            "_ZN16RenderController15getOverlayColorER12RenderParams",
+            "_ZNK16RenderController12getTintColorER12RenderParams",
+            "_ZN16RenderController12getTintColorER12RenderParams",
+            "_ZNK16RenderController14getOnFireColorER12RenderParams",
+            "_ZN16RenderController14getOnFireColorER12RenderParams",
+            "_ZNK16RenderController9getUVAnimER12RenderParamsRK4Vec4",
+            "_ZTI16RenderController",
+            "_ZTS16RenderController",
+            "_ZTV16RenderController",
+        };
+        for (const char* name : candidates) {
+            void* sym = dlsym(handle, name);
+            __android_log_print(ANDROID_LOG_INFO, kTag, "dlsym %s -> %p", name, sym);
+        }
+    } else {
+        __android_log_print(ANDROID_LOG_INFO, kTag, "dlopen(RTLD_NOLOAD) returned null; skipping dlsym checks");
     }
 
     // 1) Sanity: does the binary contain the symbol string at all?
@@ -232,6 +236,8 @@ void DebugScanModule::onInit() {
                             static_cast<unsigned long long>(hit));
         scanText(textStart, textEnd, base, hit);
     }
+
+    if (handle) dlclose(handle);
 
     __android_log_print(ANDROID_LOG_INFO, kTag, "BTScan: end");
 }
