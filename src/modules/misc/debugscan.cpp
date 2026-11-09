@@ -3,6 +3,7 @@
 #include <android/log.h>
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cinttypes>
@@ -15,6 +16,44 @@ namespace {
 
 constexpr const char* kTag = "BTScan";
 constexpr std::size_t kMaxHits = 24;
+
+// Both logcat (WARN) and an on-disk file are used. The probe runs inside
+// ModuleRegistry::initialize(), before any on-screen logcat viewer attaches,
+// so logcat lines may never be visible to the user; the file is the reliable
+// channel. Every line is flushed immediately so a partial report survives a
+// crash.
+FILE* g_dump = nullptr;
+
+void report(const char* fmt, ...) {
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    __android_log_print(ANDROID_LOG_WARN, kTag, "%s", buf);
+    if (g_dump) {
+        std::fprintf(g_dump, "%s\n", buf);
+        std::fflush(g_dump);
+    }
+}
+
+void openDump() {
+    const char* candidates[] = {
+        "/sdcard/btscan.txt",
+        "/storage/emulated/0/btscan.txt",
+        "/sdcard/Android/data/org.levimc.launcher/files/btscan.txt",
+        "/storage/emulated/0/Android/data/org.levimc.launcher/files/btscan.txt",
+        "/data/data/org.levimc.launcher/cache/btscan.txt",
+    };
+    for (const char* path : candidates) {
+        g_dump = std::fopen(path, "w");
+        if (g_dump) {
+            report("BTScan: report written to %s", path);
+            return;
+        }
+    }
+    __android_log_print(ANDROID_LOG_WARN, kTag, "BTScan: could not open any dump file path");
+}
 
 struct Segment {
     std::uintptr_t vaddr = 0;   // relative to base (absolute start when stored in `loads`)
@@ -70,11 +109,11 @@ void dumpHex(const std::vector<Segment>& loads, std::uintptr_t base,
     for (int i = 0; i < words; ++i) {
         const std::uintptr_t at = addr + 4 * static_cast<std::uintptr_t>(i);
         if (!wordInSegments(loads, base, at)) {
-            __android_log_print(ANDROID_LOG_INFO, kTag, "     +0x%02x: <out of range>", i * 4);
+            report("     +0x%02x: <out of range>", i * 4);
             break;
         }
         const std::uint32_t insn = *reinterpret_cast<const volatile std::uint32_t*>(at);
-        __android_log_print(ANDROID_LOG_INFO, kTag, "     +0x%02x: %08x", i * 4, insn);
+        report("     +0x%02x: %08x", i * 4, insn);
     }
 }
 
@@ -111,8 +150,8 @@ void scanText(const std::vector<Segment>& loads, std::uintptr_t base,
                 if (add & (1u << 22)) imm12 <<= 12;
                 if (page + imm12 != static_cast<std::uintptr_t>(base + target)) continue;
 
-                __android_log_print(ANDROID_LOG_INFO, kTag, "   xref @ +0x%llx (adrp insn at distance %d)",
-                                    static_cast<unsigned long long>(pc - base), j);
+                report("   xref @ +0x%llx (adrp insn at distance %d)",
+                       static_cast<unsigned long long>(pc - base), j);
                 // Walk backwards for a prologue marker (bounded by the segment).
                 std::uintptr_t prologue = 0;
                 for (std::uintptr_t p = pc; p >= segStart && pc - p <= 0x800; p -= 4) {
@@ -120,11 +159,11 @@ void scanText(const std::vector<Segment>& loads, std::uintptr_t base,
                     if (isPrologue(back)) { prologue = p; break; }
                 }
                 if (prologue) {
-                    __android_log_print(ANDROID_LOG_INFO, kTag, "   prologue @ +0x%llx, first 20 words:",
-                                        static_cast<unsigned long long>(prologue - base));
+                    report("   prologue @ +0x%llx, first 20 words:",
+                           static_cast<unsigned long long>(prologue - base));
                     dumpHex(loads, base, prologue, 20);
                 } else {
-                    __android_log_print(ANDROID_LOG_INFO, kTag, "   no prologue in 2KB window; dumping xref bytes:");
+                    report("   no prologue in 2KB window; dumping xref bytes:");
                     dumpHex(loads, base, pc >= segStart + 0x40 ? pc - 0x40 : segStart, 10);
                     dumpHex(loads, base, pc, 24);
                 }
@@ -133,7 +172,7 @@ void scanText(const std::vector<Segment>& loads, std::uintptr_t base,
             }
         }
     }
-    if (!found) __android_log_print(ANDROID_LOG_INFO, kTag, "   no adrp+add xref found");
+    if (!found) report("   no adrp+add xref found");
 }
 
 // Parse /proc/self/maps for the mappings of `module`. Fills `base` (minimum
@@ -173,13 +212,14 @@ bool parseMapsFor(const char* module, std::uintptr_t& base, std::vector<Segment>
 } // namespace
 
 DebugScanModule::DebugScanModule()
-    : Module("Debug Scan", "Temporary reverse-engineering probe: dumps the overlay-color plumbing to logcat.") {
+    : Module("Debug Scan", "Temporary reverse-engineering probe: dumps the overlay-color plumbing to logcat and btscan.txt.") {
     showInMenu = false;
     hideInHudEditor = true;
 }
 
 void DebugScanModule::onInit() {
-    __android_log_print(ANDROID_LOG_INFO, kTag, "BTScan: begin");
+    openDump();
+    report("BTScan: begin");
 
     // Kept for dlsym only; the handle is opaque on bionic and never dereferenced.
     void* handle = dlopen("libminecraftpe.so", RTLD_NOW | RTLD_NOLOAD);
@@ -187,8 +227,9 @@ void DebugScanModule::onInit() {
     std::uintptr_t base = 0;
     std::vector<Segment> loads;
     if (!parseMapsFor("libminecraftpe.so", base, loads)) {
-        __android_log_print(ANDROID_LOG_INFO, kTag, "libminecraftpe.so not found in /proc/self/maps");
-        __android_log_print(ANDROID_LOG_INFO, kTag, "BTScan: end");
+        report("libminecraftpe.so not found in /proc/self/maps");
+        report("BTScan: end");
+        if (g_dump) { std::fclose(g_dump); g_dump = nullptr; }
         return;
     }
     const auto* eh = reinterpret_cast<const std::uint8_t*>(base);
@@ -196,18 +237,18 @@ void DebugScanModule::onInit() {
     std::uintptr_t textStart = ~static_cast<std::uintptr_t>(0);
     std::uintptr_t textEnd = 0;
     for (const auto& seg : loads) {
-        __android_log_print(ANDROID_LOG_INFO, kTag, "mapping vaddr=+0x%llx size=+0x%llx flags=0x%x",
-                            static_cast<unsigned long long>(seg.vaddr),
-                            static_cast<unsigned long long>(seg.filesz), seg.flags);
+        report("mapping vaddr=+0x%llx size=+0x%llx flags=0x%x",
+               static_cast<unsigned long long>(seg.vaddr),
+               static_cast<unsigned long long>(seg.filesz), seg.flags);
         if (seg.flags & 1u) {
             textStart = std::min(textStart, base + seg.vaddr);
             textEnd = std::max(textEnd, base + seg.vaddr + seg.filesz);
         }
     }
-    __android_log_print(ANDROID_LOG_INFO, kTag, "base=+0x%llx text range +0x%llx..+0x%llx",
-                        static_cast<unsigned long long>(base),
-                        static_cast<unsigned long long>(textStart - base),
-                        static_cast<unsigned long long>(textEnd - base));
+    report("base=+0x%llx text range +0x%llx..+0x%llx",
+           static_cast<unsigned long long>(base),
+           static_cast<unsigned long long>(textStart - base),
+           static_cast<unsigned long long>(textEnd - base));
 
     // 0) Are the client RenderController methods exported as dynamic symbols?
     //    (pl::memory::resolveSignature tries dlsym first, then byte patterns.)
@@ -226,32 +267,31 @@ void DebugScanModule::onInit() {
         };
         for (const char* name : candidates) {
             void* sym = dlsym(handle, name);
-            __android_log_print(ANDROID_LOG_INFO, kTag, "dlsym %s -> %p", name, sym);
+            report("dlsym %s -> %p", name, sym);
         }
     } else {
-        __android_log_print(ANDROID_LOG_INFO, kTag, "dlopen(RTLD_NOLOAD) returned null; skipping dlsym checks");
+        report("dlopen(RTLD_NOLOAD) returned null; skipping dlsym checks");
     }
 
     // 1) Sanity: does the binary contain the symbol string at all?
     const char* probeStrings[] = {"getOverlayColor", "OverlayColor", "RenderController"};
     for (const char* needle : probeStrings) {
         const auto hits = findOccurrences(eh, loads, needle);
-        __android_log_print(ANDROID_LOG_INFO, kTag, "'%s' occurrences: %zu", needle, hits.size());
+        report("'%s' occurrences: %zu", needle, hits.size());
         for (const auto off : hits) {
-            __android_log_print(ANDROID_LOG_INFO, kTag, "   str @ +0x%llx",
-                                static_cast<unsigned long long>(off));
+            report("   str @ +0x%llx", static_cast<unsigned long long>(off));
         }
     }
 
     // 2) Cross-reference every "OverlayColor" string from executable code.
     const auto overlayHits = findOccurrences(eh, loads, "OverlayColor");
     for (const std::uintptr_t hit : overlayHits) {
-        __android_log_print(ANDROID_LOG_INFO, kTag, "xrefs to string @ +0x%llx:",
-                            static_cast<unsigned long long>(hit));
+        report("xrefs to string @ +0x%llx:", static_cast<unsigned long long>(hit));
         scanText(loads, base, hit);
     }
 
     if (handle) dlclose(handle);
 
-    __android_log_print(ANDROID_LOG_INFO, kTag, "BTScan: end");
+    report("BTScan: end");
+    if (g_dump) { std::fclose(g_dump); g_dump = nullptr; }
 }
