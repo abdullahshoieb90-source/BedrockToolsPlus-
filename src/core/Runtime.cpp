@@ -20,6 +20,9 @@ namespace {
 std::atomic_bool enabled = false;
 std::atomic_bool resolved = false;
 std::atomic_bool installed = false;
+// The launcher menu is registered independently of the game hooks (see
+// install()); this keeps a retry from registering every module twice.
+std::atomic_bool menuRegistered = false;
 std::mutex resolveMutex;
 std::mutex installMutex;
 thread_local bool resolvingFromDlopen = false;
@@ -110,13 +113,33 @@ void Runtime::wireEvents() {
 bool Runtime::install() {
     std::lock_guard lock(installMutex);
     if (installed.load(std::memory_order_acquire)) return true;
-    if (!resolved.load(std::memory_order_acquire) && !resolveSignatures()) return false;
-    if (!gamehooks::install()) return false;
-    registerAllModules();
-    wireEvents();
-    ModuleRegistry::get().initialize();
-    bedrocktools::config::ConfigManager::get().load();
-    registerModulesWithLauncher();
+
+    // The menu is registered even when a game hook cannot be installed.
+    // Signature resolution depends on the exact Minecraft build, but the
+    // launcher menu does not: bailing out early left the launcher with *zero*
+    // modules after a game update, which looked exactly like every module had
+    // disappeared. Hooks are retried on the next install() attempt, the menu is
+    // registered only once (a duplicate module id is rejected by the launcher).
+    const bool resolvedOk = resolved.load(std::memory_order_acquire) || resolveSignatures();
+    const bool hooksOk = resolvedOk && gamehooks::install();
+
+    if (!menuRegistered.load(std::memory_order_acquire)) {
+        try {
+            registerAllModules();
+            wireEvents();
+            ModuleRegistry::get().initialize();
+            bedrocktools::config::ConfigManager::get().load();
+            registerModulesWithLauncher();
+            // Only latched once the pass completed, so a failure here is
+            // retried on the next install() instead of leaving the menu empty
+            // for the rest of the session.
+            menuRegistered.store(true, std::memory_order_release);
+        } catch (...) {
+            bedrocktools::launcher::reportModuleRegistrationFailure("menu registration");
+        }
+    }
+
+    if (!hooksOk) return false; // retried once the game library is available
     installed.store(true, std::memory_order_release);
     return true;
 }

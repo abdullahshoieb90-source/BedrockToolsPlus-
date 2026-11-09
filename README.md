@@ -203,6 +203,9 @@ That covers the pure logic — cape resampling and fitting, the picker format, t
 - `tests/customcapes_test.cpp` — folder scanning, picker labels/format, PNG header validation, fit modes and the sampler.
 - `tests/customcapes_patch_test.cpp` — the in-game skin patch, fit changes, corrupt files and the Leave World teardown.
 - `tests/customcapes_menu_test.cpp` — what the module registers in the launcher menu (picker, fit radio, buttons, status row), and that a config which toggles the module can be loaded without deadlocking.
+- `tests/module_registration_smoke_test.cpp` — registers *every* module through the real launcher path and checks the definition the launcher receives, so a single malformed setting can never silently empty the menu.
+
+The launcher registers the menu independently of the game hooks: if a signature cannot be resolved for the running Minecraft build, the modules are still registered and the hooks are retried, so the mod menu never ends up empty after a game update. Registration is also fault tolerant per module — a module whose `onInit()`/`saveConfig()` throws, or whose definition the launcher refuses, is logged (tag `BedrockToolsPlus`) and skipped while the rest of the menu stays available.
 
 Public SDK headers are under `include/bedrocktools`. Shared runtime code lives under `src/core`, while features are kept under `src/modules` by category. Minecraft signatures and offsets are version-specific, so those are the main pieces that normally need updating for a new game build.
 

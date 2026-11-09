@@ -149,12 +149,10 @@ EventBus& bus() {
 }
 } // namespace bedrocktools::events
 
-namespace bedrocktools::launcher {
-void* javaVm() { return nullptr; }
-// ModuleMenu asks the overlay to rebuild external buttons after a text change;
-// no overlay exists on the host.
-void refreshExternalButtonsForModule(std::string_view) {}
-} // namespace bedrocktools::launcher
+// The launcher surface (javaVm, refreshExternalButtonsForModule, module
+// registration failure reporting that ModuleMenu calls) comes from
+// src/launcher/ExternalButtonRefresh.cpp, which run_tests.sh links next to this
+// test; defining it here as well would duplicate the symbols.
 
 namespace bedrocktools::config {
 // ModuleMenu saves after every change; the host test keeps its own JSON.

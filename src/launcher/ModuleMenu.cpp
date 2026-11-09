@@ -69,6 +69,24 @@ static const char* explicitParentFor(const std::string& key) {
     return nullptr;
 }
 
+// The launcher rejects a *whole* module definition when a single config entry
+// fails validation — an empty key, an over-long string, an unknown type. When
+// that happens at registration time the module simply does not appear in the
+// menu (and, because registration failure is silent, it looks like every
+// module vanished). Entries are therefore checked here, before they are handed
+// over, so a malformed entry is dropped instead of taking the module with it.
+static bool isRegistrableConfigEntry(const std::string& key,
+                                     const std::string& displayName,
+                                     std::string* fields, std::size_t fieldCount) {
+    constexpr std::size_t kMaxConfigStringLength = 2048; // mirrors the launcher
+    if (key.empty() || key.size() > kMaxConfigStringLength) return false;
+    if (displayName.empty() || displayName.size() > kMaxConfigStringLength) return false;
+    for (std::size_t i = 0; i < fieldCount; ++i) {
+        if (fields[i].size() > kMaxConfigStringLength) return false;
+    }
+    return true;
+}
+
 static void onModuleToggle(std::string_view module_id, bool enabled) {
     auto* mod = ModuleRegistry::get().find(module_id);
     if (!mod) return;
@@ -133,12 +151,10 @@ static void onModuleConfigChanged(std::string_view module_id, std::string_view k
     bedrocktools::config::ConfigManager::get().save();
 }
 
-void registerModulesWithLauncher() {
-    auto& modules = ModuleRegistry::get().modules();
-
-    for (auto* mod : modules) {
-        if (!mod->showInMenu) continue;
-
+// Registers a single module with the launcher. Kept separate from the loop in
+// registerModulesWithLauncher() so one module's failure can be caught without
+// taking the rest of the menu down with it.
+static void registerSingleModule(Module* mod) {
         pl::modmenu::ModuleBuilder builder(mod->moduleId, mod->name);
         builder.description(mod->description)
                 .defaultEnabled(mod->masterEnabled)
@@ -382,9 +398,48 @@ void registerModulesWithLauncher() {
                 }
                 if (!bestParent.empty()) entry.depends_on = bestParent;
             }
+
+            // A radio needs an option list; an empty one makes the picker
+            // useless, so fall back to a plain text field.
+            if (entry.type == pl::modmenu::ConfigType::Radio && entry.min_value.empty()) {
+                entry.type = pl::modmenu::ConfigType::Text;
+            }
+
+            std::string fields[] = {entry.default_value, entry.min_value,
+                                    entry.max_value, entry.depends_on};
+            if (!isRegistrableConfigEntry(entry.key, entry.displayName, fields, 4)) {
+                // Dropping one broken setting keeps the module (and every other
+                // module after it) visible in the menu.
+                continue;
+            }
+
             builder.config(entry.key, entry.displayName, entry.type, entry.default_value, entry.min_value, entry.max_value, entry.depends_on);
         }
 
-        if (builder.registerModule()) mod->onMenuRegistered();
+        if (builder.registerModule()) {
+            mod->onMenuRegistered();
+        } else {
+            // The launcher refused the definition (duplicate id, invalid entry
+            // left after filtering, ...). Keep going so the remaining modules
+            // are still registered; a single bad module must not empty the menu.
+            bedrocktools::launcher::reportModuleRegistrationFailure(mod->moduleId);
+        }
+}
+
+void registerModulesWithLauncher() {
+    auto& modules = ModuleRegistry::get().modules();
+
+    for (auto* mod : modules) {
+        if (!mod->showInMenu) continue;
+
+        // A module whose saveConfig() throws (bad JSON type, allocation
+        // failure, a filesystem scan inside saveConfig) must not abort the
+        // whole registration pass: the launcher would then be left without a
+        // single module and the menu would look empty.
+        try {
+            registerSingleModule(mod);
+        } catch (...) {
+            bedrocktools::launcher::reportModuleRegistrationFailure(mod->moduleId);
+        }
     }
 }

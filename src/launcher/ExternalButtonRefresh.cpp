@@ -1,14 +1,44 @@
 #include "ExternalButtonRefresh.hpp"
 
 #include <atomic>
+#include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
 
 #if defined(__ANDROID__)
 #include <jni.h>
 #endif
 
 namespace bedrocktools::launcher {
+namespace {
+
+std::atomic<int> gModuleRegistrationFailures{0};
+
+} // namespace
+
+int moduleRegistrationFailureCount() {
+    return gModuleRegistrationFailures.load(std::memory_order_relaxed);
+}
+
+void reportModuleRegistrationFailure(std::string_view moduleId) {
+    gModuleRegistrationFailures.fetch_add(1, std::memory_order_relaxed);
+    // The launcher's own reason is only in logcat; mirror the id under our tag
+    // so a missing module can be traced without guessing.
+#if defined(__ANDROID__)
+    __android_log_print(ANDROID_LOG_ERROR, "BedrockToolsPlus",
+                        "launcher rejected the menu definition for '%.*s'",
+                        static_cast<int>(moduleId.size()), moduleId.data());
+#else
+    std::fprintf(stderr, "BedrockToolsPlus: launcher rejected the menu definition for '%.*s'\n",
+                 static_cast<int>(moduleId.size()), moduleId.data());
+#endif
+}
+
 namespace {
 
 #if defined(__ANDROID__)

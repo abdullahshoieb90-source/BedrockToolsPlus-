@@ -104,10 +104,45 @@ for source in "${root}"/tests/*_test.cpp; do
             if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
                [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
                 extra+=(-I "${root}/third_party" -I "${preloader_inc}" -I "${json_inc}")
+                # ModuleMenu.cpp reports modules the launcher refuses through
+                # ExternalButtonRefresh.cpp, so that TU has to be linked too.
                 extra_srcs+=("${root}/src/modules/player/customcapes.cpp"
-                             "${root}/src/launcher/ModuleMenu.cpp")
+                             "${root}/src/launcher/ModuleMenu.cpp"
+                             "${root}/src/launcher/ExternalButtonRefresh.cpp")
             else
                 skip="preloader/nlohmann_json headers (set PRE_LOADER_INCLUDE and JSON_INCLUDE)"
+            fi
+            ;;
+        module_registration_smoke_test)
+            # Registers *every* module through the real launcher path, so it
+            # needs the full preloader API, a real nlohmann_json and entt, plus
+            # the module translation units themselves (including the ones that
+            # only exist to be iterated over).
+            if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
+               [ -n "${json_inc}" ] && [ -d "${json_inc}" ] &&
+               [ -n "${entt_inc}" ] && [ -d "${entt_inc}" ]; then
+                extra+=(-I "${root}/third_party" -I "${preloader_inc}" -I "${json_inc}"
+                        -I "${entt_inc}" -I "${root}/tests/fakejni")
+                extra_srcs+=("${root}/src/launcher/ModuleMenu.cpp"
+                             "${root}/src/launcher/ExternalButtonRefresh.cpp"
+                             "${root}/src/modules/ModuleRegistry.cpp"
+                             "${root}/src/modules/player/customcapes.cpp"
+                             "${root}/src/modules/hud/effectdisplay.cpp"
+                             "${root}/src/modules/hud/crosshair.cpp"
+                             "${root}/src/modules/hud/inventoryhud.cpp"
+                             "${root}/src/modules/hud/armorhud.cpp"
+                             "${root}/src/modules/hud/huditems.cpp"
+                             "${root}/src/modules/visual/hitbox.cpp"
+                             "${root}/src/modules/visual/blockoutline.cpp"
+                             "${root}/src/modules/visual/jumpcircle.cpp"
+                             "${root}/src/modules/visual/damagecircle.cpp"
+                             "${root}/src/modules/visual/wings.cpp"
+                             "${root}/src/modules/misc/hitsound.cpp"
+                             "${root}/src/modules/misc/commentkey.cpp"
+                             "${root}/src/modules/misc/commandhotkey.cpp"
+                             "${root}/src/config/ConfigManager.cpp")
+            else
+                skip="preloader/nlohmann_json/entt headers (set PRE_LOADER_INCLUDE, JSON_INCLUDE and ENTT_INCLUDE)"
             fi
             ;;
         customcapes_patch_test|wings_patch_test)

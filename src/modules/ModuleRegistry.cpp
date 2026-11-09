@@ -1,4 +1,9 @@
 #include "ModuleRegistry.hpp"
+#include <cstdio>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
 #include "misc/hitsound.hpp"
 #include "hud/effectdisplay.hpp"
 #include "visual/hitbox.hpp"
@@ -13,6 +18,17 @@
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
 
+
+void reportModuleInitFailure(std::string_view moduleId) {
+#if defined(__ANDROID__)
+    __android_log_print(ANDROID_LOG_ERROR, "BedrockToolsPlus",
+                        "module '%.*s' threw from onInit(); continuing without it",
+                        static_cast<int>(moduleId.size()), moduleId.data());
+#else
+    std::fprintf(stderr, "BedrockToolsPlus: module '%.*s' threw from onInit()\n",
+                 static_cast<int>(moduleId.size()), moduleId.data());
+#endif
+}
 
 ModuleRegistry& ModuleRegistry::get() {
     static ModuleRegistry registry;
@@ -30,7 +46,18 @@ const std::vector<Module*>& ModuleRegistry::modules() const {
 
 void ModuleRegistry::initialize() {
     if (mInitialized) return;
-    for (auto* module : mView) module->onInit();
+    // One module that throws from onInit() must not take the others with it:
+    // initialize() runs before the menu is registered, so an escaping
+    // exception used to abort install() and leave the launcher with *no*
+    // modules at all - the menu looked empty even though only one module was
+    // broken.
+    for (auto* module : mView) {
+        try {
+            module->onInit();
+        } catch (...) {
+            reportModuleInitFailure(module->moduleId);
+        }
+    }
     mInitialized = true;
 }
 

@@ -20,4 +20,15 @@ void* javaVm();
 // definitions (for example, a command label or a comment text).
 void refreshExternalButtonsForModule(std::string_view moduleId);
 
+// Called when the launcher refuses a module definition. A rejected module does
+// not show up in the menu at all, and the launcher's own error only goes to
+// logcat, so this logs the id through the native logger and counts failures
+// (see moduleRegistrationFailureCount()). Best effort: it never throws and
+// never blocks registration of the remaining modules.
+void reportModuleRegistrationFailure(std::string_view moduleId);
+
+// Number of module definitions the launcher refused since startup; 0 means the
+// whole menu was registered.
+int moduleRegistrationFailureCount();
+
 } // namespace bedrocktools::launcher

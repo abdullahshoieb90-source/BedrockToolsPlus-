@@ -63,3 +63,7 @@ private:
 };
 
 void registerAllModules();
+
+// Logs that a module failed during initialization. Registration continues so a
+// single broken module cannot empty the launcher menu.
+void reportModuleInitFailure(std::string_view moduleId);
