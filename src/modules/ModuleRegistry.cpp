@@ -1,5 +1,6 @@
 #include "ModuleRegistry.hpp"
 #include "misc/hitsound.hpp"
+#include "misc/debugscan.hpp"
 #include "hud/effectdisplay.hpp"
 #include "visual/hitbox.hpp"
 #include "visual/blockoutline.hpp"
@@ -68,6 +69,7 @@ bool ModuleRegistry::keybindBlocked() const {
 void registerAllModules() {
     auto& registry = ModuleRegistry::get();
     if (!registry.modules().empty()) return;
+    registry.emplace<DebugScanModule>();
     registry.emplace<HitSoundModule>();
     registry.emplace<EffectDisplayModule>();
     registry.emplace<HitboxModule>();

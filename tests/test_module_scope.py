@@ -15,7 +15,7 @@ class ModuleScopeTest(unittest.TestCase):
         registry = (ROOT / "src/modules/ModuleRegistry.cpp").read_text()
         registered = re.findall(r"registry\.emplace<(\w+)>\(\)", registry)
         self.assertEqual(registered, [
-            "HitSoundModule", "EffectDisplayModule", "HitboxModule",
+            "DebugScanModule", "HitSoundModule", "EffectDisplayModule", "HitboxModule",
             "BlockOutlineModule", "CustomCapesModule", "CommentKey",
             "CommandHotkeyModule", "CrosshairModule", "WingsModule",
             "InventoryHudModule", "ArmorModule",
@@ -30,7 +30,7 @@ class ModuleScopeTest(unittest.TestCase):
         }
         self.assertEqual(actual, {
             "ModuleRegistry.cpp", "misc/hitsound.cpp", "misc/commentkey.cpp",
-            "misc/commandhotkey.cpp", "hud/effectdisplay.cpp",
+            "misc/commandhotkey.cpp", "misc/debugscan.cpp", "hud/effectdisplay.cpp",
             "hud/crosshair.cpp", "hud/huditems.cpp",
             "hud/inventoryhud.cpp", "hud/armorhud.cpp", "visual/hitbox.cpp",
             "visual/blockoutline.cpp", "visual/wings.cpp", "visual/jumpcircle.cpp",
