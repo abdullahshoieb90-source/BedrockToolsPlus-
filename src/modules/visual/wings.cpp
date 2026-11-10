@@ -1085,9 +1085,10 @@ void WingsModule::onLocalPlayerTick(void* player) {
     // Tick dt from the real clock (clamped after hitches).
     const auto now = std::chrono::steady_clock::now();
     float dt = 0.0f;
+    float capeDt = 0.0f;
     if (m_flapClockStarted) {
-        dt = std::chrono::duration<float>(now - m_lastFlapTick).count();
-        if (dt > 0.25f) dt = 0.25f;
+        capeDt = std::chrono::duration<float>(now - m_lastFlapTick).count();
+        dt = std::min(capeDt, 0.25f);
     }
     // Publish the tick timestamp before advancing the phase. This keeps the
     // render interpolation origin aligned with the phase produced by this
@@ -1146,7 +1147,7 @@ void WingsModule::onLocalPlayerTick(void* player) {
         // was never detected and the wings were dragged across the whole gap.
         const bool teleport = haveDisplacement && displacementSq >= 25.0f;
         if (s_localPlayerPtr != player || teleport) s_capeMotion.reset();
-        if (capeEnabled()) s_capeMotion.update(centerX, centerY, centerZ, rot.y, dt);
+        if (capeEnabled()) s_capeMotion.update(centerX, centerY, centerZ, rot.y, capeDt);
         if (!s_hasPrevSample || teleport) {
             s_prevAABB = aabb;
             s_prevRot = rot;

@@ -43,14 +43,21 @@ struct Motion {
         float turn = std::remainder(bodyYaw - yaw, 360.0f) / dt;
         float speed = std::min(std::sqrt(vx*vx + vz*vz), 8.0f);
         phase = std::fmod(phase + dt * speed * 2.5f, 2.0f * pi);
-        float targetPitch = 6.0f + std::clamp(forward, 0.0f, 7.0f) * 5.0f
+        // The reference Bedrock cape lifts much farther from the back when
+        // sprinting than the old 5 degrees per block/s approximation. A walk
+        // (~4.3 blocks/s) reaches ~49 degrees; a sprint (~5.6) ~62 degrees.
+        // Forward is signed: moving backwards must not lift it through the body.
+        float targetPitch = 6.0f + std::clamp(forward, 0.0f, 6.4f) * 10.0f
                           + std::clamp(-vy, 0.0f, 8.0f) * 1.5f
                           + std::sin(phase) * std::min(speed, 4.0f) * 0.6f;
         float targetRoll = std::clamp(-lateral * 2.0f - turn * 0.025f, -10.0f, 10.0f);
-        float blend = 1.0f - std::exp(-7.0f * dt);
+        // Lift promptly on acceleration, then settle a little more gently.
+        const float pitchRate = targetPitch > current.pitch ? 10.0f : 6.0f;
+        float pitchBlend = 1.0f - std::exp(-pitchRate * dt);
+        float rollBlend = 1.0f - std::exp(-7.0f * dt);
         previous = current;
-        current.pitch += (std::clamp(targetPitch, 4.0f, 48.0f) - current.pitch) * blend;
-        current.roll += (targetRoll - current.roll) * blend;
+        current.pitch += (std::clamp(targetPitch, 4.0f, 72.0f) - current.pitch) * pitchBlend;
+        current.roll += (targetRoll - current.roll) * rollBlend;
         x = nx; y = ny; z = nz; yaw = bodyYaw;
     }
 };
