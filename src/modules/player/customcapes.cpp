@@ -133,13 +133,41 @@ void* resolvePlayerSkin(void* player) {
 // guessing: patching an arbitrary actor is never the right answer.
 CustomCapesModule::LocalPlayerPredicate g_localPlayerPredicate = nullptr;
 
+// The local player pointer, resolved once and remembered. Resolving it every
+// tick would call into the game 20 times per second for no gain, and the
+// identity only changes when the player leaves the world (the pointer is
+// cleared on world exit).
+void* g_cachedLocalPlayer = nullptr;
+
 bool isLocalPlayer(const void* actor) {
     if (g_localPlayerPredicate) return g_localPlayerPredicate(actor);
     if (!actor) return false;
+
     void* client = bedrocktools::core::gamehooks::clientInstance();
-    if (!client) return false;
-    auto* local = static_cast<bedrocktools::sdk::ClientInstance*>(client)->localPlayer();
-    return local != nullptr && static_cast<void*>(local) == actor;
+    if (!client) {
+        // The client instance is not available (menu/loading screen, or a build
+        // where only the hook is live). Falling back to "accept the ticked
+        // actor" is what the module did before the filter existed: it is
+        // imprecise, but disabling the cape entirely would be worse than
+        // treating the one actor that is being ticked as the local player.
+        return true;
+    }
+
+    auto* instance = static_cast<bedrocktools::sdk::ClientInstance*>(client);
+    if (g_cachedLocalPlayer) {
+        return static_cast<void*>(g_cachedLocalPlayer) == actor;
+    }
+
+    auto* local = instance->localPlayer();
+    if (!local) {
+        // No local player yet (still connecting). Nothing can be patched
+        // meaningfully, but the tick is harmless, so do not block it: the
+        // skin resolution below will simply fail and report NoSkin.
+        return true;
+    }
+
+    g_cachedLocalPlayer = static_cast<void*>(local);
+    return g_cachedLocalPlayer == actor;
 }
 
 bool readPngFileHeader(const std::string& path, std::uint32_t& width, std::uint32_t& height) {
@@ -331,8 +359,8 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     // launcher reads the module's settings again.
     // The status row spells out both halves of the question the user actually
     // asks: which file is loaded, and what happened when it was applied.
-    char status[220];
-    std::snprintf(status, sizeof(status), "%zu capes - %s [%s]",
+    char status[260];
+    std::snprintf(status, sizeof(status), "%zu capes - %s [%s] - local only (others cannot see it)",
                   m_files.size(),
                   m_loadedFile.empty() ? "none selected" : m_loadedFile.c_str(),
                   applyStatusLabel(m_applyStatus));
@@ -627,6 +655,7 @@ void CustomCapesModule::onWorldExit() {
     // Dropping our references is all that is needed: m_pixels (the cape
     // file) is module-owned and stays loaded, so the cape is re-applied to
     // the fresh skin object when the player joins a world again.
+    g_cachedLocalPlayer = nullptr; // re-resolved on the next world
     m_patchedSkin = nullptr;
     m_injectedBlob = nullptr; // ownership: engine (frees via the deleter tag)
     m_hasBackup = false;

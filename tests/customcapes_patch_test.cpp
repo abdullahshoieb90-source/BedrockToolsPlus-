@@ -135,8 +135,11 @@ std::size_t readSize(std::uint8_t* base, std::size_t offset) {
 // Link stub: the production local-player predicate resolves the client
 // instance, and a null client instance is exactly the "no local player yet"
 // case. The test installs its own predicate below, so this is never used.
+// Switchable so the fallback path (no client instance) can be exercised.
+bool g_clientInstanceAvailable = true;
+
 namespace bedrocktools::core::gamehooks {
-void* clientInstance() { return nullptr; }
+void* clientInstance() { return g_clientInstanceAvailable ? reinterpret_cast<void*>(0x1) : nullptr; }
 } // namespace bedrocktools::core::gamehooks
 
 int main() {
@@ -296,6 +299,30 @@ int main() {
               "another actor's SerializedSkinImpl is byte-for-byte untouched");
         check(mod.applyStatus() == CustomCapesModule::ApplyStatus::Applied,
               "the apply state still belongs to the local player's patch");
+        CustomCapesModule::setLocalPlayerPredicateForTests(
+            [](const void* actor) { return actor != nullptr; });
+    }
+
+    // ------------------------------------------------------------------
+    // With no client instance (menu/loading, or a build where the local player
+    // cannot be resolved) the tick must still apply the cape: falling back to
+    // "accept the ticked actor" is the pre-filter behaviour and is far better
+    // than disabling the module.
+    // ------------------------------------------------------------------
+    std::printf("no client instance falls back instead of disabling\n");
+    {
+        CustomCapesModule::setLocalPlayerPredicateForTests(nullptr);
+        g_clientInstanceAvailable = false;
+        mod.enabled = true;
+        mod.onLocalPlayerTick(player.data());
+        check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::SkinImage::mWidth) == 64 &&
+                  readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::SkinImage::mHeight) == 32 &&
+                  readU32(skinBase + off::SerializedSkinImpl::mCapeImage,
+                          off::Image::mBlobSizeOffset) == 64u * 32u * 4u,
+              "the cape is still applied when the client instance is unavailable");
+        check(mod.applyStatus() == CustomCapesModule::ApplyStatus::Applied,
+              "the status reports applied in the fallback path");
+        g_clientInstanceAvailable = true;
         CustomCapesModule::setLocalPlayerPredicateForTests(
             [](const void* actor) { return actor != nullptr; });
     }

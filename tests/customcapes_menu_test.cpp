@@ -255,6 +255,8 @@ int main() {
           "status names the loaded file (" + status + ")");
     check(status.find("[off]") != std::string::npos,
           "status reports the apply state (" + status + ")");
+    check(status.find("local only") != std::string::npos,
+          "status makes it explicit that the cape is only visible to you (" + status + ")");
 
     // ---------------------------------------------------------------
     // Pressing Reload picks up a file added after launch.
