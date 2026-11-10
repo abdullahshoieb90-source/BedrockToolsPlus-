@@ -13,9 +13,6 @@
 
 #include "modules/visual/wings.cpp"
 
-// Asset writing is not exercised here, but the module's vtable references it.
-extern "C" int stbi_write_png(const char*, int, int, int, const void*, int) { return 0; }
-
 namespace bedrocktools::events {
 EventBus& bus() { static EventBus instance; return instance; }
 }

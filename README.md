@@ -8,14 +8,14 @@ Android builds are provided by the build workflow; host tests do not validate of
 
 ## Introduction
 
-BedrockToolsPlus is an open-source native mod for Minecraft Bedrock on Android, made for [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid). It adds a collection of visual, HUD, player, and utility modules while also providing a small C++ SDK and event system for native mod development.
+BedrockToolsPlus is an open-source native mod for Minecraft Bedrock on Android, made for [LeviLauncher](https://github.com/LiteLDev/LeviLaunchroid). It adds a collection of visual, HUD, and utility modules while also providing a small C++ SDK and event system for native mod development.
 
 The source is public so people can study how a real LeviLauncher mod is structured, learn from it, and use the SDK as a starting point for their own mods.
 
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 13 configurable modules
+- 12 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -26,8 +26,6 @@ The source is public so people can study how a real LeviLauncher mod is structur
 **Visual:** Hitbox, Block Outline, Wings, Jump Circle, Damage Circle
 
 **HUD:** Effect Display, Crosshair, Inventory HUD, Armor
-
-**Player:** Custom Capes
 
 **Misc:** Hit Sound, CommentKey, Command Hotkey
 
@@ -125,18 +123,6 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 (Dragon, Angel, Demon).*
 
 Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
-
-## Custom Capes
-
-The **Custom Capes** module lets you wear any PNG as a classic cape.
-
-1. Put cape images (`.png`, ideally 64x32 — any other size is scaled automatically) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a sample cape).
-2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Custom Capes**.
-3. Pick a file in the module's **Cape** selector — the cape updates in-game immediately. Choose `None` to bring your vanilla cape back.
-
-Images that are not exactly 64x32 are scaled onto the cape's outer back face (`x=1..11, y=1..17` of the 64x32 cape canvas); the inner front face gets a flat lining color instead of a repeat of the image, and the top/bottom/side edge strips pick up the image's edge colors so the cape keeps its visible thickness. Exact 64x32 images are used pixel-for-pixel with no processing.
-
-The change is fully client-side and visual only; it does not affect servers, accounts, or other players. Persona skins are not affected (capes are persona pieces there).
 
 ## Hit Sound
 
