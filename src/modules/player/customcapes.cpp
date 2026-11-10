@@ -200,9 +200,10 @@ const char* CustomCapesModule::applyStatusLabel(ApplyStatus status) {
         case ApplyStatus::LayoutMismatch: return "skin layout mismatch (unsupported game build)";
         case ApplyStatus::EmptyPixels: return "no cape loaded";
         case ApplyStatus::LoadFailed: return "the selected PNG could not be loaded";
+        case ApplyStatus::Disabled: return "module is OFF - turn it on in the Modules tab";
         case ApplyStatus::Idle: break;
     }
-    return "off";
+    return "no cape selected";
 }
 
 CustomCapesModule::~CustomCapesModule() {
@@ -371,6 +372,26 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
 }
 
 bool CustomCapesModule::onMenuConfigChanged(std::string_view key, std::string_view value) {
+    if (key == "m_cape") {
+        // Picking a cape is an explicit "show me this one" action; if the
+        // module itself is still off the choice would silently do nothing.
+        // Turn it on here and let the generic path below apply the selection.
+        int index = 0;
+        std::string name;
+        customcapes::parseRadioValue(std::string(value), index, name);
+        if (index > 0 && !masterEnabled) {
+            setMasterEnabled(true); // runs onEnable() on this thread
+        }
+        // Apply the selection here rather than handing it back: the module owns
+        // the file list it was built from, and the launcher reports only the
+        // index (the option text is not echoed back). loadConfig() resolves the
+        // index against the current listing and re-decodes on a real change.
+        nlohmann::json selection;
+        saveConfig(selection);
+        selection["m_cape"] = std::string(value);
+        loadConfig(selection);
+        return true;
+    }
     if (key == "m_reloadButton") {
         if (value != "true") return true; // released / false: nothing to do
         {
@@ -692,7 +713,12 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
     }
 
     if (!wantCape) {
-        m_applyStatus = ApplyStatus::Idle;
+        // A selected cape with the module switched off is the single most
+        // common "my cape does not show up" case, so it is reported as its own
+        // state instead of a bare "off": the picker and the module toggle are
+        // in two different tabs of the menu.
+        m_applyStatus = (m_selectedIndex > 0) ? ApplyStatus::Disabled
+                                              : ApplyStatus::Idle;
         restoreOriginalCape(resolvePlayerSkin(player));
         return;
     }

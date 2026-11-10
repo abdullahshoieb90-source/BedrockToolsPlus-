@@ -253,7 +253,7 @@ int main() {
     // menu, since the tick path cannot log.
     check(status.find("none selected") != std::string::npos,
           "status names the loaded file (" + status + ")");
-    check(status.find("[off]") != std::string::npos,
+    check(status.find("[no cape selected]") != std::string::npos,
           "status reports the apply state (" + status + ")");
     check(status.find("local only") != std::string::npos,
           "status makes it explicit that the cape is only visible to you (" + status + ")");
@@ -284,6 +284,28 @@ int main() {
     mod->loadConfig(select);
     check(mod->loadedFile() == "Alpha Cape.png",
           "the label resolves back to its file (" + mod->loadedFile() + ")");
+
+    // Picking a cape while the module itself is off must turn it on: the
+    // picker and the module toggle live in different menu tabs, so otherwise
+    // the selection silently does nothing and the status row reads "off".
+    std::printf("picking a cape enables the module\n");
+    {
+        nlohmann::json picked;
+        picked["m_cape"] = "2,None,Alpha Cape,Beta Cape,Broken,Gamma Cape";
+        mod->setMasterEnabled(false);
+        check(!mod->masterEnabled, "the module starts off");
+        mod->onMenuConfigChanged("m_cape", picked["m_cape"].get<std::string>());
+        check(mod->masterEnabled, "selecting a cape switches the module on");
+        check(mod->loadedFile() == "Beta Cape.png",
+              "the picked cape is the one that got loaded (" + mod->loadedFile() + ")");
+    }
+
+    // Choosing "None" must not switch the module on by itself.
+    {
+        mod->setMasterEnabled(false);
+        mod->onMenuConfigChanged("m_cape", "0,None,Alpha Cape,Beta Cape,Broken,Gamma Cape");
+        check(!mod->masterEnabled, "picking None does not switch the module on");
+    }
 
     nlohmann::json broken;
     broken["m_cape"] = "3,None,Alpha Cape,Beta Cape,Broken,Gamma Cape";

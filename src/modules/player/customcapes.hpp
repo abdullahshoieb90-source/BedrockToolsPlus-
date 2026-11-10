@@ -81,7 +81,8 @@ public:
     // "the PNG failed to decode", "the player wears a persona skin" and "the
     // engine did not re-upload the texture".
     enum class ApplyStatus {
-        Idle,             // module disabled or "None" selected
+        Idle,             // "None" selected: nothing to apply
+        Disabled,         // a cape is selected but the module itself is off
         Applied,          // pixels are in the live skin right now
         NoPlayer,         // no live local player this tick
         NoSkin,           // could not resolve SerializedSkinImpl
