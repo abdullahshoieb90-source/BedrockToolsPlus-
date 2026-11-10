@@ -10,7 +10,13 @@ namespace pl::memory {
 // original through the returned pointer would jump into nowhere. Production
 // code always null-checks the trampoline before calling it, which is exactly
 // the behaviour the tests want to exercise.
-inline int hook(void* target, void* detour, void** original) {
+enum class HookPriority : int {
+    Highest = 0, High = 100, Normal = 200, Low = 300, Lowest = 400,
+};
+
+inline int hook(void* target, void* detour, void** original,
+                HookPriority priority = HookPriority::Normal) {
+    (void)priority;
     if (original) *original = nullptr;
     (void)target;
     (void)detour;

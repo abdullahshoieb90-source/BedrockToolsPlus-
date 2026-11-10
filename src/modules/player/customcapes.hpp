@@ -157,6 +157,21 @@ public:
         return m_loadedFile;
     }
 
+    // Bumped whenever m_pixels is replaced, so the renderer can cache its copy
+    // instead of re-copying 8 KiB every frame.
+    std::uint32_t pixelsVersion() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_pixelsVersion;
+    }
+
+    // Copy of the resampled 64x32 RGBA canvas, for the world-space renderer.
+    // Copied rather than referenced because the renderer runs on the render
+    // thread while a config change can replace the buffer at any moment.
+    std::vector<std::uint8_t> snapshotPixels() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_pixels;
+    }
+
     // True once a cape file was decoded and resampled into m_pixels.
     bool capeLoaded() const {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
@@ -199,6 +214,7 @@ private:
 
     // Decoded, already resampled cape pixels (module-owned), w*h = 64*32.
     std::vector<std::uint8_t> m_pixels;
+    std::uint32_t m_pixelsVersion = 0;
     bool m_capeLoaded = false;
     bool m_loadFailed = false;
     int m_retryTicks = 0;

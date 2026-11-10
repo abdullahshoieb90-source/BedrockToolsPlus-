@@ -46,6 +46,10 @@ enum class SignatureId : std::uint16_t {
     TessellatorBegin,
     TessellatorColor,
     TessellatorVertex,
+    // Same vertex submission but with a texture coordinate. Required for a
+    // textured world overlay (the cape); the plain Vertex routine above cannot
+    // carry UVs.
+    TessellatorVertexUv,
     MeshHelpersRenderMeshImmediately,
     MeshHelpersRenderMeshImmediately2,
     RenderMaterialGroupCommon,

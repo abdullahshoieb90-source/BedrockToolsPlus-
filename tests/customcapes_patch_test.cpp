@@ -141,6 +141,15 @@ bool g_playerTickHookInstalled = true;
 std::uint64_t g_actorTicks = 0;
 bool g_fallbackActive = false;
 
+// cape_renderer.cpp resolves its game functions here; the host tests never
+// enter the render path, so an unresolved table is the correct answer.
+#include <bedrocktools/memory/Signatures.hpp>
+namespace bedrocktools::memory {
+std::uintptr_t resolve(SignatureId) { return 0; }
+bool resolveAll(std::string_view) { return false; }
+void clear() {}
+} // namespace bedrocktools::memory
+
 namespace bedrocktools::core::gamehooks {
 void* clientInstance() { return g_clientInstanceAvailable ? reinterpret_cast<void*>(0x1) : nullptr; }
 // Diagnostics the status row reads. The test drives the module directly, so it

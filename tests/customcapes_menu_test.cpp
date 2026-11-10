@@ -145,6 +145,27 @@ std::string ConfigManager::getConfigPath() const { return g_testConfigPath; }
 // The menu test never ticks the module, so the production local-player
 // predicate (which resolves the client instance) is never reached; the symbol
 // still has to exist to link customcapes.cpp.
+// cape_renderer.cpp resolves its game functions here; the host tests never
+// enter the render path, so an unresolved table is the correct answer.
+#include <bedrocktools/memory/Signatures.hpp>
+namespace bedrocktools::memory {
+std::uintptr_t resolve(SignatureId) { return 0; }
+bool resolveAll(std::string_view) { return false; }
+void clear() {}
+} // namespace bedrocktools::memory
+
+// The menu test links the real Custom Capes module, which now also links the
+// world renderer. Its hook calls are faked out here: no hook is installed in a
+// host test.
+#include <pl/memory/Hook.hpp>
+namespace pl::memory {
+// The menu test never installs a real hook, so it reports failure.
+// Not "inline": cape_renderer.cpp sees only the declaration, so the symbol has
+// to exist with external linkage for the link to succeed.
+int hook(FuncPtr, FuncPtr, FuncPtr*, HookPriority) { return 1; }
+bool unhook(FuncPtr, FuncPtr) { return true; }
+} // namespace pl::memory
+
 namespace bedrocktools::core::gamehooks {
 void* clientInstance() { return nullptr; }
 // Diagnostics read by the status row.

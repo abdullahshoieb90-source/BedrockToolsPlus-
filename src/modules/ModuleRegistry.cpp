@@ -11,6 +11,7 @@
 #include "visual/jumpcircle.hpp"
 #include "visual/damagecircle.hpp"
 #include "player/customcapes.hpp"
+#include "player/cape_renderer.hpp"
 #include "misc/commentkey.hpp"
 #include "misc/commandhotkey.hpp"
 #include "hud/crosshair.hpp"
@@ -99,6 +100,7 @@ void registerAllModules() {
     registry.emplace<HitboxModule>();
     registry.emplace<BlockOutlineModule>();
     registry.emplace<CustomCapesModule>();
+    registry.emplace<CapeRendererModule>();
     registry.emplace<CommentKey>();
     registry.emplace<CommandHotkeyModule>();
     registry.emplace<CrosshairModule>();

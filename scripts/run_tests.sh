@@ -107,6 +107,7 @@ for source in "${root}"/tests/*_test.cpp; do
                 # ModuleMenu.cpp reports modules the launcher refuses through
                 # ExternalButtonRefresh.cpp, so that TU has to be linked too.
                 extra_srcs+=("${root}/src/modules/player/customcapes.cpp"
+                             "${root}/src/modules/player/cape_renderer.cpp"
                              "${root}/src/launcher/ModuleMenu.cpp"
                              "${root}/src/launcher/ExternalButtonRefresh.cpp")
             else
@@ -127,6 +128,7 @@ for source in "${root}"/tests/*_test.cpp; do
                              "${root}/src/launcher/ExternalButtonRefresh.cpp"
                              "${root}/src/modules/ModuleRegistry.cpp"
                              "${root}/src/modules/player/customcapes.cpp"
+                             "${root}/src/modules/player/cape_renderer.cpp"
                              "${root}/src/modules/hud/effectdisplay.cpp"
                              "${root}/src/modules/hud/crosshair.cpp"
                              "${root}/src/modules/hud/inventoryhud.cpp"
@@ -162,7 +164,8 @@ for source in "${root}"/tests/*_test.cpp; do
                 extra+=(-I "${root}/tests/fakepl")
             fi
             if [ "${name}" = "customcapes_patch_test" ]; then
-                extra_srcs+=("${root}/src/modules/player/customcapes.cpp")
+                extra_srcs+=("${root}/src/modules/player/customcapes.cpp"
+                             "${root}/src/modules/player/cape_renderer.cpp")
             else
                 extra_srcs+=("${root}/src/modules/visual/wings.cpp")
             fi

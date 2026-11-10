@@ -1,4 +1,5 @@
 #include "customcapes.hpp"
+#include "cape_renderer.hpp"
 #include "customcapes_files.hpp"
 
 #include "modules/ModuleRegistry.hpp"
@@ -191,6 +192,10 @@ void CustomCapesModule::setLocalPlayerPredicateForTests(LocalPlayerPredicate pre
     g_localPlayerPredicate = predicate;
 }
 
+// Accessors for the world-space renderer (cape_renderer.cpp). Declared there to
+// keep the renderer independent of this header's internals.
+const CustomCapesModule* customCapesModule() { return g_customCapes; }
+
 const char* CustomCapesModule::applyStatusLabel(ApplyStatus status) {
     switch (status) {
         case ApplyStatus::Applied: return "applied";
@@ -227,6 +232,14 @@ void CustomCapesModule::onEnable() {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_selectedIndex > 0 && !m_capeLoaded && !m_loadFailed) loadSelectedCape();
     m_needsApply = true;
+
+    // The world renderer is the path that works without a skin patch. Turning
+    // Custom Capes on has to turn it on too: a cape that only exists in the
+    // skin never appears on builds where the skin cannot be written, which is
+    // exactly the case this renderer was added for.
+    if (auto* renderer = CapeRendererModule::instance()) {
+        renderer->setMasterEnabled(true);
+    }
 }
 
 void CustomCapesModule::onDisable() {
@@ -379,12 +392,32 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
                                         ? "client update fallback"
                                         : "actor hook idle");
 
-    char status[360];
+    // Which rendering path is live. The world renderer does not depend on the
+    // skin layout or on the player tick, so it is the one that has to be
+    // reported first: if it draws, the cape is on screen whatever the skin did.
+    const auto* renderer = CapeRendererModule::instance();
+    const bool rendererOn = renderer && renderer->enabled;
+    const std::uint32_t drawn = renderer ? renderer->drawCount() : 0;
+
+    char render[96];
+    if (!renderer || !renderer->ready()) {
+        std::snprintf(render, sizeof(render), "world draw unavailable");
+    } else if (!rendererOn) {
+        std::snprintf(render, sizeof(render), "world draw OFF");
+    } else if (drawn == 0) {
+        std::snprintf(render, sizeof(render), "world draw waiting");
+    } else if (renderer->hasVertexUv()) {
+        std::snprintf(render, sizeof(render), "world draw textured x%u", drawn);
+    } else {
+        std::snprintf(render, sizeof(render), "world draw solid colour x%u", drawn);
+    }
+
+    char status[460];
     std::snprintf(status, sizeof(status),
-                  "%zu capes - %s [%s] - local only - hooks %zu/%zu (%s)",
+                  "%zu capes - %s [%s] - %s - local only - hooks %zu/%zu (%s)",
                   m_files.size(),
                   m_loadedFile.empty() ? "none selected" : m_loadedFile.c_str(),
-                  state, installed, attempted, tickSource);
+                  state, render, installed, attempted, tickSource);
     j["m_status"] = std::string(status);
     // The folder path itself, so it can be read (or copied with the button)
     // without digging through a file manager.
@@ -470,6 +503,7 @@ bool CustomCapesModule::refreshFilesLocked() {
 }
 
 void CustomCapesModule::releaseLoadedCape() {
+    ++m_pixelsVersion;
     m_pixels.clear();
     m_pixels.shrink_to_fit();
     m_sourcePixels.clear();
@@ -538,6 +572,7 @@ bool CustomCapesModule::loadSelectedCape() {
         m_sourceHeight = sourceHeight;
     }
     m_pixels = customcapes::resampleToCapeEx(source, sourceWidth, sourceHeight, m_fitMode);
+    ++m_pixelsVersion;
     stbi_image_free(decoded);
     m_loadedFit = m_fitMode;
     m_loadedFile = m_files[static_cast<std::size_t>(m_selectedIndex - 1)];
@@ -570,6 +605,7 @@ void CustomCapesModule::applyFitChange() {
         if (m_selectedIndex > 0) loadSelectedCape();
         return;
     }
+    ++m_pixelsVersion;
     m_pixels = customcapes::resampleToCapeEx(m_sourcePixels.data(), m_sourceWidth,
                                              m_sourceHeight, m_fitMode);
     m_loadedFit = m_fitMode;
