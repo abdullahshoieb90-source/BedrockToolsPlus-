@@ -26,17 +26,26 @@ jobs:
         name: Build and package
         run: |
           set +e
+          trap 'echo "M_KILLED_by_signal_exit=$? at $(date -u +%H:%M:%S)" >> "$GITHUB_OUTPUT" 2>/dev/null' TERM INT HUP
+          echo "M0_start at $(date -u +%H:%M:%S)" >> "$GITHUB_OUTPUT" 2>/dev/null
           free -m > /tmp/btp-mem-before.txt 2>&1
           df -h / >> /tmp/btp-mem-before.txt 2>&1
+          echo "M1_configure_start" >> "$GITHUB_OUTPUT" 2>/dev/null
           xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }} > /tmp/btp-configure.log 2>&1
           configure_code=$?
           free -m > /tmp/btp-mem-mid.txt 2>&1
           df -h / >> /tmp/btp-mem-mid.txt 2>&1
-          xmake -y > /tmp/btp-build.log 2>&1
+          echo "M2_configure_done_code=$configure_code" >> "$GITHUB_OUTPUT" 2>/dev/null
+          echo "M3_build_start" >> "$GITHUB_OUTPUT" 2>/dev/null
+          xmake -y -j2 > /tmp/btp-build.log 2>&1
           build_code=$?
+          free -m > /tmp/btp-mem-after.txt 2>&1
+          df -h / >> /tmp/btp-mem-after.txt 2>&1
+          echo "M4_build_done_code=$build_code" >> "$GITHUB_OUTPUT" 2>/dev/null
           if [ "$configure_code" -eq 0 ] && [ "$build_code" -eq 0 ]; then
             exit 0
           fi
+          echo "M5_failure_branch" >> "$GITHUB_OUTPUT" 2>/dev/null
           {
             echo "### BedrockToolsPlus build failed (configure=$configure_code build=$build_code)"
             if [ "$configure_code" -ne 0 ]; then
@@ -77,11 +86,13 @@ jobs:
             echo "configure_code=$configure_code build_code=$build_code"
             echo "---- mem before ----"; cat /tmp/btp-mem-before.txt
             echo "---- mem mid ----"; cat /tmp/btp-mem-mid.txt
+            echo "---- mem after ----"; cat /tmp/btp-mem-after.txt
             echo "---- configure log ----"; cat /tmp/btp-configure.log
             echo "---- build log ----"; cat /tmp/btp-build.log
           } > ci-diag-build.log
           git add ci-diag-build.log
           git commit -m "btp build diag $GITHUB_SHA" -q
+          echo "M6_pushing_diag" >> "$GITHUB_OUTPUT" 2>/dev/null
           git push -f origin HEAD:btp-diag-log 2>&1 | tail -2
           if [ "$configure_code" -ne 0 ]; then
             exit "$configure_code"
