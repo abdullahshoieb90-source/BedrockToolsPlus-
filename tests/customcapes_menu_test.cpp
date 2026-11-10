@@ -149,6 +149,9 @@ namespace bedrocktools::core::gamehooks {
 void* clientInstance() { return nullptr; }
 // Diagnostics read by the status row.
 bool playerTickHookInstalled() { return false; }
+std::uint64_t actorTickCount() { return 0; }
+bool fallbackTickSourceActive() { return false; }
+void setFallbackTickSourceActive(bool) {}
 std::size_t installedHookCount() { return 0; }
 std::size_t attemptedHookCount() { return 23; }
 } // namespace bedrocktools::core::gamehooks

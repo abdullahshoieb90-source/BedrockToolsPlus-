@@ -366,14 +366,18 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     const char* state = applyStatusLabel(m_applyStatus);
     if (m_tickCount == 0) state = applyStatusLabel(ApplyStatus::NoTick);
 
-    // Spell out which game hooks this build of Minecraft accepted. Without it
-    // "no player tick received" is a dead end; with it, an unsupported game
-    // version is immediately visible (e.g. 0/23 installed).
+    // Spell out which game hooks this build of Minecraft accepted, and which
+    // source is actually driving the ticks. Without it "no player tick
+    // received" is a dead end; with it, a signature that installed but never
+    // fired (22/23 but no actor ticks) is immediately visible.
     const std::size_t installed = bedrocktools::core::gamehooks::installedHookCount();
     const std::size_t attempted = bedrocktools::core::gamehooks::attemptedHookCount();
-    const char* tickSource = bedrocktools::core::gamehooks::playerTickHookInstalled()
+    const std::uint64_t actorTicks = bedrocktools::core::gamehooks::actorTickCount();
+    const char* tickSource = actorTicks > 0
                                  ? "actor tick"
-                                 : "client update";
+                                 : (bedrocktools::core::gamehooks::fallbackTickSourceActive()
+                                        ? "client update fallback"
+                                        : "actor hook idle");
 
     char status[360];
     std::snprintf(status, sizeof(status),

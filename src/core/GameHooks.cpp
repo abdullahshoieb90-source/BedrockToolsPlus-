@@ -63,6 +63,8 @@ EglSwapBuffersFn swapBuffersOriginal = nullptr;
 std::atomic<void*> currentClientInstance = nullptr;
 std::array<bedrocktools::hooks::Handle, 26> handles{};
 std::size_t handleCount = 0;
+std::atomic<std::uint64_t> actorTicks{0};
+std::atomic_bool fallbackActive{false};
 std::mutex installMutex;
 bool installed = false;
 std::string gameVersion;
@@ -131,6 +133,11 @@ std::string versionDetour(void* self) {
 }
 
 void tickDetour(void* actor) {
+    // Liveness counter for the tick watchdog (see Runtime::wireEvents). A hook
+    // can install and still never fire - the signature matched a function the
+    // running build does not call - so counting real invocations is the only
+    // reliable test of whether this source of ticks works.
+    actorTicks.fetch_add(1, std::memory_order_relaxed);
     auto* player = reinterpret_cast<bedrocktools::sdk::Player*>(actor);
     LocalPlayerPreTickEvent preEvent{player};
     bus().publish(preEvent);
@@ -348,6 +355,18 @@ void uninstall() {
 
 bool playerTickHookInstalled() {
     return tickOriginal != nullptr;
+}
+
+std::uint64_t actorTickCount() {
+    return actorTicks.load(std::memory_order_acquire);
+}
+
+bool fallbackTickSourceActive() {
+    return fallbackActive.load(std::memory_order_acquire);
+}
+
+void setFallbackTickSourceActive(bool active) {
+    fallbackActive.store(active, std::memory_order_release);
 }
 
 std::size_t installedHookCount() {

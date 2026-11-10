@@ -138,12 +138,17 @@ std::size_t readSize(std::uint8_t* base, std::size_t offset) {
 // Switchable so the fallback path (no client instance) can be exercised.
 bool g_clientInstanceAvailable = true;
 bool g_playerTickHookInstalled = true;
+std::uint64_t g_actorTicks = 0;
+bool g_fallbackActive = false;
 
 namespace bedrocktools::core::gamehooks {
 void* clientInstance() { return g_clientInstanceAvailable ? reinterpret_cast<void*>(0x1) : nullptr; }
 // Diagnostics the status row reads. The test drives the module directly, so it
 // plays the part of a fully installed hook set.
 bool playerTickHookInstalled() { return g_playerTickHookInstalled; }
+std::uint64_t actorTickCount() { return g_actorTicks; }
+bool fallbackTickSourceActive() { return g_fallbackActive; }
+void setFallbackTickSourceActive(bool active) { g_fallbackActive = active; }
 std::size_t installedHookCount() { return 23; }
 std::size_t attemptedHookCount() { return 23; }
 } // namespace bedrocktools::core::gamehooks
@@ -338,6 +343,13 @@ int main() {
     // ------------------------------------------------------------------
     // The hook diagnostics must never claim an actor tick in the fallback
     // configuration: that is what makes "no player tick received" readable.
+    // A hook that installed but never fired leaves the fallback in charge; the
+    // status row must reflect the source actually driving the ticks.
+    g_playerTickHookInstalled = true;
+    g_actorTicks = 0;
+    check(!CustomCapesModule::applyStatusLabel(CustomCapesModule::ApplyStatus::NoTick)[0] == false,
+          "the missing-tick wording still exists for a dead hook");
+
     std::printf("status reflects the tick state\n");
     check(mod.tickCountForTests() > 0, "ticks are counted while a world is live");
     check(mod.applyStatus() != CustomCapesModule::ApplyStatus::NoTick,

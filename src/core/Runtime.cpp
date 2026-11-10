@@ -86,17 +86,35 @@ void Runtime::wireEvents() {
     using namespace bedrocktools::events;
     bus().subscribe<FrameEvent>([](auto&) { ModuleRegistry::get().onFrame(); });
 
-    // Fallback local-player tick source.
+    // Tick watchdog.
     //
     // Every module's per-tick work hangs off LocalPlayerTickEvent, which is
-    // published from the Actor::normalTick detour. When that one signature does
-    // not match the running build, nothing publishes the event and every
-    // module silently stops updating: the menu reports "no player tick
-    // received" and, for Custom Capes, no cape is ever applied. ClientInstance
-    // update is a separate signature, so it is used to drive the same event
-    // whenever the actor hook produced nothing.
+    // published from the Actor::normalTick detour. That hook can install and
+    // still never fire: the signature then matched a function the running build
+    // of Minecraft does not call. When that happens no module updates at all
+    // and, for Custom Capes, no cape is ever applied.
+    //
+    // So the actor hook is not trusted because it installed - it is trusted
+    // because it has counted a tick. Until it has, LocalPlayerTickEvent is
+    // driven from the client-instance update hook (a separate signature). Once
+    // the actor hook proves itself, the fallback switches itself off, so a
+    // working build never double-ticks.
     bus().subscribe<ClientInstanceUpdateEvent>([](auto& event) {
-        if (bedrocktools::core::gamehooks::playerTickHookInstalled()) return;
+        const std::uint64_t actorTicks = bedrocktools::core::gamehooks::actorTickCount();
+        const bool fallbackNeeded = actorTicks == 0;
+
+        // Number of client updates seen while waiting, used to give the actor
+        // hook a fair chance before taking over: the two hooks fire at
+        // different rates, and the fallback must not win a race at startup.
+        static std::uint32_t updatesWhileWaiting = 0;
+        static bool evaluated = false;
+        if (!evaluated) {
+            if (actorTicks == 0 && ++updatesWhileWaiting < 30) return;
+            evaluated = true;
+            bedrocktools::core::gamehooks::setFallbackTickSourceActive(fallbackNeeded);
+        }
+        if (!bedrocktools::core::gamehooks::fallbackTickSourceActive()) return;
+
         if (!event.clientInstance) return;
         auto* player = event.clientInstance->localPlayer();
         if (!player) return;
