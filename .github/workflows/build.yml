@@ -26,8 +26,12 @@ jobs:
         name: Build and package
         run: |
           set +e
+          free -m > /tmp/btp-mem-before.txt 2>&1
+          df -h / >> /tmp/btp-mem-before.txt 2>&1
           xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }} > /tmp/btp-configure.log 2>&1
           configure_code=$?
+          free -m > /tmp/btp-mem-mid.txt 2>&1
+          df -h / >> /tmp/btp-mem-mid.txt 2>&1
           xmake -y > /tmp/btp-build.log 2>&1
           build_code=$?
           if [ "$configure_code" -eq 0 ] && [ "$build_code" -eq 0 ]; then
@@ -51,20 +55,34 @@ jobs:
               echo '```'
               echo "</details>"
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null
           {
-            echo "logtail<<BTP_LOG_EOF" >> "$GITHUB_OUTPUT"
-            echo "configure=$configure_code build=$build_code" >> "$GITHUB_OUTPUT"
+            echo "logtail<<BTP_LOG_EOF" >> "$GITHUB_OUTPUT" 2>/dev/null
+            echo "configure=$configure_code build=$build_code" >> "$GITHUB_OUTPUT" 2>/dev/null
             if [ "$configure_code" -ne 0 ]; then
-              echo "---- configure ----" >> "$GITHUB_OUTPUT"
-              tail -n 100 /tmp/btp-configure.log >> "$GITHUB_OUTPUT"
+              echo "---- configure ----" >> "$GITHUB_OUTPUT" 2>/dev/null
+              tail -n 100 /tmp/btp-configure.log >> "$GITHUB_OUTPUT" 2>/dev/null
             fi
             if [ "$build_code" -ne 0 ]; then
-              echo "---- build ----" >> "$GITHUB_OUTPUT"
-              tail -n 120 /tmp/btp-build.log >> "$GITHUB_OUTPUT"
+              echo "---- build ----" >> "$GITHUB_OUTPUT" 2>/dev/null
+              tail -n 120 /tmp/btp-build.log >> "$GITHUB_OUTPUT" 2>/dev/null
             fi
-            echo "BTP_LOG_EOF" >> "$GITHUB_OUTPUT"
+            echo "BTP_LOG_EOF" >> "$GITHUB_OUTPUT" 2>/dev/null
           }
+          git config user.email "btp-diag@users.noreply.github.com"
+          git config user.name "btp-diag"
+          git checkout -B btp-diag-log 2>&1 | tail -1
+          {
+            echo "head_sha=$GITHUB_SHA"
+            echo "configure_code=$configure_code build_code=$build_code"
+            echo "---- mem before ----"; cat /tmp/btp-mem-before.txt
+            echo "---- mem mid ----"; cat /tmp/btp-mem-mid.txt
+            echo "---- configure log ----"; cat /tmp/btp-configure.log
+            echo "---- build log ----"; cat /tmp/btp-build.log
+          } > ci-diag-build.log
+          git add ci-diag-build.log
+          git commit -m "btp build diag $GITHUB_SHA" -q
+          git push -f origin HEAD:btp-diag-log 2>&1 | tail -2
           if [ "$configure_code" -ne 0 ]; then
             exit "$configure_code"
           fi
