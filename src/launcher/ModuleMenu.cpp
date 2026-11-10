@@ -260,9 +260,19 @@ void registerModulesWithLauncher() {
                     // command buttons.
                     minVal = 0.5f;
                     maxVal = 2.0f;
+                } else if (kLower == "m_scale") {
+                    // Sword Blocking pose size; the module clamps to the same
+                    // range at load time.
+                    minVal = 0.5f;
+                    maxVal = 2.0f;
                 } else if (kLower.find("scale") != std::string::npos) {
                     minVal = 0.1f;
                     maxVal = 5.0f;
+                } else if (kLower.find("offset") != std::string::npos) {
+                    // Sword Blocking placement nudges in blocks (+-2); the
+                    // module clamps to the same range at load time.
+                    minVal = -2.0f;
+                    maxVal = 2.0f;
                 } else if (kLower == "borderwidth") {
                     maxVal = 4.0f;
                 } else if (kLower.find("borderwidth") != std::string::npos) {

@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 12 configurable modules
+- 13 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -28,6 +28,8 @@ The source is public so people can study how a real LeviLauncher mod is structur
 **HUD:** Effect Display, Crosshair, Inventory HUD, Armor
 
 **Misc:** Hit Sound, CommentKey, Command Hotkey
+
+**PvP:** Sword Blocking
 
 ## Hitbox
 
@@ -123,6 +125,17 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 (Dragon, Angel, Demon).*
 
 Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
+
+## Sword Blocking
+
+**Sword Blocking** puts the classic Java 1.7 sword-block pose on your player: while a sword is in your main hand, the blade is held braced across the chest instead of dangling at your side — the same silhouette MarkClient's "Sword Blocking" module draws in 1.8 PvP. It is a purely client-side cosmetic: nothing is sent to the server and no gameplay value is touched, so it works in any world and on any server.
+
+- **Trigger** picks how the pose arms: **Sneak** (hold sneak, the original 1.7 behaviour — the latched mobile sneak button counts too) is the default, **Always** (pose whenever a sword is selected), or **Toggle** (press the module keybind to latch the pose on/off without holding anything).
+- **Any Sword** (on by default) accepts every vanilla sword plus modded items whose identifier ends in `_sword`; turned off, only iron, diamond and netherite swords count.
+- **Show Arm** draws the brace forearm along with the blade, and **Show In First Person** keeps the pose visible while the camera is in your eyes (off by default, where the overlay would smear across the screen).
+- **Blade Color** and **Guard Color** tint the blade and the crossguard, **Scale** (0.5–2.0) resizes the whole pose, and **Offset X/Y/Z** (±2 blocks) fine-tune its placement.
+
+The pose is a world-space overlay drawn through the same `RenderLevel` hook + tessellator route the Wings and Hitbox modules use, anchored to your AABB and body yaw every frame and shaded with the game's own depth-tested material, so it follows you correctly in third person and your body occludes it like real geometry. Only signatures and offsets the SDK already pins are used, so the feature survives game updates that do not move them. Disabling the module clears the pose immediately. `tests/swordblocking_test.cpp` covers the trigger/sword-detection state machine, the keybind latch and the config round-trip on the host.
 
 ## Hit Sound
 

@@ -11,6 +11,7 @@
 #include <bedrocktools/modules/visual/wings.hpp>
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
+#include "player/swordblocking.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -76,6 +77,7 @@ void registerAllModules() {
     registry.emplace<WingsModule>();
     registry.emplace<InventoryHudModule>();
     registry.emplace<ArmorModule>();
+    registry.emplace<SwordBlockingModule>();
     registry.emplace<JumpCircleModule>();
     registry.emplace<DamageCircleModule>();
 }

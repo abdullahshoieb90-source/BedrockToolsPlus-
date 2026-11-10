@@ -90,6 +90,11 @@ for source in "${root}"/tests/*_test.cpp; do
             # render hook frame by frame, so it needs threads for the sleeps.
             extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson" -pthread)
             ;;
+        swordblocking_test)
+            # Includes the production module with the host fakes for the
+            # preloader hook API and the small JSON surface the config uses.
+            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
+            ;;
         wings_render_state_test)
             # Includes the real wings renderer to exercise its shared color
             # state with the same host hook/JSON fakes as Block Outline.
