@@ -9,8 +9,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    outputs:
-      logtail: ${{ steps.buildstep.outputs.logtail }}
     steps:
       - uses: actions/checkout@v5
 
@@ -26,26 +24,36 @@ jobs:
         name: Build and package
         run: |
           set +e
-          trap 'echo "M_KILLED_by_signal_exit=$? at $(date -u +%H:%M:%S)" >> "$GITHUB_OUTPUT" 2>/dev/null' TERM INT HUP
-          echo "M0_start at $(date -u +%H:%M:%S)" >> "$GITHUB_OUTPUT" 2>/dev/null
+          ndkpath=${{ steps.ndk.outputs.ndk-path }}
+          echo "::warning file=build.yml::BTP-M0 script started ndk=${ndkpath:0:40}"
           free -m > /tmp/btp-mem-before.txt 2>&1
           df -h / >> /tmp/btp-mem-before.txt 2>&1
-          echo "M1_configure_start" >> "$GITHUB_OUTPUT" 2>/dev/null
-          xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }} > /tmp/btp-configure.log 2>&1
+          echo "::warning file=build.yml::BTP-M1 configure starting"
+          xmake f -y -p android -a arm64-v8a -m release --ndk=$ndkpath > /tmp/btp-configure.log 2>&1
           configure_code=$?
           free -m > /tmp/btp-mem-mid.txt 2>&1
           df -h / >> /tmp/btp-mem-mid.txt 2>&1
-          echo "M2_configure_done_code=$configure_code" >> "$GITHUB_OUTPUT" 2>/dev/null
-          echo "M3_build_start" >> "$GITHUB_OUTPUT" 2>/dev/null
+          echo "::warning file=build.yml::BTP-M2 configure done code=$configure_code"
+          echo "::warning file=build.yml::BTP-M3 build starting (j2)"
           xmake -y -j2 > /tmp/btp-build.log 2>&1
           build_code=$?
           free -m > /tmp/btp-mem-after.txt 2>&1
           df -h / >> /tmp/btp-mem-after.txt 2>&1
-          echo "M4_build_done_code=$build_code" >> "$GITHUB_OUTPUT" 2>/dev/null
+          echo "::warning file=build.yml::BTP-M4 build done code=$build_code"
           if [ "$configure_code" -eq 0 ] && [ "$build_code" -eq 0 ]; then
             exit 0
           fi
-          echo "M5_failure_branch" >> "$GITHUB_OUTPUT" 2>/dev/null
+          echo "::error file=build.yml::BTP-M5 failure branch configure=$configure_code build=$build_code"
+          if [ "$configure_code" -ne 0 ]; then
+            tail -n 80 /tmp/btp-configure.log | while IFS= read -r line; do
+              echo "::error file=btp-configure.log::L: $line"
+            done
+          fi
+          if [ "$build_code" -ne 0 ]; then
+            tail -n 80 /tmp/btp-build.log | while IFS= read -r line; do
+              echo "::error file=btp-build.log::L: $line"
+            done
+          fi
           {
             echo "### BedrockToolsPlus build failed (configure=$configure_code build=$build_code)"
             if [ "$configure_code" -ne 0 ]; then
@@ -65,19 +73,6 @@ jobs:
               echo "</details>"
             fi
           } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null
-          {
-            echo "logtail<<BTP_LOG_EOF" >> "$GITHUB_OUTPUT" 2>/dev/null
-            echo "configure=$configure_code build=$build_code" >> "$GITHUB_OUTPUT" 2>/dev/null
-            if [ "$configure_code" -ne 0 ]; then
-              echo "---- configure ----" >> "$GITHUB_OUTPUT" 2>/dev/null
-              tail -n 100 /tmp/btp-configure.log >> "$GITHUB_OUTPUT" 2>/dev/null
-            fi
-            if [ "$build_code" -ne 0 ]; then
-              echo "---- build ----" >> "$GITHUB_OUTPUT" 2>/dev/null
-              tail -n 120 /tmp/btp-build.log >> "$GITHUB_OUTPUT" 2>/dev/null
-            fi
-            echo "BTP_LOG_EOF" >> "$GITHUB_OUTPUT" 2>/dev/null
-          }
           git config user.email "btp-diag@users.noreply.github.com"
           git config user.name "btp-diag"
           git checkout -B btp-diag-log 2>&1 | tail -1
@@ -92,7 +87,7 @@ jobs:
           } > ci-diag-build.log
           git add ci-diag-build.log
           git commit -m "btp build diag $GITHUB_SHA" -q
-          echo "M6_pushing_diag" >> "$GITHUB_OUTPUT" 2>/dev/null
+          echo "::warning file=build.yml::BTP-M6 pushing diag branch"
           git push -f origin HEAD:btp-diag-log 2>&1 | tail -2
           if [ "$configure_code" -ne 0 ]; then
             exit "$configure_code"
