@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <limits>
 
 #include "fake_shader_color.hpp"
 #include <bedrocktools/events/EventBus.hpp>
@@ -28,6 +29,7 @@ namespace {
 using fake_render::Color;
 int failures = 0;
 int begins = 0, vertices = 0, flushes = 0;
+float minVertexZ = std::numeric_limits<float>::infinity();
 Color vertexColor{};
 Color firstColor{};
 Color outputColor{};
@@ -42,7 +44,8 @@ void check(bool condition, const char* message) {
 }
 void fakeBegin(void*, void*, int, int, int) { ++begins; }
 void fakeColor(void*, float r, float g, float b, float a) { vertexColor = {r, g, b, a}; }
-void fakeVertex(void*, float, float, float) {
+void fakeVertex(void*, float, float, float z) {
+    minVertexZ = std::min(minVertexZ, z);
     if (vertices++ == 0) firstColor = vertexColor;
 }
 void fakeFlush(void* screen, void*, void* material, char*) {
@@ -59,6 +62,7 @@ void put(std::array<std::byte, N>& bytes, std::size_t offset, const T& value) {
 }
 void resetCapture() {
     begins = vertices = flushes = 0;
+    minVertexZ = std::numeric_limits<float>::infinity();
     firstColor = outputColor = {};
     drawnMaterial = nullptr;
     legacyUntouched = true;
@@ -146,13 +150,19 @@ int main() {
     put(camera, off::LevelRendererPlayer::mCamPos, Vec3{0.0f, 65.5f, -4.0f});
     resetCapture();
     _renderLevel_hook(renderer.data(), screen.data(), nullptr);
-    check(begins == 1 && vertices == 6 * 8 && flushes == 1,
+    check(begins == 1 && vertices == static_cast<int>(bedrocktools::modules::cape::build(pixels, 2, 3).size()) * 8 && flushes == 1,
           "cape renders by itself with both windings through the shared hook");
     check(firstColor[0] > firstColor[1], "custom PNG supplies cape colors");
+    const float idleEdgeZ = minVertexZ;
+    s_capeMotion.current = {35.0f, 0.0f};
+    s_capeMotion.previous = s_capeMotion.current;
+    resetCapture();
+    _renderLevel_hook(renderer.data(), screen.data(), nullptr);
+    check(minVertexZ < idleEdgeZ - 0.2f, "render hook applies cape motion around shoulder pivot");
     module.enabled = true;
     resetCapture();
     _renderLevel_hook(renderer.data(), screen.data(), nullptr);
-    check(vertices > 6 * 8 && flushes == 1, "wings and cape render together in one batch");
+    check(vertices > static_cast<int>(bedrocktools::modules::cape::build(pixels, 2, 3).size()) * 8 && flushes == 1, "wings and cape render together in one batch");
     module.enabled = false;
     for (int i = 0; i < 6; ++i) {
         pixels[i * 4] = 10; pixels[i * 4 + 1] = 220;
@@ -162,7 +172,7 @@ int main() {
     cape.onEnable();
     resetCapture();
     _renderLevel_hook(renderer.data(), screen.data(), nullptr);
-    check(vertices == 5 * 8 && firstColor[1] > firstColor[0],
+    check(vertices == static_cast<int>(bedrocktools::modules::cape::build(pixels, 2, 3).size()) * 8 && firstColor[1] > firstColor[0],
           "re-enabling reloads PNG colors and transparent pixels");
     resetCapture();
     put(camera, off::LevelRendererPlayer::mCamPos, Vec3{0.0f, 65.5f, 0.0f});

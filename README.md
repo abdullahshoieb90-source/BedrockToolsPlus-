@@ -217,7 +217,9 @@ BedrockToolsPlus is licensed under the [GNU General Public License v3.0](LICENSE
 **Custom Capes** draws a cape on the local player using the same third-person,
 world-space tessellator overlay and interpolated body anchor as Wings. It does
 not modify the skin, and other players will not see it. It can be enabled
-independently of Wings, or used alongside it.
+independently of Wings, or used alongside it. The cape is a thin 10×16×1
+model-pixel panel, hinged at the shoulders and smoothly tilted by walking,
+falling and turning. Motion resets after a teleport or player change.
 
 On initialization the module creates `capes/cape.png` next to the mod's config
 file (for example, `/sdcard/games/BedrockToolsPlus/capes/cape.png`) if it does

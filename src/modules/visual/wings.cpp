@@ -147,6 +147,8 @@ static bedrocktools::sdk::Vec2 s_playerRot{0,0};
 static WingBoneAngles s_boneAngles{};
 static void* s_localPlayerPtr = nullptr;
 static bool s_hasPlayer = false;
+// Protected by s_stateMutex; pose samples are interpolated at render time.
+static bedrocktools::modules::cape::Motion s_capeMotion;
 
 // --- Render-thread anchor interpolation (mirrors entity client-side lerp) ---
 // The collision AABB and the rotation are only refreshed once per server tick
@@ -429,6 +431,7 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     AABB aabb{};
     bedrocktools::sdk::Vec2 rot{};
     WingBoneAngles angles{};
+    bedrocktools::modules::cape::Pose capePrev{}, capeCur{};
     void* playerPtr = nullptr;
     AABB prevAABB{};
     bedrocktools::sdk::Vec2 prevRot{0, 0};
@@ -445,6 +448,8 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
         aabb = s_curAABB;
         rot = s_curRot;
         angles = s_boneAngles;
+        capePrev = s_capeMotion.previous;
+        capeCur = s_capeMotion.current;
         playerPtr = s_localPlayerPtr;
         prevAABB = s_prevAABB;
         prevRot = s_prevRot;
@@ -618,6 +623,13 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
         std::lock_guard<std::mutex> lock(s_capeMutex);
         capeQuads = s_capeQuads;
     }
+    if (!capeQuads.empty()) {
+        const float fraction = lastTickValid && tickInterval > 0.0f
+            ? hitbox::sampleFraction(std::chrono::duration<float>(
+                std::chrono::steady_clock::now() - lastTick).count(), tickInterval) : 1.0f;
+        bedrocktools::modules::cape::applyPose(capeQuads,
+            bedrocktools::modules::cape::interpolate(capePrev, capeCur, fraction));
+    }
     if (rightCount <= 0 && leftCount <= 0 && capeQuads.empty()) return;
 
     bedrocktools::core::ScopedShaderColor shaderColor(screenContext);
@@ -756,14 +768,21 @@ void CustomCapesModule::onEnable() {
             stbi_image_free(pixels);
         }
     }
-    std::lock_guard<std::mutex> lock(s_capeMutex);
-    s_capeQuads = std::move(quads);
+    {
+        std::lock_guard<std::mutex> lock(s_capeMutex);
+        s_capeQuads = std::move(quads);
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_stateMutex);
+        s_capeMotion.reset();
+    }
 }
 
 void CustomCapesModule::onDisable() {
     if (g_wings && g_wings->enabled) return;
     std::lock_guard<std::mutex> lock(s_stateMutex);
     s_hasPlayer = false;
+    s_capeMotion.reset();
     s_localPlayerPtr = nullptr;
     s_hasPrevSample = false;
     s_lastTickTimeValid = false;
@@ -863,6 +882,7 @@ void WingsModule::onDisable() {
     if (capeEnabled()) return;
     std::lock_guard<std::mutex> lock(s_stateMutex);
     s_hasPlayer = false;
+    s_capeMotion.reset();
     s_localPlayerPtr = nullptr;
     s_hasPrevSample = false;
     s_lastTickTimeValid = false;
@@ -1054,6 +1074,7 @@ void WingsModule::onLocalPlayerTick(void* player) {
     if (!player || !overlayEnabled()) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_hasPlayer = false;
+        s_capeMotion.reset();
         s_localPlayerPtr = nullptr;
         s_hasPrevSample = false;
         s_lastTickTimeValid = false;
@@ -1124,6 +1145,8 @@ void WingsModule::onLocalPlayerTick(void* player) {
         // old code compared the centre with itself (always zero), so a teleport
         // was never detected and the wings were dragged across the whole gap.
         const bool teleport = haveDisplacement && displacementSq >= 25.0f;
+        if (s_localPlayerPtr != player || teleport) s_capeMotion.reset();
+        if (capeEnabled()) s_capeMotion.update(centerX, centerY, centerZ, rot.y, dt);
         if (!s_hasPrevSample || teleport) {
             s_prevAABB = aabb;
             s_prevRot = rot;
