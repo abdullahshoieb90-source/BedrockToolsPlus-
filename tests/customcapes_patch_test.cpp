@@ -137,9 +137,15 @@ std::size_t readSize(std::uint8_t* base, std::size_t offset) {
 // case. The test installs its own predicate below, so this is never used.
 // Switchable so the fallback path (no client instance) can be exercised.
 bool g_clientInstanceAvailable = true;
+bool g_playerTickHookInstalled = true;
 
 namespace bedrocktools::core::gamehooks {
 void* clientInstance() { return g_clientInstanceAvailable ? reinterpret_cast<void*>(0x1) : nullptr; }
+// Diagnostics the status row reads. The test drives the module directly, so it
+// plays the part of a fully installed hook set.
+bool playerTickHookInstalled() { return g_playerTickHookInstalled; }
+std::size_t installedHookCount() { return 23; }
+std::size_t attemptedHookCount() { return 23; }
 } // namespace bedrocktools::core::gamehooks
 
 int main() {
@@ -330,6 +336,8 @@ int main() {
     // ------------------------------------------------------------------
     // Disable restores the original cape exactly.
     // ------------------------------------------------------------------
+    // The hook diagnostics must never claim an actor tick in the fallback
+    // configuration: that is what makes "no player tick received" readable.
     std::printf("status reflects the tick state\n");
     check(mod.tickCountForTests() > 0, "ticks are counted while a world is live");
     check(mod.applyStatus() != CustomCapesModule::ApplyStatus::NoTick,

@@ -201,7 +201,7 @@ const char* CustomCapesModule::applyStatusLabel(ApplyStatus status) {
         case ApplyStatus::EmptyPixels: return "no cape loaded";
         case ApplyStatus::LoadFailed: return "the selected PNG could not be loaded";
         case ApplyStatus::Disabled: return "module is OFF - turn it on in the Modules tab";
-        case ApplyStatus::NoTick: return "no player tick received (game hooks are not installed)";
+        case ApplyStatus::NoTick: return "no player tick received";
         case ApplyStatus::Idle: break;
     }
     return "no cape selected";
@@ -362,15 +362,25 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     // The status row spells out both halves of the question the user actually
     // asks: which file is loaded, and what happened when it was applied.
     // A module that has never seen a player tick cannot report anything about
-    // the cape: the hooks are the problem, not the selection.
+    // the cape: the game hooks are the problem, not the selection.
     const char* state = applyStatusLabel(m_applyStatus);
     if (m_tickCount == 0) state = applyStatusLabel(ApplyStatus::NoTick);
 
-    char status[300];
-    std::snprintf(status, sizeof(status), "%zu capes - %s [%s] - local only (others cannot see it)",
+    // Spell out which game hooks this build of Minecraft accepted. Without it
+    // "no player tick received" is a dead end; with it, an unsupported game
+    // version is immediately visible (e.g. 0/23 installed).
+    const std::size_t installed = bedrocktools::core::gamehooks::installedHookCount();
+    const std::size_t attempted = bedrocktools::core::gamehooks::attemptedHookCount();
+    const char* tickSource = bedrocktools::core::gamehooks::playerTickHookInstalled()
+                                 ? "actor tick"
+                                 : "client update";
+
+    char status[360];
+    std::snprintf(status, sizeof(status),
+                  "%zu capes - %s [%s] - local only - hooks %zu/%zu (%s)",
                   m_files.size(),
                   m_loadedFile.empty() ? "none selected" : m_loadedFile.c_str(),
-                  state);
+                  state, installed, attempted, tickSource);
     j["m_status"] = std::string(status);
     // The folder path itself, so it can be read (or copied with the button)
     // without digging through a file manager.

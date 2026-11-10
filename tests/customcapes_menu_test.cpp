@@ -147,6 +147,10 @@ std::string ConfigManager::getConfigPath() const { return g_testConfigPath; }
 // still has to exist to link customcapes.cpp.
 namespace bedrocktools::core::gamehooks {
 void* clientInstance() { return nullptr; }
+// Diagnostics read by the status row.
+bool playerTickHookInstalled() { return false; }
+std::size_t installedHookCount() { return 0; }
+std::size_t attemptedHookCount() { return 23; }
 } // namespace bedrocktools::core::gamehooks
 
 namespace bedrocktools::events {

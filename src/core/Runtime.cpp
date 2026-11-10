@@ -6,6 +6,7 @@
 #include "modules/ModuleRegistry.hpp"
 #include "core/memory/Hooks.hpp"
 #include <bedrocktools/events/EventBus.hpp>
+#include <bedrocktools/sdk/client/ClientInstance.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 #include <pl/Input.hpp>
 #include <atomic>
@@ -84,6 +85,24 @@ void Runtime::wireEvents() {
     eventsWired = true;
     using namespace bedrocktools::events;
     bus().subscribe<FrameEvent>([](auto&) { ModuleRegistry::get().onFrame(); });
+
+    // Fallback local-player tick source.
+    //
+    // Every module's per-tick work hangs off LocalPlayerTickEvent, which is
+    // published from the Actor::normalTick detour. When that one signature does
+    // not match the running build, nothing publishes the event and every
+    // module silently stops updating: the menu reports "no player tick
+    // received" and, for Custom Capes, no cape is ever applied. ClientInstance
+    // update is a separate signature, so it is used to drive the same event
+    // whenever the actor hook produced nothing.
+    bus().subscribe<ClientInstanceUpdateEvent>([](auto& event) {
+        if (bedrocktools::core::gamehooks::playerTickHookInstalled()) return;
+        if (!event.clientInstance) return;
+        auto* player = event.clientInstance->localPlayer();
+        if (!player) return;
+        LocalPlayerTickEvent tick{player};
+        bus().publish(tick);
+    });
     bus().subscribe<MouseInputEvent>([](auto& event) {
         if (ModuleRegistry::get().onMouseEvent(event.button, event.down)) event.cancel();
     });

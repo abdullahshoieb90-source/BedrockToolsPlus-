@@ -175,6 +175,10 @@ std::uintptr_t resolve(SignatureId) { return 0; }
 
 namespace bedrocktools::core::gamehooks {
 void* clientInstance() { return nullptr; }
+// Hook diagnostics the menu status row reads; this test never installs a hook.
+bool playerTickHookInstalled() { return false; }
+std::size_t installedHookCount() { return 0; }
+std::size_t attemptedHookCount() { return 23; }
 } // namespace bedrocktools::core::gamehooks
 
 // Several modules read the resource directory (fonts, wing/effect assets).

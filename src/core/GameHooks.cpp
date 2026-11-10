@@ -346,6 +346,19 @@ void uninstall() {
     currentClientInstance.store(nullptr, std::memory_order_release);
 }
 
+bool playerTickHookInstalled() {
+    return tickOriginal != nullptr;
+}
+
+std::size_t installedHookCount() {
+    return handleCount;
+}
+
+std::size_t attemptedHookCount() {
+    // 22 signature hooks + the EGL one below; matches the install() sequence.
+    return 23;
+}
+
 void* clientInstance() {
     return currentClientInstance.load(std::memory_order_acquire);
 }
