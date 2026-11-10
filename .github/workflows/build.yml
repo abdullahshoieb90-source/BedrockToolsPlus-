@@ -22,8 +22,36 @@ jobs:
 
       - name: Build and package
         run: |
-          xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }}
-          xmake -y
+          set +e
+          xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }} > /tmp/btp-configure.log 2>&1
+          configure_code=$?
+          xmake -y > /tmp/btp-build.log 2>&1
+          build_code=$?
+          if [ $configure_code -ne 0 ] || [ $build_code -ne 0 ]; then
+            {
+              echo "### BedrockToolsPlus build failed (configure=$configure_code build=$build_code)"
+              if [ $configure_code -ne 0 ]; then
+                echo ""
+                echo "<details><summary>configure log (last 120 lines)</summary>"
+                echo '```'
+                tail -n 120 /tmp/btp-configure.log
+                echo '```'
+                echo "</details>"
+              fi
+              if [ $build_code -ne 0 ]; then
+                echo ""
+                echo "<details open><summary>build log (last 160 lines)</summary>"
+                echo '```'
+                tail -n 160 /tmp/btp-build.log
+                echo '```'
+                echo "</details>"
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ $configure_code -ne 0 ]; then
+            exit $configure_code
+          fi
+          exit $build_code
 
       - uses: actions/upload-artifact@v5
         with:
