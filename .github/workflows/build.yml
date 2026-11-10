@@ -25,70 +25,48 @@ jobs:
         run: |
           set +e
           ndkpath=${{ steps.ndk.outputs.ndk-path }}
-          echo "::warning file=build.yml::BTP-M0 script started ndk=${ndkpath:0:40}"
-          free -m > /tmp/btp-mem-before.txt 2>&1
-          df -h / >> /tmp/btp-mem-before.txt 2>&1
+          echo "$$" > /tmp/btp-main-pid
+          rm -f /tmp/btp-stop-watchdog /tmp/btp-dump-requested /tmp/btp-watchdog.log /tmp/btp-configure-code /tmp/btp-build-code
+          echo 'IyEvYmluL2Jhc2gKbWFpbnBpZD0kKGNhdCAvdG1wL2J0cC1tYWluLXBpZCAyPi9kZXYvbnVsbCkKZW5kPSQoKFNFQ09ORFMgKyAzNDApKQpuPTAKd2hpbGUgOjsgZG8KICBuPSQoKG4rMSkpCiAgcHJpbnRmICdIQiAlZCAlcyB1c2VkPSVzLyVzIGF2YWlsX2tiPSVzIGRpc2s9JXNcbicgXAogICAgIiRuIiAiJChkYXRlIC11ICslSDolTTolUykiIFwKICAgICIkKGZyZWUgLW0gfCBhd2sgJy9NZW06L3twcmludCAkM30nKSIgIiQoZnJlZSAtbSB8IGF3ayAnL01lbTove3ByaW50ICQyfScpIiBcCiAgICAiJChhd2sgJy9NZW1BdmFpbGFibGUve3ByaW50ICQyfScgL3Byb2MvbWVtaW5mbykiIFwKICAgICIkKGRmIC1oIC8gfCB0YWlsIC0xIHwgYXdrICd7cHJpbnQgJDV9JykiID4+IC90bXAvYnRwLXdhdGNoZG9nLmxvZwogIFsgLWYgL3RtcC9idHAtc3RvcC13YXRjaGRvZyBdICYmIGJyZWFrCiAgWyAiJFNFQ09ORFMiIC1nZSAiJGVuZCIgXSAmJiBicmVhawogIGlmIFsgLW4gIiRtYWlucGlkIiBdICYmICEga2lsbCAtMCAiJG1haW5waWQiIDI+L2Rldi9udWxsOyB0aGVuCiAgICBzbGVlcCAzCiAgICBicmVhawogIGZpCiAgc2xlZXAgMTAKZG9uZQpjYz0kKGNhdCAvdG1wL2J0cC1jb25maWd1cmUtY29kZSAyPi9kZXYvbnVsbCkKYmM9JChjYXQgL3RtcC9idHAtYnVpbGQtY29kZSAyPi9kZXYvbnVsbCkKaWYgWyAiJGNjIiA9ICIwIiBdICYmIFsgIiRiYyIgPSAiMCIgXTsgdGhlbgogIGV4aXQgMApmaQpjZCAiJEdJVEhVQl9XT1JLU1BBQ0UiIHx8IGV4aXQgMAp7CiAgZWNobyAiaGVhZF9zaGE9JEdJVEhVQl9TSEEiCiAgZWNobyAiY29uZmlndXJlX2NvZGU9JGNjIGJ1aWxkX2NvZGU9JGJjIgogIGVjaG8gIndhdGNoZG9nX2ZpcmVkX3JlYXNvbj0kKCBbIC1mIC90bXAvYnRwLWR1bXAtcmVxdWVzdGVkIF0gJiYgZWNobyBtYWluLXNjcmlwdC1leGl0IHx8IGVjaG8gbWFpbi1zY3JpcHQtZGllZCApIgogIGVjaG8gIi0tLS0gd2F0Y2hkb2cgbG9nIC0tLS0iOyBjYXQgL3RtcC9idHAtd2F0Y2hkb2cubG9nIDI+L2Rldi9udWxsCiAgZWNobyAiLS0tLSBtZW0gYmVmb3JlIC0tLS0iOyBjYXQgL3RtcC9idHAtbWVtLWJlZm9yZS50eHQgMj4vZGV2L251bGwKICBlY2hvICItLS0tIG1lbSBtaWQgLS0tLSI7IGNhdCAvdG1wL2J0cC1tZW0tbWlkLnR4dCAyPi9kZXYvbnVsbAogIGVjaG8gIi0tLS0gbWVtIGFmdGVyIC0tLS0iOyBjYXQgL3RtcC9idHAtbWVtLWFmdGVyLnR4dCAyPi9kZXYvbnVsbAogIGVjaG8gIi0tLS0gY29uZmlndXJlIGxvZyAtLS0tIjsgY2F0IC90bXAvYnRwLWNvbmZpZ3VyZS5sb2cgMj4vZGV2L251bGwKICBlY2hvICItLS0tIGJ1aWxkIGxvZyAtLS0tIjsgY2F0IC90bXAvYnRwLWJ1aWxkLmxvZyAyPi9kZXYvbnVsbAp9ID4gY2ktZGlhZy1idWlsZC5sb2cKZ2l0IGNvbmZpZyB1c2VyLmVtYWlsICJidHAtZGlhZ0B1c2Vycy5ub3JlcGx5LmdpdGh1Yi5jb20iCmdpdCBjb25maWcgdXNlci5uYW1lICJidHAtZGlhZyIKZ2l0IGNoZWNrb3V0IC1CIGJ0cC1kaWFnLWxvZyAyPi9kZXYvbnVsbApnaXQgYWRkIGNpLWRpYWctYnVpbGQubG9nCmdpdCBjb21taXQgLW0gImJ0cCBidWlsZCBkaWFnICRHSVRIVUJfU0hBIiAtcQpnaXQgcHVzaCAtZiBvcmlnaW4gSEVBRDpidHAtZGlhZy1sb2cgMj4vZGV2L251bGwK' | base64 -d > /tmp/btp-watchdog.sh
+          chmod +x /tmp/btp-watchdog.sh
+          setsid /tmp/btp-watchdog.sh </dev/null >/dev/null 2>&1 &
+          echo "::warning file=build.yml::BTP-M0 script started pid=$$ ndk=${ndkpath:0:40}"
+
           echo "::warning file=build.yml::BTP-M1 configure starting"
           xmake f -y -p android -a arm64-v8a -m release --ndk=$ndkpath > /tmp/btp-configure.log 2>&1
           configure_code=$?
+          echo "$configure_code" > /tmp/btp-configure-code
           free -m > /tmp/btp-mem-mid.txt 2>&1
           df -h / >> /tmp/btp-mem-mid.txt 2>&1
           echo "::warning file=build.yml::BTP-M2 configure done code=$configure_code"
+
           echo "::warning file=build.yml::BTP-M3 build starting (j2)"
           xmake -y -j2 > /tmp/btp-build.log 2>&1
           build_code=$?
+          echo "$build_code" > /tmp/btp-build-code
           free -m > /tmp/btp-mem-after.txt 2>&1
           df -h / >> /tmp/btp-mem-after.txt 2>&1
           echo "::warning file=build.yml::BTP-M4 build done code=$build_code"
+
           if [ "$configure_code" -eq 0 ] && [ "$build_code" -eq 0 ]; then
+            touch /tmp/btp-stop-watchdog
             exit 0
           fi
+
           echo "::error file=build.yml::BTP-M5 failure branch configure=$configure_code build=$build_code"
           if [ "$configure_code" -ne 0 ]; then
-            tail -n 80 /tmp/btp-configure.log | while IFS= read -r line; do
+            tail -n 60 /tmp/btp-configure.log | while IFS= read -r line; do
               echo "::error file=btp-configure.log::L: $line"
             done
           fi
           if [ "$build_code" -ne 0 ]; then
-            tail -n 80 /tmp/btp-build.log | while IFS= read -r line; do
+            tail -n 60 /tmp/btp-build.log | while IFS= read -r line; do
               echo "::error file=btp-build.log::L: $line"
             done
           fi
-          {
-            echo "### BedrockToolsPlus build failed (configure=$configure_code build=$build_code)"
-            if [ "$configure_code" -ne 0 ]; then
-              echo ""
-              echo "<details open><summary>configure log (last 150 lines)</summary>"
-              echo '```'
-              tail -n 150 /tmp/btp-configure.log
-              echo '```'
-              echo "</details>"
-            fi
-            if [ "$build_code" -ne 0 ]; then
-              echo ""
-              echo "<details open><summary>build log (last 150 lines)</summary>"
-              echo '```'
-              tail -n 150 /tmp/btp-build.log
-              echo '```'
-              echo "</details>"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null
-          git config user.email "btp-diag@users.noreply.github.com"
-          git config user.name "btp-diag"
-          git checkout -B btp-diag-log 2>&1 | tail -1
-          {
-            echo "head_sha=$GITHUB_SHA"
-            echo "configure_code=$configure_code build_code=$build_code"
-            echo "---- mem before ----"; cat /tmp/btp-mem-before.txt
-            echo "---- mem mid ----"; cat /tmp/btp-mem-mid.txt
-            echo "---- mem after ----"; cat /tmp/btp-mem-after.txt
-            echo "---- configure log ----"; cat /tmp/btp-configure.log
-            echo "---- build log ----"; cat /tmp/btp-build.log
-          } > ci-diag-build.log
-          git add ci-diag-build.log
-          git commit -m "btp build diag $GITHUB_SHA" -q
-          echo "::warning file=build.yml::BTP-M6 pushing diag branch"
-          git push -f origin HEAD:btp-diag-log 2>&1 | tail -2
+          touch /tmp/btp-dump-requested
+          sleep 50
+          touch /tmp/btp-stop-watchdog
           if [ "$configure_code" -ne 0 ]; then
             exit "$configure_code"
           fi
