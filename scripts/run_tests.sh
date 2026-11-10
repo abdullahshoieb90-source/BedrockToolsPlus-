@@ -96,6 +96,18 @@ for source in "${root}"/tests/*_test.cpp; do
             extra+=(-I "${root}/third_party" -I "${root}/tests/fakepl"
                     -I "${root}/tests/fakejson" -pthread)
             ;;
+        swordblocking_test)
+            # The test includes the production .cpp itself (so it can drive the
+            # render detours directly). The preloader headers come from the
+            # recording fake in tests/swordblocking_fakepl, which captures the
+            # overlay commands and the button definition.
+            extra+=(-I "${root}/tests/swordblocking_fakepl")
+            if [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
+                extra+=(-I "${json_inc}")
+            else
+                extra+=(-I "${root}/tests/fakejson")
+            fi
+            ;;
         wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the

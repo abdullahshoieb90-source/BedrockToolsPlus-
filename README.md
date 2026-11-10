@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 12 configurable modules
+- 13 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -23,7 +23,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Hitbox, Block Outline, Wings, Jump Circle, Damage Circle
+**Visual:** Hitbox, Block Outline, Wings, Jump Circle, Damage Circle, Sword Blocking
 
 **HUD:** Effect Display, Crosshair, Inventory HUD, Armor
 
@@ -123,6 +123,19 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 (Dragon, Angel, Demon).*
 
 Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
+
+## Sword Blocking
+
+**Sword Blocking** brings the Java-Edition sword guard to Bedrock. Hold a sword and keep the use control down and the sword in your first-person hand glides up into a guard pose (raised, tilted across your face), with a small shield indicator under the crosshair while it is up.
+
+It is a **visual** module: Bedrock has no sword blocking in its protocol and damage is decided by the server, so nothing here sends a packet, cancels an attack, changes reach or touches health. It only moves the held item's render matrix and paints HUD geometry, so it is safe everywhere and cannot desync anything.
+
+- **Hold Style** picks what raises the guard: **Auto** (any of the three sources below), **Right Click** (the mouse button only), **Screen Button** (the launcher hold button only), **Hold Key** (the keybind only) or **Always** (block whenever a sword is carried). **Mouse Button** and **Hold Keybind** configure the two dedicated sources, and **Screen Button** adds or removes the launcher overlay button, which is the touch path — it is a `Hold` button, so pressing it blocks and releasing it lowers the sword. Holding it never eats the game's own use control, so breaking and placing blocks keeps working exactly as before.
+- **Fade Speed** blends the pose in and out instead of snapping. A pause (singleplayer menu, app switch) is capped, so the sword can never jump to its end pose on resume.
+- **Pose** exposes **Tilt**, **Lift**, **Across**, **Forward** and **Scale** for the guard itself, all in Bedrock model units, so the pose can be made to read well on any skin FOV.
+- **Indicator** draws a shield outline under the crosshair, faded with the pose. **Indicator Color**, **Indicator Opacity** and **Indicator Scale** style it, and **Show In Third Person** extends it to the third-person camera (the pose itself stays first-person, like the vanilla hand).
+
+Any item whose description id ends in `_sword` counts — every vanilla sword plus modded swords that keep the vanilla naming. The pose is applied inside `ItemInHandRenderer::renderObject`, only while the surrounding first-person scopes identify the main hand (so the offhand item is never affected), and the game's matrix is restored right after the draw. `tests/swordblocking_test.cpp` builds the real module against in-memory game objects and asserts that the matrix is posed during the draw, restored afterwards, and left alone for the offhand and in third person.
 
 ## Hit Sound
 

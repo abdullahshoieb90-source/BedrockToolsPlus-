@@ -19,7 +19,7 @@ class ModuleScopeTest(unittest.TestCase):
             "BlockOutlineModule", "CommentKey",
             "CommandHotkeyModule", "CrosshairModule", "WingsModule",
             "InventoryHudModule", "ArmorModule",
-            "JumpCircleModule", "DamageCircleModule",
+            "JumpCircleModule", "DamageCircleModule", "SwordBlockingModule",
         ])
 
     def test_only_plus_module_implementations_are_built(self):
@@ -34,7 +34,7 @@ class ModuleScopeTest(unittest.TestCase):
             "hud/crosshair.cpp", "hud/huditems.cpp",
             "hud/inventoryhud.cpp", "hud/armorhud.cpp", "visual/hitbox.cpp",
             "visual/blockoutline.cpp", "visual/wings.cpp", "visual/jumpcircle.cpp",
-            "visual/damagecircle.cpp",
+            "visual/damagecircle.cpp", "visual/swordblocking.cpp",
         })
         self.assertFalse((ROOT / "src/launcher/OverlayBridge.cpp").exists())
         runtime = (ROOT / "src/core/Runtime.cpp").read_text()
@@ -43,10 +43,10 @@ class ModuleScopeTest(unittest.TestCase):
     def test_compatibility_metadata_is_retained(self):
         manifest = json.loads((ROOT / "levimod.json").read_text())
         self.assertEqual(manifest["id"], "bedrocktoolsplus")
-        self.assertEqual(manifest["version"], "1.5.8")
+        self.assertEqual(manifest["version"], "1.5.9")
         self.assertEqual(manifest["minecraft_versions"], ["1.26.60.X"])
         version = (ROOT / "include/bedrocktools/Version.hpp").read_text()
-        self.assertIn('Version = "1.5.8"', version)
+        self.assertIn('Version = "1.5.9"', version)
 
 
 if __name__ == "__main__":
