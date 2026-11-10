@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      logtail: ${{ steps.buildstep.outputs.logtail }}
     steps:
       - uses: actions/checkout@v5
 
@@ -20,38 +22,53 @@ jobs:
         with:
           ndk-version: r28c
 
-      - name: Build and package
+      - id: buildstep
+        name: Build and package
         run: |
           set +e
           xmake f -y -p android -a arm64-v8a -m release --ndk=${{ steps.ndk.outputs.ndk-path }} > /tmp/btp-configure.log 2>&1
           configure_code=$?
           xmake -y > /tmp/btp-build.log 2>&1
           build_code=$?
-          if [ $configure_code -ne 0 ] || [ $build_code -ne 0 ]; then
-            {
-              echo "### BedrockToolsPlus build failed (configure=$configure_code build=$build_code)"
-              if [ $configure_code -ne 0 ]; then
-                echo ""
-                echo "<details><summary>configure log (last 120 lines)</summary>"
-                echo '```'
-                tail -n 120 /tmp/btp-configure.log
-                echo '```'
-                echo "</details>"
-              fi
-              if [ $build_code -ne 0 ]; then
-                echo ""
-                echo "<details open><summary>build log (last 160 lines)</summary>"
-                echo '```'
-                tail -n 160 /tmp/btp-build.log
-                echo '```'
-                echo "</details>"
-              fi
-            } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$configure_code" -eq 0 ] && [ "$build_code" -eq 0 ]; then
+            exit 0
           fi
-          if [ $configure_code -ne 0 ]; then
-            exit $configure_code
+          {
+            echo "### BedrockToolsPlus build failed (configure=$configure_code build=$build_code)"
+            if [ "$configure_code" -ne 0 ]; then
+              echo ""
+              echo "<details open><summary>configure log (last 150 lines)</summary>"
+              echo '```'
+              tail -n 150 /tmp/btp-configure.log
+              echo '```'
+              echo "</details>"
+            fi
+            if [ "$build_code" -ne 0 ]; then
+              echo ""
+              echo "<details open><summary>build log (last 150 lines)</summary>"
+              echo '```'
+              tail -n 150 /tmp/btp-build.log
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "logtail<<BTP_LOG_EOF" >> "$GITHUB_OUTPUT"
+            echo "configure=$configure_code build=$build_code" >> "$GITHUB_OUTPUT"
+            if [ "$configure_code" -ne 0 ]; then
+              echo "---- configure ----" >> "$GITHUB_OUTPUT"
+              tail -n 100 /tmp/btp-configure.log >> "$GITHUB_OUTPUT"
+            fi
+            if [ "$build_code" -ne 0 ]; then
+              echo "---- build ----" >> "$GITHUB_OUTPUT"
+              tail -n 120 /tmp/btp-build.log >> "$GITHUB_OUTPUT"
+            fi
+            echo "BTP_LOG_EOF" >> "$GITHUB_OUTPUT"
+          }
+          if [ "$configure_code" -ne 0 ]; then
+            exit "$configure_code"
           fi
-          exit $build_code
+          exit "$build_code"
 
       - uses: actions/upload-artifact@v5
         with:
