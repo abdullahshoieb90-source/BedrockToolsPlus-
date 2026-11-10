@@ -129,6 +129,57 @@ int main() {
         check(gpu.rgba == prior, "the next game draw receives its original tint");
     }
 
+    // Cape and Wings share one hook and anchor, but remain independent toggles.
+    CustomCapesModule cape;
+    cape.onInit();
+    unsigned char pixels[2 * 3 * 4];
+    for (int i = 0; i < 6; ++i) {
+        pixels[i * 4] = 200; pixels[i * 4 + 1] = 20;
+        pixels[i * 4 + 2] = 30; pixels[i * 4 + 3] = 255;
+    }
+    stbi_write_png(cape.capePath().c_str(), 2, 3, 4, pixels, 8);
+    cape.enabled = true;
+    cape.onEnable();
+    module.enabled = false;
+    s_hasPlayer = true;
+    s_localPlayerPtr = nullptr;
+    put(camera, off::LevelRendererPlayer::mCamPos, Vec3{0.0f, 65.5f, -4.0f});
+    resetCapture();
+    _renderLevel_hook(renderer.data(), screen.data(), nullptr);
+    check(begins == 1 && vertices == 6 * 8 && flushes == 1,
+          "cape renders by itself with both windings through the shared hook");
+    check(firstColor[0] > firstColor[1], "custom PNG supplies cape colors");
+    module.enabled = true;
+    resetCapture();
+    _renderLevel_hook(renderer.data(), screen.data(), nullptr);
+    check(vertices > 6 * 8 && flushes == 1, "wings and cape render together in one batch");
+    module.enabled = false;
+    for (int i = 0; i < 6; ++i) {
+        pixels[i * 4] = 10; pixels[i * 4 + 1] = 220;
+    }
+    pixels[3] = 0;
+    stbi_write_png(cape.capePath().c_str(), 2, 3, 4, pixels, 8);
+    cape.onEnable();
+    resetCapture();
+    _renderLevel_hook(renderer.data(), screen.data(), nullptr);
+    check(vertices == 5 * 8 && firstColor[1] > firstColor[0],
+          "re-enabling reloads PNG colors and transparent pixels");
+    resetCapture();
+    put(camera, off::LevelRendererPlayer::mCamPos, Vec3{0.0f, 65.5f, 0.0f});
+    _renderLevel_hook(renderer.data(), screen.data(), nullptr);
+    check(begins == 0, "cape is hidden in first person");
+    module.enabled = true;
+    cape.enabled = false;
+    cape.onDisable();
+    check(s_hasPlayer, "disabling cape keeps tracking when wings remain enabled");
+    cape.enabled = true;
+    module.enabled = false;
+    module.onDisable();
+    check(s_hasPlayer, "disabling wings keeps tracking when cape remains enabled");
+    cape.enabled = false;
+    cape.onDisable();
+    check(!s_hasPlayer, "disabling both overlays clears player tracking");
+
     if (failures) {
         std::printf("%d check(s) FAILED\n", failures);
         return 1;

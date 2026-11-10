@@ -17,7 +17,7 @@ class ModuleScopeTest(unittest.TestCase):
         self.assertEqual(registered, [
             "HitSoundModule", "EffectDisplayModule", "HitboxModule",
             "BlockOutlineModule", "CommentKey",
-            "CommandHotkeyModule", "CrosshairModule", "WingsModule",
+            "CommandHotkeyModule", "CrosshairModule", "WingsModule", "CustomCapesModule",
             "InventoryHudModule", "ArmorModule",
             "JumpCircleModule", "DamageCircleModule",
         ])

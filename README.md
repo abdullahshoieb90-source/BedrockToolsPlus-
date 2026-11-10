@@ -23,7 +23,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Hitbox, Block Outline, Wings, Jump Circle, Damage Circle
+**Visual:** Hitbox, Block Outline, Wings, Custom Capes, Jump Circle, Damage Circle
 
 **HUD:** Effect Display, Crosshair, Inventory HUD, Armor
 
@@ -211,3 +211,19 @@ Discord: [discord.gg/rMgdpTFFVg](https://discord.gg/rMgdpTFFVg)
 ## License
 
 BedrockToolsPlus is licensed under the [GNU General Public License v3.0](LICENSE).
+
+## Custom Capes
+
+**Custom Capes** draws a cape on the local player using the same third-person,
+world-space tessellator overlay and interpolated body anchor as Wings. It does
+not modify the skin, and other players will not see it. It can be enabled
+independently of Wings, or used alongside it.
+
+On initialization the module creates `capes/cape.png` next to the mod's config
+file (for example, `/sdcard/games/BedrockToolsPlus/capes/cape.png`) if it does
+not exist. Replace it with your own PNG and toggle Custom Capes off and on to
+reload. A standalone image fills the cape; a standard 64×32 Bedrock cape atlas
+(or an integer-scaled version) uses its 10×16 back face. Images are sampled to
+at most 32×48 cells for rendering, and alpha is cutout (below 128 is invisible;
+partial transparency is not blended). Invalid or missing PNGs draw nothing;
+existing files are never overwritten.

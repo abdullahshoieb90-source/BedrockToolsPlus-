@@ -220,8 +220,10 @@ public:
     static constexpr unsigned char kColorFeatherTip[3] = {255, 0, 0};
     static constexpr unsigned char kColorJointInner[3] = {0, 0, 0};
 
-private:
+public:
+    // Shared world overlay hook, also used by Custom Capes.
     void applyPatch();
+private:
 
     // Render-frame pose solver; caller must hold m_animationMutex.
     WingBoneAngles poseAtLocked(float elapsedSinceTick, float tickInterval) const;

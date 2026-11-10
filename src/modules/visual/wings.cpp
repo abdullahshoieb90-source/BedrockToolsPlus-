@@ -1,4 +1,6 @@
 #include <bedrocktools/modules/visual/wings.hpp>
+#include <bedrocktools/modules/visual/custom_capes.hpp>
+#include "modules/visual/cape_shape.hpp"
 #include <bedrocktools/modules/visual/wings_default.hpp>
 
 #include "modules/ModuleRegistry.hpp"
@@ -13,6 +15,10 @@
 #include "core/memory/Hooks.hpp"
 #include "core/RenderState.hpp"
 #include "../../config/ConfigManager.hpp"
+
+#define STBI_ONLY_PNG
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/stb_image_write.h>
@@ -112,6 +118,11 @@ static std::uintptr_t resolveADRP(std::uint32_t* insns, size_t count, std::uint3
 }
 
 WingsModule* g_wings = nullptr;
+CustomCapesModule* g_capes = nullptr;
+static std::mutex s_capeMutex;
+static std::vector<wings::WingQuad> s_capeQuads;
+static bool capeEnabled() { return g_capes && g_capes->enabled; }
+static bool overlayEnabled() { return (g_wings && g_wings->enabled) || capeEnabled(); }
 
 static Tessellator_begin_t s_tessBegin = nullptr;
 static Tessellator_color_t s_tessColor = nullptr;
@@ -599,9 +610,15 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     // tessellator (Bedrock needs it up front). This runs before the GPU colour
     // holder is touched, so the early return below cannot leave it at white.
     const wings::WingPose pose = poseFromAngles(angles);
-    const int rightCount = wings::buildWing(design, pose, -1, s_rightQuads, wings::kMaxWingQuads);
-    const int leftCount = wings::buildWing(design, pose, 1, s_leftQuads, wings::kMaxWingQuads);
-    if (rightCount <= 0 && leftCount <= 0) return;
+    const bool drawWings = g_wings && g_wings->enabled;
+    const int rightCount = drawWings ? wings::buildWing(design, pose, -1, s_rightQuads, wings::kMaxWingQuads) : 0;
+    const int leftCount = drawWings ? wings::buildWing(design, pose, 1, s_leftQuads, wings::kMaxWingQuads) : 0;
+    std::vector<wings::WingQuad> capeQuads;
+    if (capeEnabled()) {
+        std::lock_guard<std::mutex> lock(s_capeMutex);
+        capeQuads = s_capeQuads;
+    }
+    if (rightCount <= 0 && leftCount <= 0 && capeQuads.empty()) return;
 
     bedrocktools::core::ScopedShaderColor shaderColor(screenContext);
     if (!shaderColor) return;
@@ -665,6 +682,7 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     counter.cam = cam;
     resolveWing(s_rightQuads, rightCount, body, feet, rightVec, forwardVec, cam, seeBack, counter);
     resolveWing(s_leftQuads, leftCount, body, feet, rightVec, forwardVec, cam, seeBack, counter);
+    resolveWing(capeQuads.data(), static_cast<int>(capeQuads.size()), body, feet, rightVec, forwardVec, cam, seeBack, counter);
     if (counter.vertices <= 0) {
         // Everything is behind the body: nothing to draw. The colour holder was
         // not modified yet, so returning here cannot leave the screen white.
@@ -681,17 +699,76 @@ static void renderWingsOverlay(void* levelRenderer, void* screenContext) {
     resolveWing(s_rightQuads, rightCount, body, feet, rightVec, forwardVec, cam, seeBack, emitter);
     resolveWing(s_leftQuads, leftCount, body, feet, rightVec, forwardVec, cam, seeBack, emitter);
 
+    resolveWing(capeQuads.data(), static_cast<int>(capeQuads.size()), body, feet, rightVec, forwardVec, cam, seeBack, emitter);
     s_renderMesh(screenContext, tess, matFill, pad);
 }
 
 static void _renderLevel_hook(void* _this, void* screenContext, void* a3) {
     if (_renderLevel_orig) _renderLevel_orig(_this, screenContext, a3);
-    if (!g_wings || !g_wings->enabled) return;
-    if (!s_localPlayerPtr) return;
+    if (!overlayEnabled()) return;
     renderWingsOverlay(_this, screenContext);
 }
 
 } // namespace
+
+CustomCapesModule::CustomCapesModule()
+    : Module("Custom Capes", "Draws a local custom cape without changing your skin. Put cape.png in the capes folder next to the config, then toggle the module off and on to reload it.") {
+    g_capes = this;
+    hideInHudEditor = true;
+}
+
+CustomCapesModule::~CustomCapesModule() {
+    if (g_capes == this) g_capes = nullptr;
+}
+
+void CustomCapesModule::onInit() {
+    const std::string config = bedrocktools::config::ConfigManager::get().getConfigPath();
+    const auto slash = config.find_last_of('/');
+    const std::string dir = (slash == std::string::npos ? "/sdcard/games/BedrockToolsPlus" : config.substr(0, slash)) + "/capes";
+    m_capePath = dir + "/cape.png";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (!ec && !std::filesystem::exists(m_capePath, ec)) {
+        // A replaceable default, created only when the user has no cape yet.
+        unsigned char pixels[10 * 16 * 4];
+        for (int y = 0; y < 16; ++y) for (int x = 0; x < 10; ++x) {
+            auto* p = pixels + (y * 10 + x) * 4;
+            bool border = x == 0 || x == 9 || y == 0 || y == 15;
+            p[0] = border ? 220 : 45; p[1] = border ? 180 : 75;
+            p[2] = border ? 90 : 150; p[3] = 255;
+        }
+        stbi_write_png(m_capePath.c_str(), 10, 16, 4, pixels, 40);
+    }
+    // Config can have enabled the module before initialization.
+    if (enabled) onEnable();
+}
+
+void CustomCapesModule::onEnable() {
+    if (g_wings) g_wings->applyPatch();
+    std::vector<wings::WingQuad> quads;
+    int w = 0, h = 0, channels = 0;
+    // Check dimensions before allocating decompressed image data.
+    if (!m_capePath.empty() && stbi_info(m_capePath.c_str(), &w, &h, &channels) &&
+        w > 0 && h > 0 && w <= 2048 && h <= 2048) {
+        unsigned char* pixels = stbi_load(m_capePath.c_str(), &w, &h, &channels, 4);
+        if (pixels) {
+            quads = bedrocktools::modules::cape::build(pixels, w, h);
+            stbi_image_free(pixels);
+        }
+    }
+    std::lock_guard<std::mutex> lock(s_capeMutex);
+    s_capeQuads = std::move(quads);
+}
+
+void CustomCapesModule::onDisable() {
+    if (g_wings && g_wings->enabled) return;
+    std::lock_guard<std::mutex> lock(s_stateMutex);
+    s_hasPlayer = false;
+    s_localPlayerPtr = nullptr;
+    s_hasPrevSample = false;
+    s_lastTickTimeValid = false;
+    s_anchorReset.store(true);
+}
 
 WingsModule::WingsModule()
     : Module("Wings", "Renders animated 3D wings on your back, driven by your movement. Pick a shape in the Wing Style selector: Dragon, Angel, Demon, Bat, Butterfly, Phoenix, Fairy, Demon Wings, Vampire Bat or Red Bat. Does not modify your skin.") {
@@ -782,7 +859,8 @@ void WingsModule::onEnable() {
 }
 
 void WingsModule::onDisable() {
-    // No skin to restore; just clear tracked player so overlay disappears immediately
+    // The cape can still need the shared player anchor.
+    if (capeEnabled()) return;
     std::lock_guard<std::mutex> lock(s_stateMutex);
     s_hasPlayer = false;
     s_localPlayerPtr = nullptr;
@@ -973,7 +1051,7 @@ void WingsModule::advanceFlapAnimation(float dtSeconds) {
 }
 
 void WingsModule::onLocalPlayerTick(void* player) {
-    if (!player || !enabled) {
+    if (!player || !overlayEnabled()) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_hasPlayer = false;
         s_localPlayerPtr = nullptr;
