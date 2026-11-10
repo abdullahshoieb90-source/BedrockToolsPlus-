@@ -201,6 +201,7 @@ const char* CustomCapesModule::applyStatusLabel(ApplyStatus status) {
         case ApplyStatus::EmptyPixels: return "no cape loaded";
         case ApplyStatus::LoadFailed: return "the selected PNG could not be loaded";
         case ApplyStatus::Disabled: return "module is OFF - turn it on in the Modules tab";
+        case ApplyStatus::NoTick: return "no player tick received (game hooks are not installed)";
         case ApplyStatus::Idle: break;
     }
     return "no cape selected";
@@ -360,11 +361,16 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     // launcher reads the module's settings again.
     // The status row spells out both halves of the question the user actually
     // asks: which file is loaded, and what happened when it was applied.
-    char status[260];
+    // A module that has never seen a player tick cannot report anything about
+    // the cape: the hooks are the problem, not the selection.
+    const char* state = applyStatusLabel(m_applyStatus);
+    if (m_tickCount == 0) state = applyStatusLabel(ApplyStatus::NoTick);
+
+    char status[300];
     std::snprintf(status, sizeof(status), "%zu capes - %s [%s] - local only (others cannot see it)",
                   m_files.size(),
                   m_loadedFile.empty() ? "none selected" : m_loadedFile.c_str(),
-                  applyStatusLabel(m_applyStatus));
+                  state);
     j["m_status"] = std::string(status);
     // The folder path itself, so it can be read (or copied with the button)
     // without digging through a file manager.
@@ -686,6 +692,7 @@ void CustomCapesModule::onWorldExit() {
 
 void CustomCapesModule::onLocalPlayerTick(void* player) {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (m_tickCount != 0xFFFFFFFFu) ++m_tickCount;
     // --- World-exit guard (Leave World crash fix) -----------------------
     // While the engine tears down the world it (1) detaches the player
     // from its level and then (2) destroys the player and its skin. Any

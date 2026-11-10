@@ -253,8 +253,8 @@ int main() {
     // menu, since the tick path cannot log.
     check(status.find("none selected") != std::string::npos,
           "status names the loaded file (" + status + ")");
-    check(status.find("[no cape selected]") != std::string::npos,
-          "status reports the apply state (" + status + ")");
+    check(status.find("[no player tick received") != std::string::npos,
+          "status distinguishes \"the hooks never ran\" from \"the module is off\" (" + status + ")");
     check(status.find("local only") != std::string::npos,
           "status makes it explicit that the cape is only visible to you (" + status + ")");
 

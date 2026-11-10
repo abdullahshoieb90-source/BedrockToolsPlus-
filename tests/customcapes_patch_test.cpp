@@ -330,6 +330,11 @@ int main() {
     // ------------------------------------------------------------------
     // Disable restores the original cape exactly.
     // ------------------------------------------------------------------
+    std::printf("status reflects the tick state\n");
+    check(mod.tickCountForTests() > 0, "ticks are counted while a world is live");
+    check(mod.applyStatus() != CustomCapesModule::ApplyStatus::NoTick,
+          "a ticked module never reports the missing-hook state");
+
     std::printf("disable restores the vanilla cape\n");
     mod.enabled = false;
     mod.onLocalPlayerTick(player.data());

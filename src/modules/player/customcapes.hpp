@@ -83,6 +83,7 @@ public:
     enum class ApplyStatus {
         Idle,             // "None" selected: nothing to apply
         Disabled,         // a cape is selected but the module itself is off
+        NoTick,           // no player tick has ever reached the module
         Applied,          // pixels are in the live skin right now
         NoPlayer,         // no live local player this tick
         NoSkin,           // could not resolve SerializedSkinImpl
@@ -93,6 +94,12 @@ public:
     };
 
     static const char* applyStatusLabel(ApplyStatus status);
+
+    // Ticks seen since load; 0 means the game hooks never reached the module.
+    std::uint32_t tickCountForTests() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_tickCount;
+    }
 
     // Actor::normalTick fires for every actor in the level, so the tick handler
     // has to prove it is looking at the local player before touching a skin.
@@ -253,6 +260,10 @@ private:
 
     // Diagnostics for the menu status row (see ApplyStatus).
     ApplyStatus m_applyStatus = ApplyStatus::Idle;
+    // Number of player ticks the module has seen. Zero means the game hooks
+    // never ran, which is a completely different problem from "the module is
+    // switched off" and must not be reported as the same thing.
+    std::uint32_t m_tickCount = 0;
 };
 
 extern CustomCapesModule* g_customCapes;
