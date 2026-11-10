@@ -74,6 +74,36 @@
 //     the skin is repointed first and only the previous blob is released.
 class CustomCapesModule : public Module {
 public:
+    // Why the cape is not (or no longer) applied. The tick path is silent by
+    // design — it runs every tick and cannot log — so the last decision is
+    // recorded here and rendered in the menu status row. Without this, "the
+    // cape does not change" is indistinguishable between "no file selected",
+    // "the PNG failed to decode", "the player wears a persona skin" and "the
+    // engine did not re-upload the texture".
+    enum class ApplyStatus {
+        Idle,             // module disabled or "None" selected
+        Applied,          // pixels are in the live skin right now
+        NoPlayer,         // no live local player this tick
+        NoSkin,           // could not resolve SerializedSkinImpl
+        PersonaSkin,      // persona (Character Creator) skin: no classic cape image
+        LayoutMismatch,   // skin image offsets do not match this game build
+        EmptyPixels,      // nothing decoded yet
+        LoadFailed,       // the selected PNG was rejected
+    };
+
+    static const char* applyStatusLabel(ApplyStatus status);
+
+    // Actor::normalTick fires for every actor in the level, so the tick handler
+    // has to prove it is looking at the local player before touching a skin.
+    // The production predicate resolves the local player through ClientInstance
+    // and compares pointers; the host tests have no client instance, so they
+    // install their own predicate that accepts the fake actor they drive.
+    using LocalPlayerPredicate = bool (*)(const void* actor);
+    static void setLocalPlayerPredicateForTests(LocalPlayerPredicate predicate);
+    ApplyStatus applyStatus() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_applyStatus;
+    }
     CustomCapesModule();
     ~CustomCapesModule() override;
 
@@ -211,6 +241,7 @@ private:
         uint32_t height = 0;
         uint32_t depth = 0;
         uint32_t usage = 0;
+        uint32_t alphaUsage = 0;
         void* blob = nullptr;       // original pixel pointer (detached, kept alive)
         void* deleter = nullptr;    // original mce::Blob deleter
         size_t size = 0;
@@ -218,6 +249,9 @@ private:
     };
     CapeBackup m_backup;
     bool m_hasBackup = false;
+
+    // Diagnostics for the menu status row (see ApplyStatus).
+    ApplyStatus m_applyStatus = ApplyStatus::Idle;
 };
 
 extern CustomCapesModule* g_customCapes;

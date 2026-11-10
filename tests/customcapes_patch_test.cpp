@@ -89,6 +89,9 @@ namespace {
 
 void fakeDeleter(unsigned char*) {}
 
+// Set by the "only the local player is patched" block below.
+const void* g_expectedLocalPlayer = nullptr;
+
 // A fake mce::Image: format@0, width@4, height@8, depth@0xC, usage@0x10,
 // blob{pixels@0x18, deleter@0x20, size@0x28}; 48 bytes total (see Skin.hpp).
 void writeImage(std::uint8_t* base, std::uint32_t format, std::uint32_t width,
@@ -129,7 +132,22 @@ std::size_t readSize(std::uint8_t* base, std::size_t offset) {
 
 } // namespace
 
+// Link stub: the production local-player predicate resolves the client
+// instance, and a null client instance is exactly the "no local player yet"
+// case. The test installs its own predicate below, so this is never used.
+namespace bedrocktools::core::gamehooks {
+void* clientInstance() { return nullptr; }
+} // namespace bedrocktools::core::gamehooks
+
 int main() {
+    // Production code only patches the local player (Actor::normalTick fires
+    // for every actor). The host test drives a single fake player, so the
+    // predicate accepts whatever it is handed - the "persona" and "bad layout"
+    // cases below still have to be reached, which they would not be if the tick
+    // were filtered out.
+    CustomCapesModule::setLocalPlayerPredicateForTests(
+        [](const void* actor) { return actor != nullptr; });
+
     // ------------------------------------------------------------------
     // Temporary config/capes folders with one small red cape PNG.
     // ------------------------------------------------------------------
@@ -203,9 +221,15 @@ int main() {
 
     check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mDepth) == 1,
           "mCapeImage depth is 1 (the engine rejects a 0-depth image)");
-    check(readU32(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mUsage) ==
-              readU32(skinSnapshot.data() + off::SerializedSkinImpl::mCapeImage, off::Image::mUsage),
+    // mce::ImageUsage is a `uchar`, so only the byte at 0x10 is meaningful.
+    check(skinBase[off::SerializedSkinImpl::mCapeImage + off::Image::mUsage] ==
+              skinSnapshot[off::SerializedSkinImpl::mCapeImage + off::Image::mUsage],
           "mCapeImage usage is inherited from the vanilla cape");
+    // mAlphaUsage describes the pixels we hand over, not the ones we replaced.
+    // Inheriting the vanilla cape's value (usually Unknown for a solid cape)
+    // makes the renderer treat our RGBA blob as opaque data.
+    check(skinBase[off::SerializedSkinImpl::mCapeImage + off::Image::mAlphaUsage] == 2,
+          "mCapeImage alpha usage is Transparent (2) so the RGBA blob is sampled as such");
 
     void* injected = readPtr(skinBase + off::SerializedSkinImpl::mCapeImage, off::Image::mBytesOffset);
     check(injected != nullptr && injected != capeBlob,
@@ -239,6 +263,42 @@ int main() {
                     skinSnapshot.data() + off::SerializedSkinImpl::mSkinImage,
                     off::Image::Size),
           "mSkinImage still untouched after two ticks");
+
+    // ------------------------------------------------------------------
+    // Only the local player is patched: NormalTick fires for every actor, so a
+    // tick for another actor must be ignored completely.
+    // ------------------------------------------------------------------
+    std::printf("ticks for other actors are ignored\n");
+    {
+        // Re-enable, since the previous block disabled the module.
+        mod.enabled = true;
+        mod.onLocalPlayerTick(player.data()); // settle: cape is applied
+        check(mod.applyStatus() == CustomCapesModule::ApplyStatus::Applied,
+              "the local player's tick applies the cape");
+
+        // A second, structurally identical actor that is NOT the local player.
+        std::vector<std::uint8_t> other = player;
+        std::vector<std::uint8_t> otherSkin = skinSnapshot; // pristine cape image
+        // The same Player -> skin indirection the real resolver walks.
+        void* otherSkinPtr = otherSkin.data();
+        void* otherSkinAddress = &otherSkinPtr;
+        std::memcpy(other.data() + off::Player::mSkin, &otherSkinAddress, sizeof(void*));
+        void* otherLevel = reinterpret_cast<void*>(0x2000);
+        std::memcpy(other.data() + off::Actor::mLevel, &otherLevel, sizeof(void*));
+
+        // A predicate is a plain function pointer, so the expected player is
+        // parked in a file-scope variable instead of being captured.
+        g_expectedLocalPlayer = player.data();
+        CustomCapesModule::setLocalPlayerPredicateForTests(
+            [](const void* actor) { return actor == g_expectedLocalPlayer; });
+        mod.onLocalPlayerTick(other.data());
+        check(sameBytes(otherSkin.data(), skinSnapshot.data(), skinSnapshot.size()),
+              "another actor's SerializedSkinImpl is byte-for-byte untouched");
+        check(mod.applyStatus() == CustomCapesModule::ApplyStatus::Applied,
+              "the apply state still belongs to the local player's patch");
+        CustomCapesModule::setLocalPlayerPredicateForTests(
+            [](const void* actor) { return actor != nullptr; });
+    }
 
     // ------------------------------------------------------------------
     // Disable restores the original cape exactly.

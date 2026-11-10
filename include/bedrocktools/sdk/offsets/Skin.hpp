@@ -23,6 +23,10 @@ namespace Image {
 inline constexpr std::size_t mImageFormat = 0x00;
 inline constexpr std::size_t mDepth = 0x0C;
 inline constexpr std::size_t mUsage = 0x10;
+// mce::AlphaUsage mAlphaUsage (uchar: Unknown = 0, Data = 1, Transparent = 2).
+// It follows mUsage at 0x11 and must describe the pixels we hand over, not the
+// ones we replaced.
+inline constexpr std::size_t mAlphaUsage = 0x11;
 inline constexpr std::size_t mBytesOffset = 0x18;     // mce::Blob::mBlob (pixel pointer)
 inline constexpr std::size_t mBlobDeleterOffset = 0x20; // mce::Blob deleter function (void(*)(unsigned char*))
 inline constexpr std::size_t mBlobSizeOffset = 0x28;  // mce::Blob::mSize (pixel buffer byte count)

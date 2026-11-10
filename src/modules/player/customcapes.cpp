@@ -3,6 +3,8 @@
 
 #include "modules/ModuleRegistry.hpp"
 #include <bedrocktools/sdk/Offsets.hpp>
+#include <bedrocktools/sdk/client/ClientInstance.hpp>
+#include "core/GameHooks.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <pl/ModMenu.hpp>
 #include "../../config/ConfigManager.hpp"
@@ -54,6 +56,10 @@ void freeBlobDeleter(unsigned char* data) {
 // mce::ImageFormat::RGBA8Unorm (see mce/ImageFormat.h: Unknown=0, R8Unorm=1,
 // RG8Unorm=2, RGB8Unorm=3, RGBA8Unorm=4). Skin and cape images are RGBA8.
 constexpr std::uint32_t kCapeImageFormat = 4;
+
+// mce::AlphaUsage::Transparent (see mce/AlphaUsage.h: Unknown=0, Data=1,
+// Transparent=2). Written next to mUsage; see the patch site for why.
+constexpr std::uint8_t kCapeAlphaUsageTransparent = 2;
 
 constexpr int kLoadRetryTicks = 120;
 
@@ -115,6 +121,27 @@ void* resolvePlayerSkin(void* player) {
 // decoder from being handed arbitrary data, and rejecting an oversized one
 // before stbi_load() is what stops a 4096x4096 "cape" (64 MB decoded) from
 // exhausting the phone's memory.
+// NormalTick is hooked on Actor::normalTick, so the tick event fires for every
+// actor in the level - mobs, other players, item entities. Writing our cape
+// pixels into "whatever actor ticked last" is wrong twice over: it patches the
+// wrong skin object (so the local player's cape never changes) and it hands an
+// actor whose layout happens to match a malloc'd blob it does not own.
+//
+// The local player pointer is resolved through ClientInstance and compared with
+// the actor that ticked; only a match is patched. When the client instance or
+// its local player is not available yet, the tick is skipped instead of
+// guessing: patching an arbitrary actor is never the right answer.
+CustomCapesModule::LocalPlayerPredicate g_localPlayerPredicate = nullptr;
+
+bool isLocalPlayer(const void* actor) {
+    if (g_localPlayerPredicate) return g_localPlayerPredicate(actor);
+    if (!actor) return false;
+    void* client = bedrocktools::core::gamehooks::clientInstance();
+    if (!client) return false;
+    auto* local = static_cast<bedrocktools::sdk::ClientInstance*>(client)->localPlayer();
+    return local != nullptr && static_cast<void*>(local) == actor;
+}
+
 bool readPngFileHeader(const std::string& path, std::uint32_t& width, std::uint32_t& height) {
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
@@ -130,6 +157,24 @@ CustomCapesModule::CustomCapesModule()
     : Module("Custom Capes",
              "Wear any PNG from the BedrockTools capes folder as your cape (local only).") {
     g_customCapes = this;
+}
+
+void CustomCapesModule::setLocalPlayerPredicateForTests(LocalPlayerPredicate predicate) {
+    g_localPlayerPredicate = predicate;
+}
+
+const char* CustomCapesModule::applyStatusLabel(ApplyStatus status) {
+    switch (status) {
+        case ApplyStatus::Applied: return "applied";
+        case ApplyStatus::NoPlayer: return "waiting for a world";
+        case ApplyStatus::NoSkin: return "cannot read the player skin";
+        case ApplyStatus::PersonaSkin: return "persona skin: classic capes are not rendered";
+        case ApplyStatus::LayoutMismatch: return "skin layout mismatch (unsupported game build)";
+        case ApplyStatus::EmptyPixels: return "no cape loaded";
+        case ApplyStatus::LoadFailed: return "the selected PNG could not be loaded";
+        case ApplyStatus::Idle: break;
+    }
+    return "off";
 }
 
 CustomCapesModule::~CustomCapesModule() {
@@ -284,10 +329,13 @@ void CustomCapesModule::saveConfig(nlohmann::json& j) {
     // Human readable status shown as a text row: how many capes were found and
     // which one is loaded. Written only while a save runs, which is when the
     // launcher reads the module's settings again.
-    char status[160];
-    std::snprintf(status, sizeof(status), "%zu capes found - %s",
+    // The status row spells out both halves of the question the user actually
+    // asks: which file is loaded, and what happened when it was applied.
+    char status[220];
+    std::snprintf(status, sizeof(status), "%zu capes - %s [%s]",
                   m_files.size(),
-                  m_loadedFile.empty() ? "none applied" : m_loadedFile.c_str());
+                  m_loadedFile.empty() ? "none selected" : m_loadedFile.c_str(),
+                  applyStatusLabel(m_applyStatus));
     j["m_status"] = std::string(status);
     // The folder path itself, so it can be read (or copied with the button)
     // without digging through a file manager.
@@ -600,6 +648,9 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
         return;
     }
 
+    // Actor::normalTick fires for every actor, not just the local player.
+    if (!isLocalPlayer(player)) return;
+
     const bool wantCape = enabled && m_selectedIndex > 0;
     if (wantCape && !m_capeLoaded) {
         if (m_retryTicks <= 0) {
@@ -611,21 +662,43 @@ void CustomCapesModule::onLocalPlayerTick(void* player) {
         }
     }
 
-    void* skin = resolvePlayerSkin(player);
-
-    if (!wantCape || !m_capeLoaded || !skin) {
-        restoreOriginalCape(skin);
+    if (!wantCape) {
+        m_applyStatus = ApplyStatus::Idle;
+        restoreOriginalCape(resolvePlayerSkin(player));
+        return;
+    }
+    if (!m_capeLoaded) {
+        m_applyStatus = m_loadFailed ? ApplyStatus::LoadFailed : ApplyStatus::EmptyPixels;
+        restoreOriginalCape(resolvePlayerSkin(player));
         return;
     }
 
-    applyCustomCape(skin);
+    void* skin = resolvePlayerSkin(player);
+    if (!skin) {
+        // The player exists but the skin could not be reached: on the very
+        // first ticks the skin object is not published yet, so this is normal
+        // transient state rather than an error.
+        m_applyStatus = ApplyStatus::NoSkin;
+        return;
+    }
+
+    if (!applyCustomCape(skin)) {
+        // applyCustomCape() records the specific reason (persona / layout).
+        restoreOriginalCape(skin);
+        return;
+    }
+    m_applyStatus = ApplyStatus::Applied;
 }
 
 bool CustomCapesModule::applyCustomCape(void* skin) {
-    if (m_pixels.empty()) return false;
+    if (m_pixels.empty()) {
+        m_applyStatus = ApplyStatus::EmptyPixels;
+        return false;
+    }
 
     if (*reinterpret_cast<bool*>(
             reinterpret_cast<uintptr_t>(skin) + SerializedSkinImpl::mIsPersona)) {
+        m_applyStatus = ApplyStatus::PersonaSkin;
         return false;
     }
 
@@ -639,7 +712,10 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
     void* skinPx = *reinterpret_cast<void**>(skinImage + Image::mBytesOffset);
     const bool layoutOk = skinPx != nullptr &&
                           (skinW == 64 || skinW == 128) && (skinH == 64 || skinH == 128);
-    if (!layoutOk) return false;
+    if (!layoutOk) {
+        m_applyStatus = ApplyStatus::LayoutMismatch;
+        return false;
+    }
 
     // The cape pixels go into mCapeImage and the synthetic id into mCapeId —
     // never into mSkinImage (that is the player's skin texture; touching it
@@ -658,7 +734,11 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
         m_backup.width = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth);
         m_backup.height = *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight);
         m_backup.depth = *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth);
-        m_backup.usage = *reinterpret_cast<uint32_t*>(capeImage + Image::mUsage);
+        // mUsage and mAlphaUsage are single bytes (mce::ImageUsage /
+        // mce::AlphaUsage are `uchar`); reading them as a uint32 would also
+        // capture the padding byte and writing that back later clobbers them.
+        m_backup.usage = *reinterpret_cast<std::uint8_t*>(capeImage + Image::mUsage);
+        m_backup.alphaUsage = *reinterpret_cast<std::uint8_t*>(capeImage + Image::mAlphaUsage);
         m_backup.blob = *reinterpret_cast<void**>(capeImage + Image::mBytesOffset);
         m_backup.deleter = *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset);
         m_backup.size = *reinterpret_cast<std::size_t*>(capeImage + Image::mBlobSizeOffset);
@@ -698,7 +778,13 @@ bool CustomCapesModule::applyCustomCape(void* skin) {
     // The engine derives the texture description (and the sampled byte count)
     // from these, so both must be explicit for a 64x32 RGBA8 cape.
     *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth) = 1;
-    *reinterpret_cast<uint32_t*>(capeImage + Image::mUsage) = m_backup.usage;
+    *reinterpret_cast<std::uint8_t*>(capeImage + Image::mUsage) =
+        static_cast<std::uint8_t>(m_backup.usage);
+    // mAlphaUsage (0x11) sits right after mUsage. A cape texture is RGBA with
+    // a real alpha channel, so it must not be copied from whatever the backup
+    // held (a vanilla cape commonly has it at 0/Unknown, which makes the
+    // renderer treat the pixels as opaque data). 2 == Transparent.
+    *reinterpret_cast<std::uint8_t*>(capeImage + Image::mAlphaUsage) = kCapeAlphaUsageTransparent;
     *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) = newBlob;
     *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset) =
         reinterpret_cast<void*>(&freeBlobDeleter);
@@ -733,7 +819,10 @@ void CustomCapesModule::restoreOriginalCape(void* skin) {
     *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mWidth) = m_backup.width;
     *reinterpret_cast<uint32_t*>(capeImage + SkinImage::mHeight) = m_backup.height;
     *reinterpret_cast<uint32_t*>(capeImage + Image::mDepth) = m_backup.depth;
-    *reinterpret_cast<uint32_t*>(capeImage + Image::mUsage) = m_backup.usage;
+    *reinterpret_cast<std::uint8_t*>(capeImage + Image::mUsage) =
+        static_cast<std::uint8_t>(m_backup.usage);
+    *reinterpret_cast<std::uint8_t*>(capeImage + Image::mAlphaUsage) =
+        static_cast<std::uint8_t>(m_backup.alphaUsage);
     *reinterpret_cast<void**>(capeImage + Image::mBlobDeleterOffset) = m_backup.deleter;
     *reinterpret_cast<std::size_t*>(capeImage + Image::mBlobSizeOffset) = m_backup.size;
     *reinterpret_cast<void**>(capeImage + Image::mBytesOffset) = m_backup.blob;

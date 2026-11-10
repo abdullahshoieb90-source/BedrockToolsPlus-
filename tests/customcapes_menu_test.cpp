@@ -142,6 +142,13 @@ ConfigManager::~ConfigManager() = default;
 std::string ConfigManager::getConfigPath() const { return g_testConfigPath; }
 } // namespace bedrocktools::config
 
+// The menu test never ticks the module, so the production local-player
+// predicate (which resolves the client instance) is never reached; the symbol
+// still has to exist to link customcapes.cpp.
+namespace bedrocktools::core::gamehooks {
+void* clientInstance() { return nullptr; }
+} // namespace bedrocktools::core::gamehooks
+
 namespace bedrocktools::events {
 EventBus& bus() {
     static EventBus instance;
@@ -239,8 +246,15 @@ int main() {
     check(cfg.contains("m_status") && cfg["m_status"].is_string(),
           "a human readable status row is emitted");
     const std::string status = cfg["m_status"].get<std::string>();
-    check(status.find("3 capes found") != std::string::npos,
+    check(status.find("3 capes") != std::string::npos,
           "status counts the files found (" + status + ")");
+    // The status row must also say what happened when the cape was applied:
+    // "the cape does not change" is otherwise impossible to diagnose from the
+    // menu, since the tick path cannot log.
+    check(status.find("none selected") != std::string::npos,
+          "status names the loaded file (" + status + ")");
+    check(status.find("[off]") != std::string::npos,
+          "status reports the apply state (" + status + ")");
 
     // ---------------------------------------------------------------
     // Pressing Reload picks up a file added after launch.
