@@ -18,7 +18,11 @@ stubs="${work}/ndkstub"
 
 # Minimal NDK headers: these two are the only ones the host compiler cannot
 # provide, and nothing in the check executes the declarations.
-mkdir -p "${stubs}/EGL" "${stubs}/android" "${work}/obj"
+mkdir -p "${stubs}/EGL" "${stubs}/android"
+# Start from scratch: a stale object left over from a deleted source would
+# otherwise be linked in and report symbols nothing defines any more.
+rm -rf "${work}/obj"
+mkdir -p "${work}/obj"
 cat > "${stubs}/EGL/egl.h" <<'HEADER'
 #pragma once
 typedef void* EGLDisplay;

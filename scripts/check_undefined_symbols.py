@@ -7,7 +7,7 @@ The mod is a shared object that the preloader loads with
 ``dlopen(..., RTLD_NOW)``. With RTLD_NOW, *one* undefined symbol makes the
 whole dlopen() fail - and then the mod never runs at all: no modules are
 registered and the launcher menu comes up completely empty. That is exactly
-what happened when the Custom Capes module stopped defining
+what happened when a feature module stopped defining
 STB_IMAGE_WRITE_IMPLEMENTATION while the Wings module still called
 stbi_write_png(): the build succeeded, the levipack installed fine, and every
 single module vanished from the menu.

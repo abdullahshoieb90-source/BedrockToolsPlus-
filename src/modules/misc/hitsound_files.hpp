@@ -83,7 +83,7 @@ inline std::vector<std::string> scanSoundFiles(const std::string& directory) {
 // Serializes the picker value in the launcher's radio format:
 // "<currentIndex>,<None>,<file1>,<file2>,..." — the menu renders the part
 // after the first comma as the option list and treats the part before it as
-// the selected index (same convention the Custom Capes and Crosshair modules
+// the selected index (same convention the Crosshair module
 // use).
 inline std::string makeRadioValue(int selectedIndex, const std::vector<std::string>& files) {
     const int optionCount = 1 + static_cast<int>(files.size());

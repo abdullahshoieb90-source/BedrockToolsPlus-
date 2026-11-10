@@ -46,7 +46,9 @@
 #include <bedrocktools/sdk/Types.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// The single stb_image_write implementation lives in src/core/StbImageWrite.cpp
+// (linked as src/core/StbImageWrite.cpp by scripts/run_tests.sh). Defining it
+// here too would be a duplicate symbol.
 #include <stb/stb_image_write.h>
 
 #include <algorithm>

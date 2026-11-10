@@ -51,8 +51,6 @@ struct KnownRadio {
 };
 
 static const KnownRadio kKnownRadioSettings[] = {
-    // Custom Capes: how a non-cape image is fitted onto the cape face.
-    {"m_capeFit", "Cover,Contain,Stretch"},
 };
 
 static const char* knownRadioOptionsFor(const std::string& key) {
@@ -355,9 +353,9 @@ static void registerSingleModule(Module* mod) {
                     entry.default_value = str;
                 } else {
                     // Plain text field. Modules that only want a read-only
-                    // summary (e.g. Custom Capes' "3 capes found - Cape.png")
-                    // emit it as a text key and ignore any change reported
-                    // back for it. This API has no dedicated info entry.
+                    // summary emit it as a text key and ignore any change
+                    // reported back for it. This API has no dedicated info
+                    // entry.
                     entry.type = pl::modmenu::ConfigType::Text;
                     entry.default_value = str;
                 }

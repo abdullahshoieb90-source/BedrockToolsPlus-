@@ -27,8 +27,6 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 **HUD:** Effect Display, Crosshair, Inventory HUD, Armor
 
-**Player:** Custom Capes
-
 **Misc:** Hit Sound, CommentKey, Command Hotkey
 
 ## Hitbox
@@ -126,47 +124,6 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 
 Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
 
-## Custom Capes
-
-The **Custom Capes** module lets you wear any PNG as a classic cape. It is local-only: only you see it, nothing is sent to the server, and your account is untouched.
-
-1. Put cape images (`.png`) into the `capes` folder next to your `config.json` (`<mod config dir>/capes`, created automatically on first launch along with a `Sample Cape.png`). The menu shows the exact **Capes Folder** path, and **Copy Folder Path** puts it on the clipboard so you can paste it into your file manager or browser download prompt.
-2. (Re)launch the game, open the BedrockToolsPlus mod menu and enable **Custom Capes**. The picker lists every cape in the folder by name (the `.png` suffix is hidden).
-3. Pick a cape in the **Cape** selector — it applies on the next tick, no rejoin needed. Choose `None` to get your vanilla cape back.
-4. Added or replaced a file while the game was running? Press **Reload** to re-read the folder and the selected file. A *new* file also needs a menu reload, because the picker's option list is built when the menu is registered.
-
-**Image fitting.** The cape's visible face is a 10×16 pixel portrait, so an arbitrary image has to be mapped onto it. **Fit** decides how:
-
-- **Cover** (default) — fill the face and crop the overflow. Nothing is distorted; the outer edges of the image are lost.
-- **Contain** — keep the whole image and pad the leftover with its edge colours. Nothing is lost; wide images get bars.
-- **Stretch** — scale both axes independently. Fills the face but distorts faces and text.
-
-Large images are *area-averaged* down to the cape face instead of point-sampled, so a 700×800 photo stays readable instead of turning into noise, and thin details (text, logo outlines) do not shimmer. Transparent areas are averaged premultiplied, so a logo on a transparent background keeps its colour instead of darkening towards black. A 10×16 source is also a perfectly valid cape and maps pixel-for-pixel.
-
-**What the module writes.** The image goes onto the outer back face (`x=1..11, y=1..17`) of the 64×32 cape canvas. The inner front face gets one flat lining colour (the design's average at half brightness) instead of a repeat of the image, and the top/bottom/side edge strips continue the image's edge colours so the one-voxel-thick cape keeps its thickness. The design is also mapped onto the tapered Elytra wing UV (`22,0`), so a cape keeps looking like your design when you fly. An exact 64×32 image is used pixel-for-pixel, including any Elytra wings you drew yourself; wings are only generated when that area is empty.
-
-**Validation.** Every file is checked against the PNG signature and its IHDR before it is decoded, and images above 2048×2048 (or with a corrupt header) are refused, so a renamed JPEG or a huge PNG cannot reach the decoder and exhaust memory. A file that fails simply stays unapplied — the vanilla cape remains, and **Reload** retries after you fix it. File names containing a comma are skipped, because the launcher's picker cannot represent them.
-
-**Safety.** The cape pixels are injected into the live `SerializedSkinImpl::mCapeImage` (never into the skin texture, which is what made older builds fall back to Steve) with a freshly generated cape id, since modern builds only render a classic cape when one is set. `mAlphaUsage` is set to `Transparent` next to the image's own `mUsage`, so the renderer samples the RGBA blob with its alpha channel instead of treating it as opaque data. The injected blob is `malloc`'d and tagged with `free()`, so the engine can safely destroy or replace it, and the original cape pointer and id are restored bit-for-bit when you pick `None` or disable the module. Leaving the world detaches the module from the skin before the engine frees it, which is what keeps Leave World crash-free. Menu callbacks and the game tick share the module state behind a mutex.
-
-**Only the local player is patched.** `Actor::normalTick` — the hook the tick event comes from — fires for every actor in the level, so the handler resolves the local player through `ClientInstance` and compares pointers before touching a skin. Without that check the module patched whichever actor ticked last (usually a mob or another player), which is why the cape appeared not to change at all. If neither the client instance nor its local player can be resolved, the module falls back to the pre-filter behaviour (accepting the ticked actor) instead of silently doing nothing — an unresolvable pointer must never be the reason a cape stops working. The resolved pointer is cached and cleared on Leave World.
-
-**Picking a cape turns the module on.** The Cape picker and the module's on/off toggle sit in different tabs of the launcher menu, so selecting a cape while the module was off used to do nothing. Choosing any cape other than `None` now enables the module; choosing `None` does not.
-
-**The cape is drawn in the world, not only written into your skin.** A skin patch depends on two things the game does not always give us: a player tick reaching the module, and a `SerializedSkin` layout that matches the build. When either is missing the cape silently never appears. The **Cape Renderer** module therefore draws the cape itself, using the same `RenderLevel` hook the Wings module draws wings with: a vanilla-shaped slab hanging from your shoulders that lifts when you walk, streams upward when you fall, and sways while you stand still.
-
-Turning Custom Capes on also turns the Cape Renderer on, so choosing a cape is enough. If the build exposes `Tessellator::vertexUV` the cape is textured with your PNG; if it does not, the cape is drawn in the picture's average colour rather than not at all. The status row says which of the two is live (`world draw textured x120` vs `world draw solid colour x120`), so the difference is never a mystery. The renderer draws only your own cape, and only you can see it.
-
-**Module ticks have a fallback.** Every module's per-tick work (cape application included) hangs off `LocalPlayerTickEvent`, which is published from the `Actor::normalTick` detour. When that single signature does not match the installed Minecraft build, nothing publishes the event and *every* module silently stops updating. A hook is therefore not trusted because it installed: it is trusted because it counted a tick. The runtime waits 30 client updates for the actor hook to fire, and drives the same event from the client-instance update hook if it has not; once the actor hook proves itself the fallback turns off, so a working build never double-ticks. The status row reports which source is actually live plus how many hooks this build accepted: `hooks 22/23 (actor tick)`, `hooks 22/23 (client update fallback)`, or `hooks 22/23 (actor hook idle)` while the watchdog is still waiting.
-
-**The status row tells you why it is not applied.** Because the tick path cannot log, the last decision is recorded and rendered in the menu as `<n> capes - <file> [<state>]`. The render state is one of `world draw textured`, `world draw solid colour`, `world draw waiting`, `world draw OFF` or `world draw unavailable`.
-
-The skin state is one of `applied`, `module is OFF - turn it on in the Modules tab`, `no player tick received`, `no cape selected`, `waiting for a world`, `cannot read the player skin`, `persona skin: classic capes are not rendered`, `skin layout mismatch (unsupported game build)`, `no cape loaded` or `the selected PNG could not be loaded`. If the cape still does not change, that row (or logcat) says which of those cases you are in.
-
-**Persona skins have no classic cape.** A Character Creator (persona) skin does not use `mCapeImage`, so the module deliberately leaves those alone and reports `persona skin` in the status row; switch to a classic skin to use a custom cape.
-
-Persona skins are not affected — capes are persona pieces there.
-
 ## Hit Sound
 
 The **Hit Sound** module plays a custom sound of your choice every time you land a melee hit on a mob or another player.
@@ -214,14 +171,11 @@ Host-side unit tests (no game or NDK needed) run with:
 ./scripts/run_tests.sh
 ```
 
-That covers the pure logic — cape resampling and fitting, the picker format, the skin-patch state machine, block-outline geometry, wing shapes, HUD layout and more. A few tests need the preloader/nlohmann_json headers from the xmake cache; point `PRE_LOADER_INCLUDE`, `JSON_INCLUDE` and `ENTT_INCLUDE` at them (or run `xmake f` once) and they stop being skipped. The Custom Capes tests are:
+That covers the pure logic — block-outline geometry, wing shapes, HUD layout and more. A few tests need the preloader/nlohmann_json headers from the xmake cache; point `PRE_LOADER_INCLUDE`, `JSON_INCLUDE` and `ENTT_INCLUDE` at them (or run `xmake f` once) and they stop being skipped. The registration smoke test is:
 
-- `tests/customcapes_test.cpp` — folder scanning, picker labels/format, PNG header validation, fit modes and the sampler.
-- `tests/customcapes_patch_test.cpp` — the in-game skin patch, fit changes, corrupt files and the Leave World teardown.
-- `tests/customcapes_menu_test.cpp` — what the module registers in the launcher menu (picker, fit radio, buttons, status row), and that a config which toggles the module can be loaded without deadlocking.
 - `tests/module_registration_smoke_test.cpp` — registers *every* module through the real launcher path and checks the definition the launcher receives, so a single malformed setting can never silently empty the menu.
 
-The mod library is loaded by the preloader with `dlopen(RTLD_NOW)`, so a single undefined symbol makes the **whole** library fail to load — no module is registered and the launcher menu is completely empty. The build does not catch that, so `scripts/check_undefined_symbols.py` inspects the packaged `.so` (CI runs it after the release build) and fails on any symbol that is not defined in the library, provided by the preloader (`pl::*`) or provided by the platform (libc/libm/libdl/EGL/GLES/log). Practical consequence: a `#if !defined(__ANDROID__)` guard must never remove an implementation another translation unit still calls — that is what dropped the PNG writer from the device build while Wings kept calling `stbi_write_png()`.
+The mod library is loaded by the preloader with `dlopen(RTLD_NOW)`, so a single undefined symbol makes the **whole** library fail to load — no module is registered and the launcher menu is completely empty. The build does not catch that, so `scripts/check_undefined_symbols.py` inspects the packaged `.so` (CI runs it after the release build) and fails on any symbol that is not defined in the library, provided by the preloader (`pl::*`) or provided by the platform (libc/libm/libdl/EGL/GLES/log). Practical consequence: a `#if !defined(__ANDROID__)` guard must never remove an implementation another translation unit still calls — that is what dropped the PNG writer from the device build while Wings kept calling `stbi_write_png()`. The single `STB_IMAGE_WRITE_IMPLEMENTATION` therefore lives in `src/core/StbImageWrite.cpp`, on its own, so deleting a feature cannot take the writer with it; `tests/test_stb_writer_uniqueness.py` fails if a second implementation appears or if that file stops being linked.
 
 The launcher registers the menu independently of the game hooks: if a signature cannot be resolved for the running Minecraft build, the modules are still registered and the hooks are retried, so the mod menu never ends up empty after a game update. Registration is also fault tolerant per module — a module whose `onInit()`/`saveConfig()` throws, or whose definition the launcher refuses, is logged (tag `BedrockToolsPlus`) and skipped while the rest of the menu stays available.
 

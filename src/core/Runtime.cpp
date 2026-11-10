@@ -91,8 +91,7 @@ void Runtime::wireEvents() {
     // Every module's per-tick work hangs off LocalPlayerTickEvent, which is
     // published from the Actor::normalTick detour. That hook can install and
     // still never fire: the signature then matched a function the running build
-    // of Minecraft does not call. When that happens no module updates at all
-    // and, for Custom Capes, no cape is ever applied.
+    // of Minecraft does not call, and then no module updates at all.
     //
     // So the actor hook is not trusted because it installed - it is trusted
     // because it has counted a tick. Until it has, LocalPlayerTickEvent is

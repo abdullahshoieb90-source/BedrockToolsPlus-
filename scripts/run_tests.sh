@@ -96,24 +96,6 @@ for source in "${root}"/tests/*_test.cpp; do
             extra+=(-I "${root}/third_party" -I "${root}/tests/fakepl"
                     -I "${root}/tests/fakejson" -pthread)
             ;;
-        customcapes_menu_test)
-            # Builds the real module *and* the launcher registration path, so
-            # the settings the user sees in the menu are verified end to end.
-            # That path needs the full preloader API (ModuleBuilder) and a real
-            # nlohmann_json, which the host fakes do not provide.
-            if [ -n "${preloader_inc}" ] && [ -d "${preloader_inc}" ] &&
-               [ -n "${json_inc}" ] && [ -d "${json_inc}" ]; then
-                extra+=(-I "${root}/third_party" -I "${preloader_inc}" -I "${json_inc}")
-                # ModuleMenu.cpp reports modules the launcher refuses through
-                # ExternalButtonRefresh.cpp, so that TU has to be linked too.
-                extra_srcs+=("${root}/src/modules/player/customcapes.cpp"
-                             "${root}/src/modules/player/cape_renderer.cpp"
-                             "${root}/src/launcher/ModuleMenu.cpp"
-                             "${root}/src/launcher/ExternalButtonRefresh.cpp")
-            else
-                skip="preloader/nlohmann_json headers (set PRE_LOADER_INCLUDE and JSON_INCLUDE)"
-            fi
-            ;;
         module_registration_smoke_test)
             # Registers *every* module through the real launcher path, so it
             # needs the full preloader API, a real nlohmann_json and entt, plus
@@ -127,8 +109,6 @@ for source in "${root}"/tests/*_test.cpp; do
                 extra_srcs+=("${root}/src/launcher/ModuleMenu.cpp"
                              "${root}/src/launcher/ExternalButtonRefresh.cpp"
                              "${root}/src/modules/ModuleRegistry.cpp"
-                             "${root}/src/modules/player/customcapes.cpp"
-                             "${root}/src/modules/player/cape_renderer.cpp"
                              "${root}/src/modules/hud/effectdisplay.cpp"
                              "${root}/src/modules/hud/crosshair.cpp"
                              "${root}/src/modules/hud/inventoryhud.cpp"
@@ -139,6 +119,7 @@ for source in "${root}"/tests/*_test.cpp; do
                              "${root}/src/modules/visual/jumpcircle.cpp"
                              "${root}/src/modules/visual/damagecircle.cpp"
                              "${root}/src/modules/visual/wings.cpp"
+                             "${root}/src/core/StbImageWrite.cpp"
                              "${root}/src/modules/misc/hitsound.cpp"
                              "${root}/src/modules/misc/commentkey.cpp"
                              "${root}/src/modules/misc/commandhotkey.cpp"
@@ -147,7 +128,7 @@ for source in "${root}"/tests/*_test.cpp; do
                 skip="preloader/nlohmann_json/entt headers (set PRE_LOADER_INCLUDE, JSON_INCLUDE and ENTT_INCLUDE)"
             fi
             ;;
-        customcapes_patch_test|wings_patch_test)
+        wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
             # xmake packages when available and from the host fakes
@@ -163,12 +144,10 @@ for source in "${root}"/tests/*_test.cpp; do
             else
                 extra+=(-I "${root}/tests/fakepl")
             fi
-            if [ "${name}" = "customcapes_patch_test" ]; then
-                extra_srcs+=("${root}/src/modules/player/customcapes.cpp"
-                             "${root}/src/modules/player/cape_renderer.cpp")
-            else
-                extra_srcs+=("${root}/src/modules/visual/wings.cpp")
-            fi
+            # Wings writes its default texture with stb_image_write, whose
+            # single implementation now lives in src/core/StbImageWrite.cpp.
+            extra_srcs+=("${root}/src/modules/visual/wings.cpp"
+                         "${root}/src/core/StbImageWrite.cpp")
             ;;
     esac
 
