@@ -4,7 +4,7 @@
 // Android), so production code that targets the real header compiles
 // unchanged against this stub. The DrawCommand layout and the image/texture
 // registration API mirror the real preloader (LiteLDev/preloader-android
-// include/pl/ModMenu.hpp) so the Custom Capes UI code can be built and
+// include/pl/ModMenu.hpp) so module UI code can be built and
 // unit-tested on the host. Nothing here is meant to be called — the
 // only purpose is to let modules parse when compiled on a host without
 // the LeviLauncher preloader.

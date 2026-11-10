@@ -96,7 +96,7 @@ for source in "${root}"/tests/*_test.cpp; do
             extra+=(-I "${root}/third_party" -I "${root}/tests/fakepl"
                     -I "${root}/tests/fakejson" -pthread)
             ;;
-        customcapes_patch_test|wings_patch_test)
+        wings_patch_test)
             # Builds the real module as a second translation unit; the
             # preloader/nlohmann_json headers it includes come from the
             # xmake packages when available and from the host fakes
@@ -112,11 +112,7 @@ for source in "${root}"/tests/*_test.cpp; do
             else
                 extra+=(-I "${root}/tests/fakepl")
             fi
-            if [ "${name}" = "customcapes_patch_test" ]; then
-                extra_srcs+=("${root}/src/modules/player/customcapes.cpp")
-            else
-                extra_srcs+=("${root}/src/modules/visual/wings.cpp")
-            fi
+            extra_srcs+=("${root}/src/modules/visual/wings.cpp")
             ;;
     esac
 
