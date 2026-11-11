@@ -18,7 +18,7 @@ class ModuleScopeTest(unittest.TestCase):
             "HitSoundModule", "EffectDisplayModule", "HitboxModule",
             "BlockOutlineModule", "CommentKey",
             "CommandHotkeyModule", "CrosshairModule", "WingsModule",
-            "InventoryHudModule", "ArmorModule",
+            "CustomCapesModule", "InventoryHudModule", "ArmorModule",
             "JumpCircleModule", "DamageCircleModule",
         ])
 
@@ -33,8 +33,8 @@ class ModuleScopeTest(unittest.TestCase):
             "misc/commandhotkey.cpp", "hud/effectdisplay.cpp",
             "hud/crosshair.cpp", "hud/huditems.cpp",
             "hud/inventoryhud.cpp", "hud/armorhud.cpp", "visual/hitbox.cpp",
-            "visual/blockoutline.cpp", "visual/wings.cpp", "visual/jumpcircle.cpp",
-            "visual/damagecircle.cpp",
+            "visual/blockoutline.cpp", "visual/wings.cpp", "visual/customcapes.cpp",
+            "visual/jumpcircle.cpp", "visual/damagecircle.cpp",
         })
         self.assertFalse((ROOT / "src/launcher/OverlayBridge.cpp").exists())
         runtime = (ROOT / "src/core/Runtime.cpp").read_text()

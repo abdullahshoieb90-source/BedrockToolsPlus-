@@ -11,6 +11,7 @@
 #include <bedrocktools/modules/visual/wings.hpp>
 #include "hud/inventoryhud.hpp"
 #include "hud/armorhud.hpp"
+#include "visual/customcapes.hpp"
 
 
 ModuleRegistry& ModuleRegistry::get() {
@@ -74,6 +75,7 @@ void registerAllModules() {
     registry.emplace<CommandHotkeyModule>();
     registry.emplace<CrosshairModule>();
     registry.emplace<WingsModule>();
+    registry.emplace<CustomCapesModule>();
     registry.emplace<InventoryHudModule>();
     registry.emplace<ArmorModule>();
     registry.emplace<JumpCircleModule>();

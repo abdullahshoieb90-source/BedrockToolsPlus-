@@ -15,7 +15,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 ## Features
 
 - Native C++20 mod built for LeviLauncher and Preloader
-- 12 configurable modules
+- 13 configurable modules
 - Public headers for Minecraft wrappers, offsets, signatures, and utilities
 - Typed event system with runtime subscriptions for other native mods
 - LeviLauncher mod-menu integration and persistent configuration
@@ -23,7 +23,7 @@ The source is public so people can study how a real LeviLauncher mod is structur
 
 ## Modules
 
-**Visual:** Hitbox, Block Outline, Wings, Jump Circle, Damage Circle
+**Visual:** Hitbox, Block Outline, Wings, Custom Capes, Jump Circle, Damage Circle
 
 **HUD:** Effect Display, Crosshair, Inventory HUD, Armor
 
@@ -123,6 +123,16 @@ The wings are a world-space overlay (a `RenderLevel` hook + tessellator); they n
 (Dragon, Angel, Demon).*
 
 Developers can preview every style offline with `./scripts/gen_wings_preview.sh`, which writes a pose sheet, a close-up and a showcase of all styles to `build/wings-preview/`. The geometry is pure C++ (`src/modules/visual/wings_design.hpp` + `wings_surface.hpp`), so the preview and `tests/wings_shape_test.cpp` rasterize/assert exactly what the game draws.
+
+## Custom Capes
+
+**Custom Capes** applies one of your own PNG images to the local player's vanilla cape model, so it follows the game's normal cape animation.
+
+1. Put `.png` files into the `capes` folder next to `config.json` (`<mod config dir>/capes`). The folder and a `README.txt` with instructions are created automatically on first launch.
+2. Restart the game, open the BedrockToolsPlus mod menu and enable **Custom Capes**.
+3. Open the module's **Cape** selector. **Default Cape** restores the cape supplied by your skin, **No Cape** hides it, and every valid PNG in the folder appears as its own option.
+
+The recommended image size is **64×32** pixels; larger 2:1 images such as 128×64 also work, and PNG transparency is preserved. Other sizes are accepted but may be stretched. File names containing commas are skipped because the launcher picker cannot represent them. The image is decoded once when selected and injected into the local `SerializedSkin`; disabling the module or choosing Default Cape restores the original image. Custom capes are client-side only and are not uploaded or sent to other players.
 
 ## Hit Sound
 
