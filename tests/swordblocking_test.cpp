@@ -311,10 +311,13 @@ int main() {
         const auto high = presetPose(PosePreset::High);
         const auto wide = presetPose(PosePreset::Wide);
         const auto subtle = presetPose(PosePreset::Subtle);
-        check(high.lift > classic.lift && high.tiltDegrees > classic.tiltDegrees,
+        // Tilt is signed (negative leans up-left), so "higher" means further
+        // from zero, and "flatter" means closer to it.
+        check(high.lift > classic.lift && high.tiltDegrees < classic.tiltDegrees,
               "the High preset raises the guard above Classic");
-        check(wide.spinDegrees > classic.spinDegrees && subtle.tiltDegrees < classic.tiltDegrees,
-              "Wide spins the blade more, Subtle swings it less");
+        check(wide.spinDegrees > classic.spinDegrees && wide.tiltDegrees > classic.tiltDegrees &&
+              subtle.tiltDegrees > classic.tiltDegrees,
+              "Wide lays the blade flatter, Subtle swings it less");
 
         check(presetPose(PosePreset::Custom).tiltDegrees == PoseParams{}.tiltDegrees,
               "Custom leaves the defaults untouched");
@@ -353,13 +356,32 @@ int main() {
         check(std::fabs(yawEdge[2]) > 1.0f && std::fabs(yawEdge[0]) < 2.0f,
               "but turns the flat of the blade toward the camera");
 
-        // The default guard has to move the blade noticeably: the reference
-        // clip swings it roughly -9 -> -36 degrees across the screen.
-        const auto tipAtRest = transformPoint(poseMatrix(PoseParams{}, 0.0f), 0.0f, 10.0f, 0.0f);
+        // The default guard has to move the blade noticeably, and up-LEFT: the
+        // blade leaves the hand in the lower right, crosses the middle of the
+        // screen and finishes above and left of the crosshair. The resting blade
+        // points straight up at (0, 10).
+        const auto restTip = transformPoint(poseMatrix(PoseParams{}, 0.0f), 0.0f, 10.0f, 0.0f);
+        const auto grip = transformPoint(poseMatrix(PoseParams{}, 1.0f), 0.0f, 0.0f, 0.0f);
         const auto tipGuarding = transformPoint(poseMatrix(PoseParams{}, 1.0f), 0.0f, 10.0f, 0.0f);
-        const float swing = std::fabs(tipGuarding[0] - tipAtRest[0]);
+        const float swing = std::fabs(tipGuarding[0] - restTip[0]);
         check(swing > 3.0f, "the default preset swings the blade visibly across the face");
-        check(tipGuarding[1] > tipAtRest[1], "and lifts it toward the eye line");
+        check(tipGuarding[0] < -2.0f, "the blade leans up-left, away from the right edge");
+        check(tipGuarding[1] > grip[1], "and rises above the grip toward the eye line");
+
+        // The diagonal has to read as a guard, not as a vertical or a flat
+        // blade: between 20 and 60 degrees above the horizon.
+        const float bladeAngle = std::fabs(std::atan2(tipGuarding[1] - grip[1],
+                                                      tipGuarding[0] - grip[0]) * 180.0f / 3.14159265f);
+        const float aboveHorizon = 180.0f - bladeAngle;
+        check(aboveHorizon > 20.0f && aboveHorizon < 60.0f,
+              "the blade sits on a diagonal across the screen");
+
+        // Flipping the sign of Tilt mirrors the guard, which is what a build
+        // with the opposite handedness needs.
+        PoseParams mirrored = PoseParams{};
+        mirrored.tiltDegrees = -mirrored.tiltDegrees;
+        const auto mirroredTip = transformPoint(poseMatrix(mirrored, 1.0f), 0.0f, 10.0f, 0.0f);
+        check(mirroredTip[0] > 2.0f, "a positive tilt mirrors the guard to the right");
 
         PoseParams wildRotations;
         wildRotations.spinDegrees = std::nanf("");
@@ -701,7 +723,7 @@ int main() {
         clamped.onInit();
         clamped.loadConfig(hostile);
         check(clamped.m_fadeSpeed <= maxFadeSpeed, "an oversized fade speed is clamped");
-        check(clamped.m_tiltDegrees >= 0.0f, "a negative tilt is clamped");
+        check(std::fabs(clamped.m_tiltDegrees) <= 120.0f, "an oversized negative tilt is clamped");
         check(clamped.m_indicatorOpacity <= 1.0f, "an oversized opacity is clamped");
         check(clamped.m_holdStyle >= 0 && clamped.m_holdStyle < static_cast<int>(HoldMode::Count),
               "an out-of-range hold style is clamped");

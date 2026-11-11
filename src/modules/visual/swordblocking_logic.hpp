@@ -245,7 +245,10 @@ inline std::array<float, 3> transformPoint(const Mat4& matrix, float x, float y,
 // independent things a guard can do to it:
 //
 //   * `tiltDegrees`   rotation about Z - swings the blade up and across the
-//                     screen, which is the guard itself,
+//                     screen, which is the guard itself. Sign picks the side:
+//                     negative leans the blade up-left (Java's guard, and what
+//                     the reference recording and the device feedback ask for),
+//                     positive leans it up-right,
 //   * `pitchDegrees`  rotation about X - tips the blade toward the camera,
 //                     which reads as the sword coming closer to the eye,
 //   * `spinDegrees`   rotation about the blade's own axis - turns the flat of
@@ -254,11 +257,14 @@ inline std::array<float, 3> transformPoint(const Mat4& matrix, float x, float y,
 //
 // plus the grip translation and an overall scale.
 struct PoseParams {
-    float tiltDegrees = 27.0f;  // the guard swing (in the screen plane)
+    // -62 lays the blade on the guard diagonal: from the hand in the lower right
+    // up across the middle of the screen at roughly 28 degrees above the
+    // horizon, ending above and left of the crosshair.
+    float tiltDegrees = -62.0f; // the guard swing (in the screen plane)
     float pitchDegrees = 10.0f; // tips the blade toward the camera
     float spinDegrees = 20.0f;  // turns the flat of the blade to the camera
-    float lift = 4.0f;          // moves the grip up toward the eye line
-    float across = 1.0f;        // moves it toward the other side of the body
+    float lift = 5.0f;          // moves the grip up toward the eye line
+    float across = 2.0f;        // moves it toward the other side of the body
     float forward = 2.0f;       // moves it toward the camera
     float scale = 1.12f;        // slight enlargement so the guard reads
 };
@@ -269,11 +275,11 @@ inline PoseParams clampedPose(PoseParams pose) {
     };
     // Tilt is signed so the guard can swing the other way (and so a build whose
     // item space has the opposite handedness is a setting, not a code change).
-    pose.tiltDegrees = std::clamp(finiteOr(pose.tiltDegrees, 27.0f), -120.0f, 120.0f);
+    pose.tiltDegrees = std::clamp(finiteOr(pose.tiltDegrees, -62.0f), -120.0f, 120.0f);
     pose.pitchDegrees = std::clamp(finiteOr(pose.pitchDegrees, 10.0f), -120.0f, 120.0f);
     pose.spinDegrees = std::clamp(finiteOr(pose.spinDegrees, 20.0f), -180.0f, 180.0f);
-    pose.lift = std::clamp(finiteOr(pose.lift, 4.0f), -16.0f, 16.0f);
-    pose.across = std::clamp(finiteOr(pose.across, 1.0f), -16.0f, 16.0f);
+    pose.lift = std::clamp(finiteOr(pose.lift, 5.0f), -16.0f, 16.0f);
+    pose.across = std::clamp(finiteOr(pose.across, 2.0f), -16.0f, 16.0f);
     pose.forward = std::clamp(finiteOr(pose.forward, 2.0f), -16.0f, 16.0f);
     pose.scale = std::clamp(finiteOr(pose.scale, 1.12f), 0.25f, 4.0f);
     return pose;
@@ -298,32 +304,35 @@ inline PoseParams presetPose(PosePreset preset) {
     PoseParams pose;
     switch (preset) {
         case PosePreset::Classic:
-            // Measured off the reference clip; the defaults above are it.
+            // The defaults above: blade up-left, about 40 degrees above the
+            // horizon, grip bottom-right.
             break;
         case PosePreset::High:
-            pose.tiltDegrees = 44.0f;
-            pose.pitchDegrees = 16.0f;
-            pose.spinDegrees = 28.0f;
-            pose.lift = 6.5f;
-            pose.across = 2.0f;
+            // Steeper and higher, closer to Java's vertical guard.
+            pose.tiltDegrees = -74.0f;
+            pose.pitchDegrees = 14.0f;
+            pose.spinDegrees = 26.0f;
+            pose.lift = 7.0f;
+            pose.across = 2.5f;
             pose.forward = 2.5f;
-            pose.scale = 1.22f;
+            pose.scale = 1.2f;
             break;
         case PosePreset::Wide:
-            pose.tiltDegrees = 18.0f;
+            // Flatter sweep, so the blade lies further across the screen.
+            pose.tiltDegrees = -46.0f;
             pose.pitchDegrees = 6.0f;
-            pose.spinDegrees = 46.0f;
-            pose.lift = 3.0f;
-            pose.across = 4.0f;
+            pose.spinDegrees = 44.0f;
+            pose.lift = 4.0f;
+            pose.across = 5.0f;
             pose.forward = 1.5f;
             pose.scale = 1.1f;
             break;
         case PosePreset::Subtle:
-            pose.tiltDegrees = 13.0f;
+            pose.tiltDegrees = -32.0f;
             pose.pitchDegrees = 4.0f;
             pose.spinDegrees = 8.0f;
-            pose.lift = 2.0f;
-            pose.across = -0.5f;
+            pose.lift = 3.0f;
+            pose.across = 0.0f;
             pose.forward = 1.0f;
             pose.scale = 1.05f;
             break;

@@ -43,10 +43,10 @@ class ModuleScopeTest(unittest.TestCase):
     def test_compatibility_metadata_is_retained(self):
         manifest = json.loads((ROOT / "levimod.json").read_text())
         self.assertEqual(manifest["id"], "bedrocktoolsplus")
-        self.assertEqual(manifest["version"], "1.6.1")
+        self.assertEqual(manifest["version"], "1.6.2")
         self.assertEqual(manifest["minecraft_versions"], ["1.26.60.X"])
         version = (ROOT / "include/bedrocktools/Version.hpp").read_text()
-        self.assertIn('Version = "1.6.1"', version)
+        self.assertIn('Version = "1.6.2"', version)
 
 
 if __name__ == "__main__":
