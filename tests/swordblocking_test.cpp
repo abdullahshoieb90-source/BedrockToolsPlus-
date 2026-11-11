@@ -305,6 +305,74 @@ int main() {
         check(!composeInto(nullptr, half), "a null matrix is refused");
     }
 
+    std::printf("guard presets\n");
+    {
+        const auto classic = presetPose(PosePreset::Classic);
+        const auto high = presetPose(PosePreset::High);
+        const auto wide = presetPose(PosePreset::Wide);
+        const auto subtle = presetPose(PosePreset::Subtle);
+        check(high.lift > classic.lift && high.tiltDegrees > classic.tiltDegrees,
+              "the High preset raises the guard above Classic");
+        check(wide.spinDegrees > classic.spinDegrees && subtle.tiltDegrees < classic.tiltDegrees,
+              "Wide spins the blade more, Subtle swings it less");
+
+        check(presetPose(PosePreset::Custom).tiltDegrees == PoseParams{}.tiltDegrees,
+              "Custom leaves the defaults untouched");
+
+        check(posePresetIndex("1") == 1, "the preset radio index is read back");
+        check(posePresetIndex("Wide") == 2, "the preset label is accepted too");
+        check(posePresetIndex("nonsense") == 0, "an unknown preset falls back to Classic");
+        check(posePresetRadioValue(2) == "2,Classic,High,Wide,Subtle,Custom",
+              "the preset radio keeps the index,label layout");
+
+        // The three rotations must be independent. A blade points along +Y, so
+        // a roll about X tips it toward the camera, while a yaw about Y leaves
+        // the blade where it is and turns its flat instead. The translations
+        // are zeroed here so the check reads only the rotation.
+        PoseParams rolled;
+        rolled.tiltDegrees = 0.0f;
+        rolled.pitchDegrees = 60.0f;
+        rolled.spinDegrees = 0.0f;
+        rolled.lift = rolled.across = rolled.forward = 0.0f;
+        rolled.scale = 1.0f;
+        const auto rollTip = transformPoint(poseMatrix(rolled, 1.0f), 0.0f, 10.0f, 0.0f);
+        check(near(rollTip[0], 0.0f) && rollTip[1] < 9.0f && rollTip[2] > 4.0f,
+              "a roll tips the blade toward the camera");
+
+        PoseParams yawed;
+        yawed.tiltDegrees = 0.0f;
+        yawed.pitchDegrees = 0.0f;
+        yawed.spinDegrees = 45.0f;
+        yawed.lift = yawed.across = yawed.forward = 0.0f;
+        yawed.scale = 1.0f;
+        const Mat4 yawOnly = poseMatrix(yawed, 1.0f);
+        const auto yawTip = transformPoint(yawOnly, 0.0f, 10.0f, 0.0f);
+        const auto yawEdge = transformPoint(yawOnly, 2.0f, 0.0f, 0.0f);
+        check(near(yawTip[0], 0.0f) && near(yawTip[1], 10.0f),
+              "a yaw leaves the blade itself in place");
+        check(std::fabs(yawEdge[2]) > 1.0f && std::fabs(yawEdge[0]) < 2.0f,
+              "but turns the flat of the blade toward the camera");
+
+        // The default guard has to move the blade noticeably: the reference
+        // clip swings it roughly -9 -> -36 degrees across the screen.
+        const auto tipAtRest = transformPoint(poseMatrix(PoseParams{}, 0.0f), 0.0f, 10.0f, 0.0f);
+        const auto tipGuarding = transformPoint(poseMatrix(PoseParams{}, 1.0f), 0.0f, 10.0f, 0.0f);
+        const float swing = std::fabs(tipGuarding[0] - tipAtRest[0]);
+        check(swing > 3.0f, "the default preset swings the blade visibly across the face");
+        check(tipGuarding[1] > tipAtRest[1], "and lifts it toward the eye line");
+
+        PoseParams wildRotations;
+        wildRotations.spinDegrees = std::nanf("");
+        wildRotations.pitchDegrees = 1e9f;
+        wildRotations.tiltDegrees = -1e9f;
+        const PoseParams cleaned = clampedPose(wildRotations);
+        check(std::isfinite(cleaned.spinDegrees) && std::fabs(cleaned.pitchDegrees) <= 120.0f &&
+              std::fabs(cleaned.tiltDegrees) <= 120.0f,
+              "the new rotation sliders are clamped too");
+        check(isFinite(poseMatrix(wildRotations, 1.0f)),
+              "a wild rotation still produces a finite matrix");
+    }
+
     std::printf("indicator geometry\n");
     {
         IndicatorStyle style;
@@ -556,6 +624,52 @@ int main() {
         check(loaded.m_indicatorColor == "#112233", "the indicator color reloads");
         check(near(loaded.m_indicatorScale, 2.2f), "the indicator scale reloads");
         check(loaded.m_showThirdPerson, "the third-person option reloads");
+        check(loaded.m_posePreset == static_cast<int>(PosePreset::Custom),
+              "a hand-tuned pose saves as Custom, so it is not snapped back on load");
+        check(near(loaded.m_pitchDegrees, module.m_pitchDegrees) &&
+              near(loaded.m_spinDegrees, module.m_spinDegrees),
+              "the new rotation sliders reload");
+
+        // Picking a preset from the menu writes the pose; the radio is only
+        // claimed for its own key so the generic path keeps handling the rest.
+        SwordBlockingModule presets;
+        presets.onInit();
+        check(!presets.onMenuConfigChanged("m_tiltDegrees", "12"), "other keys are not intercepted");
+        check(presets.onMenuConfigChanged("m_posePreset", "2"), "the preset radio is intercepted");
+        const auto wide = presetPose(PosePreset::Wide);
+        check(presets.m_posePreset == static_cast<int>(PosePreset::Wide) &&
+              near(presets.m_spinDegrees, wide.spinDegrees) &&
+              near(presets.m_poseScale, wide.scale),
+              "choosing a preset applies it");
+        check(presets.poseMatchesPreset(), "the applied pose matches its preset");
+        presets.m_lift += 1.0f;
+        check(!presets.poseMatchesPreset(), "editing a slider breaks the match");
+
+        nlohmann::json presetSaved;
+        presets.saveConfig(presetSaved);
+        check(presetSaved["m_posePreset"].get<std::string>().rfind("4,", 0) == 0,
+              "moving a slider after choosing a preset switches the radio to Custom");
+
+        // A preset in the file wins over stale pose values, which is what an
+        // upgrade from a build with different numbers looks like.
+        nlohmann::json presetFile;
+        presetFile["m_posePreset"] = std::string("1");
+        presetFile["m_tiltDegrees"] = 5.0f;
+        SwordBlockingModule upgraded;
+        upgraded.onInit();
+        upgraded.loadConfig(presetFile);
+        check(upgraded.m_posePreset == static_cast<int>(PosePreset::High) &&
+              near(upgraded.m_tiltDegrees, presetPose(PosePreset::High).tiltDegrees),
+              "a stored preset overrides stale pose values on load");
+
+        // Custom in the file keeps whatever the sliders said.
+        nlohmann::json customFile;
+        customFile["m_posePreset"] = std::string("4");
+        customFile["m_tiltDegrees"] = 5.0f;
+        SwordBlockingModule custom;
+        custom.onInit();
+        custom.loadConfig(customFile);
+        check(near(custom.m_tiltDegrees, 5.0f), "a stored Custom keeps the tuned pose");
 
         // Clamping on the way in.
         nlohmann::json hostile;

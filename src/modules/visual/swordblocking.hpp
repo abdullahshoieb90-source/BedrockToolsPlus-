@@ -49,6 +49,9 @@
 //   * The indicator is submitted as overlay draw commands from onFrame, the
 //     same path the Crosshair module uses, and honours a "Show In Third Person"
 //     toggle observed through Options::getPlayerViewPerspective().
+//   * The guard shape comes either from a "Pose Preset" radio (Classic, High,
+//     Wide, Subtle) or from the individual Tilt/Pitch/Spin/Lift/Across/Forward/
+//     Scale sliders, which keep the radio on Custom once they are touched.
 //
 // The maths lives in swordblocking_logic.hpp so it is host-testable; see
 // tests/swordblocking_test.cpp.
@@ -67,6 +70,7 @@ public:
 
     bool onMouseEvent(int button, bool isDown) override;
     bool onKeyEvent(int key, bool isDown) override;
+    bool onMenuConfigChanged(std::string_view key, std::string_view value) override;
 
     // ---- settings (mirrored into the mod menu by saveConfig) ----------------
 
@@ -82,12 +86,19 @@ public:
 
     float m_fadeSpeed = swordblocking::defaultFadeSpeed;
 
+    // Guard preset radio, stored by index (append-only, see PosePreset). Picking
+    // a preset writes the five pose values below; moving a pose slider switches
+    // the radio to Custom.
+    int m_posePreset = static_cast<int>(swordblocking::PosePreset::Classic);
+
     // Pose, all in Bedrock model units / degrees.
-    float m_tiltDegrees = 65.0f;
-    float m_lift = 5.0f;
-    float m_across = 4.0f;
-    float m_forward = 1.5f;
-    float m_poseScale = 1.15f;
+    float m_tiltDegrees = 27.0f;   // the guard swing, in the screen plane
+    float m_pitchDegrees = 10.0f;  // tips the blade toward the camera
+    float m_spinDegrees = 20.0f;   // turns the flat of the blade to the camera
+    float m_lift = 4.0f;
+    float m_across = 3.0f;
+    float m_forward = 2.0f;
+    float m_poseScale = 1.12f;
 
     // Shield indicator under the crosshair.
     bool m_indicator = true;
@@ -107,6 +118,13 @@ public:
 
     // Called on every local-player tick; samples the carried item.
     void onPlayerTick(void* player);
+
+    // Copies the named preset into the pose values above (a no-op for Custom).
+    void applyPosePreset(swordblocking::PosePreset preset);
+
+    // True when the pose sliders still hold exactly the values of the selected
+    // preset, i.e. nothing has been tuned by hand.
+    bool poseMatchesPreset() const;
 
     // Set from the Options::getPlayerViewPerspective hook (false while the
     // camera is in first person), so the indicator can follow the same rule

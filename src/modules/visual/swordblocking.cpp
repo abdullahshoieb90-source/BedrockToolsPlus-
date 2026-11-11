@@ -378,9 +378,54 @@ void SwordBlockingModule::onDisable() {
     unregisterOverlayButton();
 }
 
+void SwordBlockingModule::applyPosePreset(swordblocking::PosePreset preset) {
+    if (preset == swordblocking::PosePreset::Custom ||
+        preset == swordblocking::PosePreset::Count) {
+        return;
+    }
+    const swordblocking::PoseParams pose = swordblocking::presetPose(preset);
+    m_tiltDegrees = pose.tiltDegrees;
+    m_pitchDegrees = pose.pitchDegrees;
+    m_spinDegrees = pose.spinDegrees;
+    m_lift = pose.lift;
+    m_across = pose.across;
+    m_forward = pose.forward;
+    m_poseScale = pose.scale;
+}
+
+bool SwordBlockingModule::poseMatchesPreset() const {
+    if (m_posePreset < 0 || m_posePreset >= static_cast<int>(swordblocking::PosePreset::Count)) return false;
+    const auto preset = static_cast<swordblocking::PosePreset>(m_posePreset);
+    if (preset == swordblocking::PosePreset::Custom) return true;
+    const swordblocking::PoseParams pose = swordblocking::presetPose(preset);
+    constexpr float tolerance = 1e-3f;
+    return std::fabs(m_tiltDegrees - pose.tiltDegrees) < tolerance &&
+           std::fabs(m_pitchDegrees - pose.pitchDegrees) < tolerance &&
+           std::fabs(m_spinDegrees - pose.spinDegrees) < tolerance &&
+           std::fabs(m_lift - pose.lift) < tolerance &&
+           std::fabs(m_across - pose.across) < tolerance &&
+           std::fabs(m_forward - pose.forward) < tolerance &&
+           std::fabs(m_poseScale - pose.scale) < tolerance;
+}
+
+bool SwordBlockingModule::onMenuConfigChanged(std::string_view key, std::string_view value) {
+    // The preset radio is the one setting the generic config path cannot apply,
+    // because picking a preset has to write the eight pose values. Handling it
+    // here (instead of in loadConfig) also means a slider drag is afterwards
+    // able to move the radio to Custom, which is what the menu then shows.
+    if (key != "m_posePreset") return false;
+
+    m_posePreset = swordblocking::posePresetIndex(std::string(value));
+    const auto preset = static_cast<swordblocking::PosePreset>(m_posePreset);
+    if (preset != swordblocking::PosePreset::Custom) applyPosePreset(preset);
+    return true;
+}
+
 swordblocking::PoseParams SwordBlockingModule::poseParams() const {
     swordblocking::PoseParams pose;
     pose.tiltDegrees = m_tiltDegrees;
+    pose.pitchDegrees = m_pitchDegrees;
+    pose.spinDegrees = m_spinDegrees;
     pose.lift = m_lift;
     pose.across = m_across;
     pose.forward = m_forward;
@@ -546,8 +591,14 @@ void SwordBlockingModule::loadConfig(const nlohmann::json& j) {
         }
     };
 
+    if (j.contains("m_posePreset") && j["m_posePreset"].is_string()) {
+        m_posePreset = swordblocking::posePresetIndex(j["m_posePreset"].get<std::string>());
+    }
+
     readFloat("m_fadeSpeed", m_fadeSpeed, swordblocking::minFadeSpeed, swordblocking::maxFadeSpeed);
-    readFloat("m_tiltDegrees", m_tiltDegrees, 0.0f, 120.0f);
+    readFloat("m_tiltDegrees", m_tiltDegrees, -120.0f, 120.0f);
+    readFloat("m_pitchDegrees", m_pitchDegrees, -120.0f, 120.0f);
+    readFloat("m_spinDegrees", m_spinDegrees, -180.0f, 180.0f);
     readFloat("m_lift", m_lift, -16.0f, 16.0f);
     readFloat("m_across", m_across, -16.0f, 16.0f);
     readFloat("m_forward", m_forward, -16.0f, 16.0f);
@@ -568,6 +619,15 @@ void SwordBlockingModule::loadConfig(const nlohmann::json& j) {
     m_holdStyle = std::clamp(m_holdStyle, 0, static_cast<int>(swordblocking::HoldMode::Count) - 1);
     m_fadeSpeed = swordblocking::clampFadeSpeed(m_fadeSpeed);
 
+    // A preset owns the pose while it is selected: adopting it on load means the
+    // stored preset is what the player actually sees, even if the pose values in
+    // the file were written by an older build (or edited by hand). Custom keeps
+    // the values exactly as they were read.
+    const auto preset = static_cast<swordblocking::PosePreset>(
+        std::clamp(m_posePreset, 0, static_cast<int>(swordblocking::PosePreset::Count) - 1));
+    m_posePreset = static_cast<int>(preset);
+    if (preset != swordblocking::PosePreset::Custom) applyPosePreset(preset);
+
     // The overlay button is part of the config, so a settings change has to
     // re-register (or drop) it.
     syncOverlayButton();
@@ -583,7 +643,14 @@ void SwordBlockingModule::saveConfig(nlohmann::json& j) {
 
     j["m_fadeSpeed"] = swordblocking::clampFadeSpeed(m_fadeSpeed);
 
-    j["m_tiltDegrees"] = std::clamp(m_tiltDegrees, 0.0f, 120.0f);
+    // Keep the radio truthful: once a pose slider no longer holds the preset's
+    // values, the selection becomes Custom so the next load leaves the tuned
+    // pose alone instead of snapping it back to the preset.
+    if (!poseMatchesPreset()) m_posePreset = static_cast<int>(swordblocking::PosePreset::Custom);
+    j["m_posePreset"] = swordblocking::posePresetRadioValue(m_posePreset);
+    j["m_tiltDegrees"] = std::clamp(m_tiltDegrees, -120.0f, 120.0f);
+    j["m_pitchDegrees"] = std::clamp(m_pitchDegrees, -120.0f, 120.0f);
+    j["m_spinDegrees"] = std::clamp(m_spinDegrees, -180.0f, 180.0f);
     j["m_lift"] = std::clamp(m_lift, -16.0f, 16.0f);
     j["m_across"] = std::clamp(m_across, -16.0f, 16.0f);
     j["m_forward"] = std::clamp(m_forward, -16.0f, 16.0f);
