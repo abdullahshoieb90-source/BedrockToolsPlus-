@@ -343,6 +343,79 @@ inline PoseParams presetPose(PosePreset preset) {
     return clampedPose(pose);
 }
 
+// Four-way guard direction: the two things a player actually wants to change
+// quickly are which way the blade leans (left or right) and whether the guard
+// sits high or low. Each direction writes `tiltDegrees` and `lift` and leaves
+// the rest of the pose alone, so it composes with a Pose Preset and with the
+// individual sliders - the control you touch last wins.
+enum class GuardDirection : int {
+    UpLeft = 0,
+    UpRight,
+    DownLeft,
+    DownRight,
+    Custom,
+    Count
+};
+
+inline constexpr std::array<std::string_view, static_cast<std::size_t>(GuardDirection::Count)> guardDirectionNames = {
+    "Up Left", "Up Right", "Down Left", "Down Right", "Custom"
+};
+
+inline int guardDirectionIndex(std::string_view value) {
+    value = value.substr(0, value.find(','));
+    if (value.empty()) return 0;
+    if (value.size() == 1 && value[0] >= '0' && value[0] <= '9') {
+        const int index = value[0] - '0';
+        if (index >= 0 && index < static_cast<int>(GuardDirection::Count)) return index;
+    }
+    for (std::size_t i = 0; i < guardDirectionNames.size(); ++i) {
+        if (value == guardDirectionNames[i]) return static_cast<int>(i);
+    }
+    return 0;
+}
+
+inline std::string guardDirectionRadioValue(int index) {
+    if (index < 0 || index >= static_cast<int>(GuardDirection::Count)) index = 0;
+    std::string value = std::to_string(index);
+    for (const auto name : guardDirectionNames) {
+        value += ',';
+        value += name;
+    }
+    return value;
+}
+
+// The tilt/lift pair for a direction. +-118 points the blade about 28 degrees
+// below the horizon, i.e. a low guard, while +-62 is the diagonal high guard.
+struct DirectionPose {
+    float tiltDegrees = -62.0f;
+    float lift = 5.0f;
+};
+
+inline DirectionPose directionPose(GuardDirection direction) {
+    switch (direction) {
+        case GuardDirection::UpLeft:   return {-62.0f,  5.0f};
+        case GuardDirection::UpRight:  return { 62.0f,  5.0f};
+        case GuardDirection::DownLeft: return {-118.0f, -2.0f};
+        case GuardDirection::DownRight:return { 118.0f, -2.0f};
+        case GuardDirection::Custom:
+        case GuardDirection::Count:
+            break;
+    }
+    return {};
+}
+
+// Which direction the current tilt/lift pair reads as, so the radio can show
+// Custom when a slider moved the guard off a named direction.
+inline GuardDirection directionFromPose(float tiltDegrees, float lift) {
+    const auto near = [](float a, float b) { return std::fabs(a - b) < 1.0f; };
+    for (int i = 0; i < static_cast<int>(GuardDirection::Custom); ++i) {
+        const auto direction = static_cast<GuardDirection>(i);
+        const DirectionPose pose = directionPose(direction);
+        if (near(tiltDegrees, pose.tiltDegrees) && near(lift, pose.lift)) return direction;
+    }
+    return GuardDirection::Custom;
+}
+
 inline int posePresetIndex(std::string_view value) {
     value = value.substr(0, value.find(','));
     if (value.empty()) return 0;
@@ -400,6 +473,29 @@ inline Mat4 poseMatrix(const PoseParams& params, float weight) {
     const float factor = 1.0f + (pose.scale - 1.0f) * w;
     result = multiply(result, scaling(factor));
     return result;
+}
+
+// Where the guard puts the blade, for tests and for the menu description:
+// 90 is straight up, 0 is right, 180 is left, negative values point down.
+// Returns the angle in degrees from +X (screen right), counter-clockwise.
+inline float bladeAngleDegrees(const PoseParams& params) {
+    const Mat4 matrix = poseMatrix(params, 1.0f);
+    const auto grip = transformPoint(matrix, 0.0f, 0.0f, 0.0f);
+    const auto tip = transformPoint(matrix, 0.0f, 10.0f, 0.0f);
+    const float dx = tip[0] - grip[0];
+    const float dy = tip[1] - grip[1];
+    if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f) return 90.0f;
+    return std::atan2(dy, dx) * 180.0f / 3.14159265358979323846f;
+}
+
+// Local transform with the whole guard rolled by `rollDegrees` before it is
+// composed onto the item (the "spin the blade" control). The roll happens in
+// the item's own space so it also carries the grip offset around with it, which
+// is what makes it read as spinning the guard rather than sliding it.
+inline Mat4 posedGuardMatrix(const PoseParams& params, float rollDegrees, float weight) {
+    Mat4 pose = poseMatrix(params, weight);
+    if (!std::isfinite(rollDegrees) || std::fabs(rollDegrees) < 0.01f || weight <= 0.0f) return pose;
+    return multiply(pose, rotationYDegrees(rollDegrees * std::clamp(weight, 0.0f, 1.0f)));
 }
 
 // Composes `local` onto the live matrix in place: target = target * local.

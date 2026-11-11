@@ -395,6 +395,136 @@ int main() {
               "a wild rotation still produces a finite matrix");
     }
 
+    std::printf("guard direction + rotation\n");
+    {
+        // The four directions are the two axes a player wants quickly, and they
+        // only own Tilt and Lift so they compose with the rotation sliders.
+        const auto upLeft = directionPose(GuardDirection::UpLeft);
+        const auto upRight = directionPose(GuardDirection::UpRight);
+        const auto downLeft = directionPose(GuardDirection::DownLeft);
+        const auto downRight = directionPose(GuardDirection::DownRight);
+        check(upLeft.tiltDegrees < 0.0f && upRight.tiltDegrees > 0.0f,
+              "Up Left and Up Right mirror each other");
+        check(downLeft.tiltDegrees < 0.0f && downRight.tiltDegrees > 0.0f,
+              "Down Left and Down Right mirror each other");
+        check(std::fabs(upLeft.tiltDegrees) < std::fabs(downLeft.tiltDegrees),
+              "the down directions point the blade further round");
+        check(upLeft.lift > downLeft.lift, "and the up directions sit higher");
+        check(upLeft.tiltDegrees == PoseParams{}.tiltDegrees,
+              "Up Left is the Classic default");
+
+        check(guardDirectionIndex("1") == 1 && guardDirectionIndex("Down Right") == 3,
+              "the direction radio reads both its index and its label");
+        check(guardDirectionRadioValue(2) == "2,Up Left,Up Right,Down Left,Down Right,Custom",
+              "the direction radio keeps the index,label layout");
+        check(directionFromPose(upLeft.tiltDegrees, upLeft.lift) == GuardDirection::UpLeft,
+              "a named direction is recognised from the sliders");
+        check(directionFromPose(upLeft.tiltDegrees + 12.0f, upLeft.lift) == GuardDirection::Custom,
+              "a hand-moved slider reads as Custom");
+
+        // The blade really does point where the name says. Measured as the
+        // angle from screen-right, counter-clockwise, so up-left is > 90.
+        const auto angleOf = [](const DirectionPose& direction) {
+            PoseParams pose;
+            pose.tiltDegrees = direction.tiltDegrees;
+            pose.lift = direction.lift;
+            pose.pitchDegrees = 0.0f;
+            pose.spinDegrees = 0.0f;
+            return bladeAngleDegrees(pose);
+        };
+        check(angleOf(upLeft) > 90.0f && angleOf(upLeft) < 180.0f, "Up Left points up and left");
+        check(angleOf(upRight) > 0.0f && angleOf(upRight) < 90.0f, "Up Right points up and right");
+        check(angleOf(downLeft) > 180.0f || angleOf(downLeft) < 0.0f,
+              "Down Left points below the horizon");
+        check(angleOf(downRight) < 0.0f && angleOf(downRight) > -180.0f,
+              "Down Right points down and right");
+
+        // The guard roll composes on top without disturbing the base pose.
+        PoseParams pose;
+        const Mat4 unrolled = posedGuardMatrix(pose, 0.0f, 1.0f);
+        const Mat4 rolled = posedGuardMatrix(pose, 30.0f, 1.0f);
+        check(!near(unrolled.m[0], rolled.m[0]) || !near(unrolled.m[2], rolled.m[2]),
+              "a guard rotation changes the matrix");
+        check(isFinite(rolled), "and stays finite");
+        const Mat4 rolledSoft = posedGuardMatrix(pose, 30.0f, 0.0f);
+        check(near(rolledSoft.m[0], 1.0f) && near(rolledSoft.m[5], 1.0f),
+              "a zero weight keeps the guard rotation out of the matrix");
+        check(isFinite(posedGuardMatrix(pose, std::nanf(""), 1.0f)),
+              "a non-finite rotation is ignored");
+    }
+
+    std::printf("third-person blade\n");
+    {
+        BodyFrame body{};
+        body.origin = Vec3{0.0f, 64.0f, 0.0f};
+        body.yawDegrees = 0.0f;
+        HandOffset offset;
+        BladeOrientation orientation;
+        BladeGeometry geometry;
+        BladeStyle style;
+
+        check(guardQuads(body, offset, orientation, geometry, style, 0.0f).empty(),
+              "nothing is drawn while the guard is down");
+        const auto quads = guardQuads(body, offset, orientation, geometry, style, 1.0f);
+        check(quads.size() == 2, "the blade is two quads: the plate and the cross");
+        check(quadVertexCount(quads) == 8, "which the tessellator counts as eight vertices");
+
+        // The blade runs from the hand anchor to the tip, and the anchor sits
+        // up at chest height in front of the body, not at the feet.
+        const auto& blade = quads.front();
+        const float bladeLength = std::fabs(blade.points[1].y - blade.points[0].y);
+        check(bladeLength > 0.3f && bladeLength < 1.2f, "the blade is a blade-sized length");
+        check(blade.points[0].y > 64.5f, "the guard is drawn at chest height, not at the feet");
+        check(blade.points[0].z > 0.1f, "and in front of the body");
+
+        // Up-left, as the default third-person camera (behind the player) sees
+        // it: the tip crosses to screen-left (-X at yaw 0) and rises above the
+        // grip. The sign of BladeOrientation::angleDegrees mirrors it.
+        const auto tipMid = Vec3{(blade.points[1].x + blade.points[2].x) * 0.5f,
+                                 (blade.points[1].y + blade.points[2].y) * 0.5f,
+                                 (blade.points[1].z + blade.points[2].z) * 0.5f};
+        const auto gripMid = Vec3{(blade.points[0].x + blade.points[3].x) * 0.5f,
+                                  (blade.points[0].y + blade.points[3].y) * 0.5f,
+                                  (blade.points[0].z + blade.points[3].z) * 0.5f};
+        check(tipMid.y > gripMid.y, "the third-person blade rises above the hand");
+        check(tipMid.x < gripMid.x, "and crosses the body toward screen-left");
+
+        // Mirroring the angle mirrors the blade, so the same four directions
+        // exist in third person.
+        BladeOrientation mirrored = orientation;
+        mirrored.angleDegrees = -orientation.angleDegrees;
+        const auto mirroredQuads = guardQuads(body, offset, mirrored, geometry, style, 1.0f);
+        const auto& mirroredBlade = mirroredQuads.front();
+        const auto mirroredTipX = (mirroredBlade.points[1].x + mirroredBlade.points[2].x) * 0.5f;
+        check(mirroredTipX > gripMid.x, "a negative angle mirrors the third-person blade");
+
+        // Yaw rotates the whole thing with the body.
+        BodyFrame turned{};
+        turned.yawDegrees = 90.0f;
+        const auto turnedQuads = guardQuads(turned, offset, orientation, geometry, style, 1.0f);
+        check(!turnedQuads.empty() &&
+              std::fabs(turnedQuads.front().points[0].x) > 0.3f,
+              "turning the body turns the guard with it");
+
+        // The weight scales the guard out of the hand instead of popping.
+        const auto halfQuads = guardQuads(body, offset, orientation, geometry, style, 0.5f);
+        const auto& halfBlade = halfQuads.front();
+        const float halfLength = std::fabs(halfBlade.points[1].y - halfBlade.points[0].y);
+        check(halfLength < bladeLength && halfLength > 0.0f,
+              "the guard grows with the pose weight");
+
+        // Winding: every quad has four distinct, non-degenerate corners.
+        for (const auto& quad : quads) {
+            float area = 0.0f;
+            for (std::size_t i = 0; i < 4; ++i) {
+                const auto& a = quad.points[i];
+                const auto& b = quad.points[(i + 1) % 4];
+                area += a.x * b.y - b.x * a.y;
+            }
+            check(std::fabs(area) > 1e-5f, "every quad has a real area");
+        }
+    }
+
     std::printf("indicator geometry\n");
     {
         IndicatorStyle style;
@@ -712,6 +842,63 @@ int main() {
               near(legacy.m_across, SwordBlockingModule::m_defaultAcross) &&
               legacy.m_posePreset == static_cast<int>(PosePreset::Classic),
               "a pre-spin Custom pose migrates to the current defaults");
+
+        // The direction radio and the guard rotation are independent controls:
+        // picking a direction must not disturb the rotation, and picking a
+        // rotation must not disturb the direction.
+        SwordBlockingModule controls;
+        controls.onInit();
+        controls.m_guardRotationDegrees = 35.0f;
+        check(controls.onMenuConfigChanged("m_guardDirection", "1"),
+              "the direction radio is intercepted");
+        check(controls.m_guardDirection == static_cast<int>(GuardDirection::UpRight) &&
+              near(controls.m_tiltDegrees, directionPose(GuardDirection::UpRight).tiltDegrees),
+              "choosing a direction writes Tilt");
+        check(near(controls.m_guardRotationDegrees, 35.0f),
+              "and leaves the guard rotation alone");
+        check(near(controls.m_spinDegrees, SwordBlockingModule::m_defaultSpinDegrees),
+              "and leaves the base rotations alone");
+
+        nlohmann::json controlsSaved;
+        controls.saveConfig(controlsSaved);
+        check(controlsSaved["m_guardDirection"].get<std::string>().rfind("1,", 0) == 0,
+              "the direction is saved in radio format");
+        check(near(controlsSaved["m_guardRotationDegrees"].get<float>(), 35.0f),
+              "the guard rotation is saved");
+
+        SwordBlockingModule controlsLoaded;
+        controlsLoaded.onInit();
+        controlsLoaded.loadConfig(controlsSaved);
+        check(controlsLoaded.m_guardDirection == static_cast<int>(GuardDirection::UpRight),
+              "the direction reloads");
+        check(near(controlsLoaded.m_guardRotationDegrees, 35.0f), "the guard rotation reloads");
+
+        // Picking a preset re-derives the direction radio from the tilt it just
+        // wrote, so the two radios can never contradict each other on screen.
+        SwordBlockingModule presetDirection;
+        presetDirection.onInit();
+        presetDirection.onMenuConfigChanged("m_guardDirection", "2");
+        presetDirection.onMenuConfigChanged("m_posePreset", "0");
+        check(presetDirection.m_guardDirection == static_cast<int>(GuardDirection::UpLeft),
+              "a preset that leans the blade up-left updates the direction radio");
+
+        // Third-person settings round-trip.
+        SwordBlockingModule thirdPerson;
+        thirdPerson.onInit();
+        thirdPerson.m_thirdPersonPose = true;
+        thirdPerson.m_thirdPersonAngle = -40.0f;
+        thirdPerson.m_thirdPersonUp = 12.0f;
+        thirdPerson.m_thirdPersonLength = 1.1f;
+        nlohmann::json thirdSaved;
+        thirdPerson.saveConfig(thirdSaved);
+        SwordBlockingModule thirdLoaded;
+        thirdLoaded.onInit();
+        thirdLoaded.loadConfig(thirdSaved);
+        check(thirdLoaded.m_thirdPersonPose, "the third-person toggle reloads");
+        check(near(thirdLoaded.m_thirdPersonAngle, -40.0f) &&
+              near(thirdLoaded.m_thirdPersonUp, 12.0f) &&
+              near(thirdLoaded.m_thirdPersonLength, 1.1f),
+              "the third-person blade settings reload");
 
         // Clamping on the way in.
         nlohmann::json hostile;

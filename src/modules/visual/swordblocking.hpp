@@ -87,9 +87,20 @@ public:
     float m_fadeSpeed = swordblocking::defaultFadeSpeed;
 
     // Guard preset radio, stored by index (append-only, see PosePreset). Picking
-    // a preset writes the five pose values below; moving a pose slider switches
-    // the radio to Custom.
+    // a preset writes the pose values below; moving a pose slider switches the
+    // radio to Custom.
     int m_posePreset = static_cast<int>(swordblocking::PosePreset::Classic);
+
+    // Four-way guard direction (append-only, see GuardDirection): Up Left,
+    // Up Right, Down Left, Down Right or Custom. Picking a direction writes
+    // only Tilt and Lift, so the rotation sliders stay where they are.
+    int m_guardDirection = static_cast<int>(swordblocking::GuardDirection::UpLeft);
+
+    // Free rotation of the whole guard, on top of the three pose rotations.
+    // This is the "spin the blade" knob: switch the file's
+    // m_guardRotationDegrees and the guard rolls in place, which is the fastest
+    // way to dial it in on a device.
+    float m_guardRotationDegrees = 0.0f;
 
     // Pose, all in Bedrock model units / degrees. The defaults are the values
     // of the Classic preset (see presetPose in swordblocking_logic.hpp); they
@@ -116,9 +127,25 @@ public:
     std::string m_indicatorColor = "#7FE3FF";
     float m_indicatorOpacity = 0.85f;
     float m_indicatorScale = 1.0f;
-    // Draw the indicator in third person too (the pose itself is first-person
-    // only, like the vanilla hand).
+    // Draw the indicator in third person too.
     bool m_showThirdPerson = false;
+
+    // Draw the guard itself in third person. The game renders the held item
+    // through the actor renderer there, where none of the first-person item
+    // hooks run, so the module draws the blade at the player's hand itself.
+    bool m_thirdPersonPose = false;
+
+    // Where the guard sits on the body: a model-pixel offset along the body's
+    // right/up/forward axes.
+    float m_thirdPersonRight = 3.0f;
+    float m_thirdPersonUp = 15.0f;
+    float m_thirdPersonForward = 5.5f;
+    // Blade angle in the plane the viewer sees: 62 leans it up to the left,
+    // negative mirrors it, 118 points it down. Lean tips it toward the viewer.
+    float m_thirdPersonAngle = 62.0f;
+    float m_thirdPersonLean = 12.0f;
+    float m_thirdPersonLength = 0.9f;
+    float m_thirdPersonWidth = 0.13f;
 
     // ---- runtime ------------------------------------------------------------
 
@@ -132,6 +159,17 @@ public:
 
     // Copies the named preset into the pose values above (a no-op for Custom).
     void applyPosePreset(swordblocking::PosePreset preset);
+
+    // Copies the named direction into Tilt and Lift (a no-op for Custom).
+    void applyGuardDirection(swordblocking::GuardDirection direction);
+
+    // Which direction the current Tilt/Lift pair reads as (Custom when they do
+    // not match a named one), so the radio can follow the sliders.
+    swordblocking::GuardDirection currentGuardDirection() const;
+
+    // The guard rotation as the blade's own roll, so this fourth rotation
+    // composes with the three pose ones instead of fighting them.
+    float guardRollDegrees() const { return m_guardRotationDegrees; }
 
     // True when the pose sliders still hold exactly the values of the selected
     // preset, i.e. nothing has been tuned by hand.
