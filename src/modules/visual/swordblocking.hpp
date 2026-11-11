@@ -91,14 +91,25 @@ public:
     // the radio to Custom.
     int m_posePreset = static_cast<int>(swordblocking::PosePreset::Classic);
 
-    // Pose, all in Bedrock model units / degrees.
+    // Pose, all in Bedrock model units / degrees. The defaults are the values
+    // of the Classic preset (see presetPose in swordblocking_logic.hpp); they
+    // are repeated here so `m_default*` can restore them for a config written
+    // by a build that had a different guard.
     float m_tiltDegrees = 27.0f;   // the guard swing, in the screen plane
     float m_pitchDegrees = 10.0f;  // tips the blade toward the camera
     float m_spinDegrees = 20.0f;   // turns the flat of the blade to the camera
     float m_lift = 4.0f;
-    float m_across = 3.0f;
+    float m_across = 1.0f;
     float m_forward = 2.0f;
     float m_poseScale = 1.12f;
+
+    static constexpr float m_defaultTiltDegrees = 27.0f;
+    static constexpr float m_defaultPitchDegrees = 10.0f;
+    static constexpr float m_defaultSpinDegrees = 20.0f;
+    static constexpr float m_defaultLift = 4.0f;
+    static constexpr float m_defaultAcross = 1.0f;
+    static constexpr float m_defaultForward = 2.0f;
+    static constexpr float m_defaultPoseScale = 1.12f;
 
     // Shield indicator under the crosshair.
     bool m_indicator = true;

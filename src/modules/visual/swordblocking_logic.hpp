@@ -258,7 +258,7 @@ struct PoseParams {
     float pitchDegrees = 10.0f; // tips the blade toward the camera
     float spinDegrees = 20.0f;  // turns the flat of the blade to the camera
     float lift = 4.0f;          // moves the grip up toward the eye line
-    float across = 3.0f;        // moves it toward the other side of the body
+    float across = 1.0f;        // moves it toward the other side of the body
     float forward = 2.0f;       // moves it toward the camera
     float scale = 1.12f;        // slight enlargement so the guard reads
 };
@@ -273,7 +273,7 @@ inline PoseParams clampedPose(PoseParams pose) {
     pose.pitchDegrees = std::clamp(finiteOr(pose.pitchDegrees, 10.0f), -120.0f, 120.0f);
     pose.spinDegrees = std::clamp(finiteOr(pose.spinDegrees, 20.0f), -180.0f, 180.0f);
     pose.lift = std::clamp(finiteOr(pose.lift, 4.0f), -16.0f, 16.0f);
-    pose.across = std::clamp(finiteOr(pose.across, 3.0f), -16.0f, 16.0f);
+    pose.across = std::clamp(finiteOr(pose.across, 1.0f), -16.0f, 16.0f);
     pose.forward = std::clamp(finiteOr(pose.forward, 2.0f), -16.0f, 16.0f);
     pose.scale = std::clamp(finiteOr(pose.scale, 1.12f), 0.25f, 4.0f);
     return pose;
@@ -305,7 +305,7 @@ inline PoseParams presetPose(PosePreset preset) {
             pose.pitchDegrees = 16.0f;
             pose.spinDegrees = 28.0f;
             pose.lift = 6.5f;
-            pose.across = 4.0f;
+            pose.across = 2.0f;
             pose.forward = 2.5f;
             pose.scale = 1.22f;
             break;
@@ -314,7 +314,7 @@ inline PoseParams presetPose(PosePreset preset) {
             pose.pitchDegrees = 6.0f;
             pose.spinDegrees = 46.0f;
             pose.lift = 3.0f;
-            pose.across = 6.5f;
+            pose.across = 4.0f;
             pose.forward = 1.5f;
             pose.scale = 1.1f;
             break;
@@ -323,7 +323,7 @@ inline PoseParams presetPose(PosePreset preset) {
             pose.pitchDegrees = 4.0f;
             pose.spinDegrees = 8.0f;
             pose.lift = 2.0f;
-            pose.across = 1.5f;
+            pose.across = -0.5f;
             pose.forward = 1.0f;
             pose.scale = 1.05f;
             break;

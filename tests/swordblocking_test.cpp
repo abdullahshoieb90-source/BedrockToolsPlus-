@@ -662,14 +662,34 @@ int main() {
               near(upgraded.m_tiltDegrees, presetPose(PosePreset::High).tiltDegrees),
               "a stored preset overrides stale pose values on load");
 
-        // Custom in the file keeps whatever the sliders said.
+        // Custom in the file keeps whatever the sliders said, as long as the
+        // config was written by a build that has the spin slider.
         nlohmann::json customFile;
         customFile["m_posePreset"] = std::string("4");
         customFile["m_tiltDegrees"] = 5.0f;
+        customFile["m_pitchDegrees"] = 3.0f;
+        customFile["m_spinDegrees"] = 7.0f;
         SwordBlockingModule custom;
         custom.onInit();
         custom.loadConfig(customFile);
-        check(near(custom.m_tiltDegrees, 5.0f), "a stored Custom keeps the tuned pose");
+        check(near(custom.m_tiltDegrees, 5.0f) && near(custom.m_spinDegrees, 7.0f),
+              "a stored Custom keeps the tuned pose");
+
+        // A "Custom" pose saved before the spin slider existed carries only the
+        // old tilt/pitch pair and the old right-shifted grip. It falls back to
+        // the current Classic defaults instead of keeping a pose that predates
+        // the guard rework.
+        nlohmann::json legacyFile;
+        legacyFile["m_posePreset"] = std::string("4");
+        legacyFile["m_tiltDegrees"] = 65.0f;
+        legacyFile["m_across"] = 4.0f;
+        SwordBlockingModule legacy;
+        legacy.onInit();
+        legacy.loadConfig(legacyFile);
+        check(near(legacy.m_tiltDegrees, SwordBlockingModule::m_defaultTiltDegrees) &&
+              near(legacy.m_across, SwordBlockingModule::m_defaultAcross) &&
+              legacy.m_posePreset == static_cast<int>(PosePreset::Classic),
+              "a pre-spin Custom pose migrates to the current defaults");
 
         // Clamping on the way in.
         nlohmann::json hostile;

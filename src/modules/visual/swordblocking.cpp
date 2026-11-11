@@ -626,7 +626,22 @@ void SwordBlockingModule::loadConfig(const nlohmann::json& j) {
     const auto preset = static_cast<swordblocking::PosePreset>(
         std::clamp(m_posePreset, 0, static_cast<int>(swordblocking::PosePreset::Count) - 1));
     m_posePreset = static_cast<int>(preset);
-    if (preset != swordblocking::PosePreset::Custom) applyPosePreset(preset);
+    if (preset != swordblocking::PosePreset::Custom) {
+        applyPosePreset(preset);
+    } else if (!j.contains("m_spinDegrees")) {
+        // A "Custom" pose saved before the spin slider existed only carries the
+        // old tilt/pitch pair, and the old defaults sat further right. Rather
+        // than leave such a config looking wrong forever, fall back to the
+        // current defaults; a config that has the new keys is left untouched.
+        m_tiltDegrees = m_defaultTiltDegrees;
+        m_pitchDegrees = m_defaultPitchDegrees;
+        m_spinDegrees = m_defaultSpinDegrees;
+        m_lift = m_defaultLift;
+        m_across = m_defaultAcross;
+        m_forward = m_defaultForward;
+        m_poseScale = m_defaultPoseScale;
+        m_posePreset = static_cast<int>(swordblocking::PosePreset::Classic);
+    }
 
     // The overlay button is part of the config, so a settings change has to
     // re-register (or drop) it.

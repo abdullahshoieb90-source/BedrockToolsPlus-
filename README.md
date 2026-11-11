@@ -138,7 +138,9 @@ It is a **visual** module: Bedrock has no sword blocking in its protocol and dam
 
 ![Sword Blocking at rest and in the guard pose](docs/sword-blocking-pose.jpg)
 
-The default (Classic) pose is measured off a reference recording: at rest the sword hangs in the bottom-right corner at roughly -9° from horizontal, and the guard swings it to about -36°, with the blade reaching past the middle of the screen, the grip pulled in toward the crosshair and the shield outline lit just under the aim point.
+The default (Classic) pose is measured off a reference recording: at rest the sword hangs in the bottom-right corner at roughly -9° from horizontal, and the guard swings it to about -36°, with the blade reaching past the middle of the screen, the grip pulled in toward the crosshair and the shield outline lit just under the aim point. If the guard still sits too far right (or left) for your FOV/skin, drag **Across** negative (or positive) — one model unit is a few percent of the screen width — or pick a different **Pose Preset**.
+
+> A config written by 1.6.0 has no `m_spinDegrees` key; a `Custom` pose from that build is migrated to the current Classic defaults on load instead of keeping the old, right-shifted guard. Set up the pose once after updating.
 
 Any item whose description id ends in `_sword` counts — every vanilla sword plus modded swords that keep the vanilla naming. The pose is applied inside `ItemInHandRenderer::renderObject`, only while the surrounding first-person scopes identify the main hand (so the offhand item is never affected), and the game's matrix is restored right after the draw. `tests/swordblocking_test.cpp` builds the real module against in-memory game objects and asserts that the matrix is posed during the draw, restored afterwards, and left alone for the offhand and in third person.
 
