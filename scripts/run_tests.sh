@@ -62,6 +62,12 @@ for source in "${root}"/tests/*_test.cpp; do
                 skip="preloader/nlohmann_json headers (set PRE_LOADER_INCLUDE and JSON_INCLUDE)"
             fi
             ;;
+        customcapes_module_test)
+            # Builds the real PNG loader and skin-image injector against a
+            # fake local player; no Android runtime is needed.
+            extra+=(-I "${root}/third_party" -I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
+            extra_srcs+=("${root}/src/modules/visual/customcapes.cpp")
+            ;;
         crosshair_test)
             # This test owns its pl::modmenu / pl::memory stubs, so it only
             # needs the API type declarations plus the host JSON/JNI fakes; a

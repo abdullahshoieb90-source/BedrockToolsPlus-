@@ -21,6 +21,8 @@ namespace bedrocktools::sdk::offsets {
 //   mce::Blob   mImageBytes;  // 0x18 (size = 0x18: { unique_ptr mBlob; void(*mDeleter)(uchar*); size_t mSize })
 namespace Image {
 inline constexpr std::size_t mImageFormat = 0x00;
+inline constexpr std::size_t mWidth = 0x04;
+inline constexpr std::size_t mHeight = 0x08;
 inline constexpr std::size_t mDepth = 0x0C;
 inline constexpr std::size_t mUsage = 0x10;
 inline constexpr std::size_t mBytesOffset = 0x18;     // mce::Blob::mBlob (pixel pointer)
