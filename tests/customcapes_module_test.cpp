@@ -71,10 +71,20 @@ int main() {
     *reinterpret_cast<std::size_t*>(image + Image::mBlobSizeOffset) = 4;
 
     void* skinImpl = skin.data();
-    std::vector<unsigned char> player(Player::mSkin + sizeof(void*) + 8, 0);
-    *reinterpret_cast<void**>(player.data() + Player::mSkin) = &skinImpl;
+    std::vector<unsigned char> player(Player::mSkin + 16 + 8, 0);
+    // mSkin is an inline UniqueOwnerPointer: owner/control at +0 and the
+    // SerializedSkin pointer at +8. This mirrors the real Player layout and
+    // catches the world-entry crash caused by treating it as a plain pointer.
+    *reinterpret_cast<void**>(player.data() + Player::mSkin + UniqueOwnerPointer::mValue) = &skinImpl;
 
+    // Default Cape must not inspect a not-yet-valid skin at all.
+    nlohmann::json useDefault;
+    useDefault["m_cape"] = "0";
+    module.loadConfig(useDefault);
     module.setMasterEnabled(true);
+    module.onLocalPlayerTick(reinterpret_cast<void*>(0x1000));
+    check(true, "Default Cape is a no-op while the world skin is unavailable");
+    module.loadConfig(selection);
     module.onLocalPlayerTick(player.data());
     auto** installedPixels = reinterpret_cast<unsigned char**>(image + Image::mBytesOffset);
     check(*reinterpret_cast<std::uint32_t*>(image + Image::mWidth) == 64 &&

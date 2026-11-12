@@ -236,6 +236,10 @@ void CustomCapesModule::applyImage(void* skinImpl) {
 
 void CustomCapesModule::applyToPlayer(void* player) {
     using namespace bedrocktools::sdk::offsets;
+    // The default option is a true no-op until a custom cape was applied.
+    // In particular, do not dereference skin pointers during world loading
+    // merely to restore a cape that this module never replaced.
+    if (m_selectedIndex == 0 && !m_appliedSkinImpl) return;
     void* impl = skinImplForPlayer(player);
     if (!impl) return;
 

@@ -46,7 +46,14 @@ class Player : public Actor {
 public:
     std::string& name() { return field<std::string>(this, offsets::Player::mName); }
     const std::string& name() const { return field<std::string>(this, offsets::Player::mName); }
-    void* skin() const { return field<void*>(this, offsets::Player::mSkin); }
+    void* skin() const {
+        // Player stores an inline Bedrock::UniqueOwnerPointer<SerializedSkin>,
+        // not a plain SerializedSkin*. The control/owner pointer comes first
+        // and the owned SerializedSkin is at mValue (8 on arm64).
+        const auto* owner = reinterpret_cast<const void*>(
+            reinterpret_cast<std::uintptr_t>(this) + offsets::Player::mSkin);
+        return field<void*>(owner, offsets::UniqueOwnerPointer::mValue);
+    }
 };
 
 }
