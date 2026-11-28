@@ -40,6 +40,20 @@ namespace MinecraftUIRenderContext {
 inline constexpr std::size_t mClient = 0x8;
 }
 
+namespace HudPlayerRenderer {
+// Float countdown checked at the start of HudPlayerRenderer::render (slot 17):
+// when <= 0.0f the vanilla renderer skips drawing the HUD paper doll.
+inline constexpr std::size_t mTimeRemaining = 0xC;
+}
+
+namespace UIControl {
+// Verified from HudPlayerRenderer::render:
+//   UIControl::getPosition (0x9A60F70: add x0, x19, #0x10)
+//   UIControl::getSize     (0x9A60F68: add x0, x0, #0x40)
+inline constexpr std::size_t mPosition = 0x10;
+inline constexpr std::size_t mSize = 0x40;
+}
+
 namespace ShulkerPreview {
 inline constexpr std::size_t ItemStackBaseItem = 0x8;
 inline constexpr std::size_t ItemStackBaseUserData = 0x10;

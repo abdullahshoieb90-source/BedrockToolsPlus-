@@ -41,6 +41,10 @@ for source in "${root}"/tests/*_test.cpp; do
         jumpcircle_test|damagecircle_test|hitrange_test)
             extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
             ;;
+        paperdoll_test)
+            extra+=(-I "${root}/tests/fakepl" -I "${root}/tests/fakejson")
+            extra_srcs+=("${root}/src/core/events/Events.cpp")
+            ;;
         blockoutline_test)
             # Includes the production renderer with host substitutes for the
             # preloader hook API and the small JSON surface used by configs.
